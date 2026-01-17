@@ -1,0 +1,257 @@
+// Schema Prisma - Seidmann Institute
+// Banco de dados: MySQL (seidmann_app)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum EnrollmentStatus {
+  LEAD
+  REGISTERED
+  CONTRACT_ACCEPTED
+  PAYMENT_PENDING
+  ACTIVE
+  BLOCKED
+  COMPLETED
+}
+
+enum Language {
+  ENGLISH  // Inglês
+  SPANISH  // Espanhol
+}
+
+enum PaymentMethod {
+  PIX
+}
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum AttendanceType {
+  STUDENT
+  TEACHER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+enum AnnouncementChannel {
+  EMAIL
+  SMS
+}
+
+enum AnnouncementStatus {
+  PENDING
+  SENT
+  CANCELED
+}
+
+// Model: User (Usuário)
+// Representa um usuário cadastrado no sistema
+model User {
+  id           String       @id @default(cuid())
+  nome         String
+  email        String       @unique
+  whatsapp     String
+  senha        String       @map("password_hash") // Hash da senha (bcrypt)
+  role         UserRole     @default(STUDENT) // ADMIN, TEACHER, STUDENT
+  status       UserStatus   @default(PENDING) // PENDING, ACTIVE, BLOCKED
+  criadoEm     DateTime     @default(now()) @map("created_at")
+  atualizadoEm DateTime     @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  enrollments    Enrollment[]
+  attendances    Attendance[]
+  bookReleases   BookRelease[]
+  teacher        Teacher?
+  
+  // Índices
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// Model: Enrollment (Matrícula)
+// Representa uma matrícula/lead no sistema
+model Enrollment {
+  id             String           @id @default(cuid())
+  userId         String?          @map("user_id")
+  
+  // Dados do formulário de matrícula
+  nome           String
+  email          String
+  whatsapp       String
+  idioma         Language?    // Opcional: pode ser null quando criado pelo cadastro direto
+  nivel          String?      // Opcional: pode ser null quando criado pelo cadastro direto
+  objetivo       String?
+  disponibilidade String?
+  
+  status         EnrollmentStatus @default(LEAD)
+  trackingCode   String?          @unique @map("tracking_code") // Código único para acompanhamento (ex: MAT-A7F3K1Q9)
+  contractAcceptedAt DateTime?    @map("contract_accepted_at")
+  contractVersion    String?      @map("contract_version")
+  criadoEm       DateTime         @default(now()) @map("created_at")
+  atualizadoEm   DateTime         @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  paymentInfo    PaymentInfo?
+  
+  // Índices para buscar por email/whatsapp
+  @@index([email])
+  @@index([whatsapp])
+  @@index([trackingCode])
+  @@map("enrollments")
+}
+
+// Model: PaymentInfo (Informações de Pagamento)
+// Informações de pagamento vinculadas a uma matrícula
+model PaymentInfo {
+  id               String          @id @default(cuid())
+  enrollmentId     String          @unique @map("enrollment_id")
+  metodo           PaymentMethod   @default(PIX)
+  plan             String?         // Ex: "1h semanal", "2h semanais", "grupo 2h"
+  valorMensal      Decimal?        @db.Decimal(10, 2) @map("valor_mensal") // Valor combinado mensal
+  monthlyValue     Decimal?        @db.Decimal(10, 2) @map("monthly_value")
+  dataPagamento    DateTime?       @map("data_pagamento")
+  dueDay           Int?            @map("due_day") // Dia do mês (1-31)
+  dueDate          DateTime?       @map("due_date") // Data específica de vencimento
+  reminderEnabled  Boolean         @default(true) @map("reminder_enabled")
+  paymentStatus    String?         @map("payment_status") // "PENDING", "CONFIRMED"
+  paidAt           DateTime?         @map("paid_at")
+  transactionRef    String?         @map("transaction_ref") // Referência da transação
+  lembrete         Boolean         @default(false) // Mantido para compatibilidade
+  criadoEm         DateTime        @default(now()) @map("created_at")
+  atualizadoEm     DateTime        @updatedAt @map("updated_at")
+  
+  // Relacionamento
+  enrollment       Enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  
+  @@map("payment_info")
+}
+
+// Model: Teacher (Professor)
+// Representa um professor do instituto
+model Teacher {
+  id           String       @id @default(cuid())
+  nome         String
+  email        String       @unique
+  whatsapp     String?
+  status       UserStatus   @default(ACTIVE) // ACTIVE ou INACTIVE
+  userId       String?      @unique @map("user_id") // Opcional: link com User se tiver conta
+  criadoEm     DateTime     @default(now()) @map("created_at")
+  atualizadoEm DateTime     @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attendances  Attendance[]
+  alerts       TeacherAlert[]
+  
+  // Índices
+  @@index([email])
+  @@index([status])
+  @@map("teachers")
+}
+
+// Model: Attendance (Frequência/Falta)
+// Registra presença ou falta de alunos e professores
+model Attendance {
+  id           String           @id @default(cuid())
+  type         AttendanceType   // STUDENT ou TEACHER
+  status       AttendanceStatus // PRESENT ou ABSENT (falta = ABSENT)
+  userId       String?          @map("user_id") // Para aluno
+  teacherId    String?          @map("teacher_id") // Para professor
+  date         DateTime         // Data do evento
+  notes        String?          // Observações opcionais
+  criadoEm     DateTime         @default(now()) @map("created_at")
+  atualizadoEm DateTime         @updatedAt @map("updated_at")
+  
+  // Relacionamentos
+  user         User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teacher      Teacher?         @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  
+  // Índices para consultas rápidas
+  @@index([type, date])
+  @@index([userId, date])
+  @@index([teacherId, date])
+  @@map("attendances")
+}
+
+// Model: BookRelease (Liberação de Livro)
+// Registra quando um livro foi liberado para um aluno
+model BookRelease {
+  id                  String   @id @default(cuid())
+  userId              String   @map("user_id")
+  bookCode            String   // Ex: "BOOK_1", "BOOK_2", etc
+  releasedByAdminEmail String  @map("released_by_admin_email")
+  criadoEm            DateTime @default(now()) @map("created_at")
+  
+  // Relacionamento
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Garantir que um aluno não receba o mesmo livro duas vezes
+  @@unique([userId, bookCode], name: "userId_bookCode")
+  @@index([userId])
+  @@index([bookCode])
+  @@map("book_releases")
+}
+
+// Model: Announcement (Anúncio/Alerta)
+// Anúncios enviados para usuários (email ou SMS)
+model Announcement {
+  id                  String              @id @default(cuid())
+  title               String
+  message             String
+  channel             AnnouncementChannel  // EMAIL ou SMS
+  audience            String              // "ALL", "STUDENTS", "TEACHERS", "ACTIVE_ONLY"
+  status              AnnouncementStatus  @default(PENDING)
+  createdByAdminEmail String              @map("created_by_admin_email")
+  sentAt              DateTime?           @map("sent_at")
+  criadoEm            DateTime            @default(now()) @map("created_at")
+  atualizadoEm        DateTime            @updatedAt @map("updated_at")
+  
+  // Índices
+  @@index([status])
+  @@index([channel])
+  @@index([criadoEm])
+  @@map("announcements")
+}
+
+// Model: TeacherAlert (Alerta para Professor)
+// Alertas específicos para professores
+model TeacherAlert {
+  id           String    @id @default(cuid())
+  teacherId    String    @map("teacher_id")
+  message      String
+  level        String?   // "INFO", "WARN", "ERROR"
+  isActive     Boolean   @default(true) @map("is_active")
+  criadoEm     DateTime  @default(now()) @map("created_at")
+  atualizadoEm DateTime  @updatedAt @map("updated_at")
+  
+  // Relacionamento
+  teacher      Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  
+  // Índices
+  @@index([teacherId])
+  @@index([isActive])
+  @@map("teacher_alerts")
+}

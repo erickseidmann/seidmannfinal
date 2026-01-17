@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: seidmann-postgres
+    environment:
+      POSTGRES_USER: seidmann
+      POSTGRES_PASSWORD: seidmann123
+      POSTGRES_DB: seidmann_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - seidmann-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seidmann"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: seidmann-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@seidmann.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - seidmann-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  seidmann-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  pgadmin_data:
