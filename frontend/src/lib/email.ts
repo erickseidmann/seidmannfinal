@@ -59,25 +59,63 @@ export async function sendEmail(options: {
   }
 }
 
-/** Mensagem: aula(s) confirmada(s) para o aluno e para o professor */
+const RODAPE_CONFIRMACAO = `
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+
+Em caso de dúvidas, por favor entre em contato com a gestão de aulas ou acesse o Portal do Aluno para mais informações.
+
+Estamos à disposição para ajudar.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+
+const MENSAGEM_CONFIRMACAO_PROFESSOR = `Olá,
+
+Atenção!
+Uma nova aula foi adicionada à sua agenda.
+Pedimos que verifique imediatamente sua agenda para confirmar os detalhes da aula.
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+Em caso de dúvidas, consulte a gestão de aulas pelos canais oficiais.
+
+Hello,
+
+Attention!
+A new class has been added to your schedule.
+Please check your agenda immediately to review and confirm the class details.
+
+📌 This is an automated message. Please do not reply to this email.
+If you have any questions, please contact the class management team through the official channels.
+
+Hola,
+
+¡Atención!
+Se ha agregado una nueva clase a su agenda.
+Por favor, revise su agenda de inmediato para verificar y confirmar los detalles de la clase.
+
+📌 Este es un mensaje automático. Por favor, no responda este correo.
+En caso de dudas, comuníquese con la gestión de clases a través de los canales oficiales.
+
+Atenciosamente / Kind regards / Saludos cordiales,
+Equipe Seidmann Institute`
+
+/** Mensagem: aula(s) confirmada(s) – texto genérico, sem listar dias e horários */
 export function mensagemAulaConfirmada(opcoes: {
   nomeAluno: string
   nomeProfessor: string
   aulas: { startAt: Date }[]
   destinatario: 'aluno' | 'professor'
 }): { subject: string; text: string } {
-  const { nomeAluno, nomeProfessor, aulas, destinatario } = opcoes
-  const linhas = aulas.map((a) => {
-    const d = new Date(a.startAt)
-    const { diaSemana, data, horario } = formatarDataHora(d)
-    return `• ${diaSemana}, ${data}, às ${horario}`
-  })
-  const lista = linhas.join('\n')
+  const { nomeAluno, nomeProfessor, destinatario } = opcoes
   const subject = 'Aula(s) confirmada(s) – Seidmann Institute'
   const text =
     destinatario === 'aluno'
-      ? `Olá, ${nomeAluno}!\n\nSuas aulas foram confirmadas com o(a) professor(a) ${nomeProfessor} nos seguintes dias e horários:\n\n${lista}\n\nQualquer dúvida, entre em contato conosco.\n\nSeidmann Institute`
-      : `Olá, ${nomeProfessor}!\n\nAs aulas com o(a) aluno(a) ${nomeAluno} foram confirmadas nos seguintes dias e horários:\n\n${lista}\n\nSeidmann Institute`
+      ? `Olá, ${nomeAluno}!
+
+Parabéns! 🎉
+Suas aulas estão confirmadas para os dias e horários previamente combinados com a gestão.${RODAPE_CONFIRMACAO}`
+      : MENSAGEM_CONFIRMACAO_PROFESSOR
   return { subject, text }
 }
 
@@ -105,6 +143,39 @@ Estamos à disposição para ajudar.
 Atenciosamente,
 Equipe Seidmann Institute`
 
+const MENSAGEM_CANCELAMENTO_PROFESSOR = `Olá,
+
+Atenção!
+Informamos que a aula agendada com o aluno(a) {{NOME_DO_ALUNO}} foi cancelada.
+
+Pedimos que verifique sua agenda para confirmar a atualização.
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+Em caso de dúvidas, consulte a gestão de aulas pelos canais oficiais.
+
+Hello,
+
+Attention!
+Please note that the scheduled class with the student {{STUDENT_NAME}} has been cancelled.
+
+We recommend that you check your schedule to confirm the update.
+
+📌 This is an automated message. Please do not reply to this email.
+If you have any questions, please contact the class management team through the official channels.
+
+Hola,
+
+¡Atención!
+Le informamos que la clase programada con el/la estudiante {{NOMBRE_DEL_ESTUDIANTE}} ha sido cancelada.
+
+Le recomendamos revisar su agenda para confirmar la actualización.
+
+📌 Este es un mensaje automático. Por favor, no responda este correo.
+En caso de dudas, comuníquese con la gestión de clases a través de los canales oficiales.
+
+Atenciosamente / Kind regards / Saludos cordiales,
+Equipe Seidmann Institute`
+
 /** Mensagem: aula cancelada */
 export function mensagemAulaCancelada(opcoes: {
   nomeAluno: string
@@ -112,10 +183,16 @@ export function mensagemAulaCancelada(opcoes: {
   data: Date
   destinatario: 'aluno' | 'professor'
 }): { subject: string; text: string } {
-  const { data } = opcoes
+  const { nomeAluno, data, destinatario } = opcoes
+  const subject = 'Aula cancelada – Seidmann Institute'
+  if (destinatario === 'professor') {
+    const text = MENSAGEM_CANCELAMENTO_PROFESSOR.replace(/\{\{NOME_DO_ALUNO\}\}/g, nomeAluno)
+      .replace(/\{\{STUDENT_NAME\}\}/g, nomeAluno)
+      .replace(/\{\{NOMBRE_DEL_ESTUDIANTE\}\}/g, nomeAluno)
+    return { subject, text }
+  }
   const { data: dataStr, horario } = formatarDataHora(new Date(data))
   const horarioCurto = horario.replace(/:00$/, 'h') // 20:00 → 20h
-  const subject = 'Aula cancelada – Seidmann Institute'
   const text = `Olá,
 
 Informamos que a aula agendada para o dia ${dataStr}, às ${horarioCurto}, foi CANCELADA.${RODAPE_CANCELAMENTO}`
@@ -145,6 +222,39 @@ ${lista}${RODAPE_CANCELAMENTO}`
   return { subject, text }
 }
 
+const MENSAGEM_REPOSICAO_PROFESSOR = `Olá,
+
+Atenção!
+Uma reposição de aula foi adicionada à sua agenda para o(s) dia(s) {{DATA_REPOSICAO}}, no(s) horário(s) {{HORARIO_REPOSICAO}}, com o(a) aluno(a) {{NOME_DO_ALUNO}}.
+
+Pedimos que verifique sua agenda imediatamente para confirmar os detalhes.
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+Em caso de dúvidas, consulte a gestão de aulas pelos canais oficiais.
+
+Hello,
+
+Attention!
+A make-up class has been added to your schedule for {{MAKEUP_DATE}}, at {{MAKEUP_TIME}}, with the student {{STUDENT_NAME}}.
+
+Please check your schedule immediately to confirm the details.
+
+📌 This is an automated message. Please do not reply to this email.
+If you have any questions, please contact the class management team through the official channels.
+
+Hola,
+
+¡Atención!
+Se ha agregado una clase de reposición a su agenda para el/los día(s) {{FECHA_REPOSICION}}, en el/los horario(s) {{HORARIO_REPOSICION}}, con el/la estudiante {{NOMBRE_DEL_ESTUDIANTE}}.
+
+Por favor, revise su agenda de inmediato para confirmar los detalles.
+
+📌 Este es un mensaje automático. Por favor, no responda este correo.
+En caso de dudas, comuníquese con la gestión de clases a través de los canales oficiales.
+
+Atenciosamente / Kind regards / Saludos cordiales,
+Equipe Seidmann Institute`
+
 /** Mensagem: reposição agendada */
 export function mensagemReposicaoAgendada(opcoes: {
   nomeAluno: string
@@ -152,10 +262,22 @@ export function mensagemReposicaoAgendada(opcoes: {
   data: Date
   destinatario: 'aluno' | 'professor'
 }): { subject: string; text: string } {
-  const { data } = opcoes
+  const { nomeAluno, data, destinatario } = opcoes
   const { data: dataStr, horario } = formatarDataHora(new Date(data))
   const horarioCurto = horario.replace(/:00$/, 'h')
   const subject = 'Reposição de aula agendada – Seidmann Institute'
+  if (destinatario === 'professor') {
+    const text = MENSAGEM_REPOSICAO_PROFESSOR.replace(/\{\{DATA_REPOSICAO\}\}/g, dataStr)
+      .replace(/\{\{HORARIO_REPOSICAO\}\}/g, horarioCurto)
+      .replace(/\{\{NOME_DO_ALUNO\}\}/g, nomeAluno)
+      .replace(/\{\{MAKEUP_DATE\}\}/g, dataStr)
+      .replace(/\{\{MAKEUP_TIME\}\}/g, horarioCurto)
+      .replace(/\{\{STUDENT_NAME\}\}/g, nomeAluno)
+      .replace(/\{\{FECHA_REPOSICION\}\}/g, dataStr)
+      .replace(/\{\{HORARIO_REPOSICION\}\}/g, horarioCurto)
+      .replace(/\{\{NOMBRE_DEL_ESTUDIANTE\}\}/g, nomeAluno)
+    return { subject, text }
+  }
   const text = `Olá,
 
 Informamos que a reposição da aula agendada para o dia ${dataStr}, às ${horarioCurto}, foi confirmada com sucesso ✅.${RODAPE_REPOSICAO}`

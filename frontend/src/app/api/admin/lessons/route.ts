@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { sendEmail, mensagemAulaConfirmada } from '@/lib/email'
+import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada } from '@/lib/email'
 
 export async function GET(request: NextRequest) {
   try {
@@ -170,6 +170,38 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         console.error('[api/admin/lessons POST] Erro ao enviar e-mail:', err)
+      }
+    }
+
+    // E-mail: reposição agendada (criar aula com status Reposição)
+    if (validStatus === 'REPOSICAO' && lessonsCreated.length > 0) {
+      const first = lessonsCreated[0]
+      const nomeAluno = first.enrollment.nome
+      const nomeProfessor = first.teacher.nome
+      const emailAluno = first.enrollment.email
+      const emailProfessor = first.teacher.email
+      const dataAula = first.startAt
+      try {
+        if (emailAluno) {
+          const { subject, text } = mensagemReposicaoAgendada({
+            nomeAluno,
+            nomeProfessor,
+            data: dataAula,
+            destinatario: 'aluno',
+          })
+          await sendEmail({ to: emailAluno, subject, text })
+        }
+        if (emailProfessor) {
+          const { subject, text } = mensagemReposicaoAgendada({
+            nomeAluno,
+            nomeProfessor,
+            data: dataAula,
+            destinatario: 'professor',
+          })
+          await sendEmail({ to: emailProfessor, subject, text })
+        }
+      } catch (err) {
+        console.error('[api/admin/lessons POST] Erro ao enviar e-mail de reposição:', err)
       }
     }
 

@@ -128,9 +128,9 @@ export async function PATCH(
     })
 
     // E-mail: envia quando o status mudou para CANCELLED (ex.: Confirmada→Cancelada ou Reposição→Cancelada) ou para REPOSICAO
-    const oldStatus = lessonBefore?.status
-    const newStatus = updateData.status ?? oldStatus
-    const statusChanged = updateData.status != null && oldStatus !== newStatus
+    const oldStatus = lessonBefore?.status as string | undefined
+    const newStatus = (updateData.status ?? oldStatus) as string | undefined
+    const statusChanged = updateData.status != null && String(oldStatus) !== String(newStatus)
     if (statusChanged && newStatus && lesson.enrollment && lesson.teacher) {
       const nomeAluno = lesson.enrollment.nome
       const nomeProfessor = lesson.teacher.nome
