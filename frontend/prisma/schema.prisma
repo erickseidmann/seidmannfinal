@@ -150,6 +150,7 @@ model Enrollment {
   paymentInfo    PaymentInfo?
   alerts         StudentAlert[]
   lessons        Lesson[]
+  lessonRecordPresences LessonRecordStudent[]
 
   @@index([email])
   @@index([whatsapp])
@@ -342,9 +343,82 @@ model Lesson {
 
   enrollment        Enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   teacher           Teacher      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  record            LessonRecord?
 
   @@index([startAt])
   @@index([enrollmentId])
   @@index([teacherId])
   @@map("lessons")
+}
+
+// Presença do aluno no registro de aula
+enum RecordPresence {
+  PRESENTE       // Presente
+  NAO_COMPARECEU // Não compareceu
+  ATRASADO       // Atrasado
+}
+
+// Tipo de aula no registro
+enum RecordLessonType {
+  NORMAL        // Normal
+  CONVERSAÇÃO   // Só conversação
+  REVISAO       // Revisão
+  AVALIACAO     // Avaliação
+}
+
+// Última tarefa feita
+enum RecordHomeworkDone {
+  SIM          // Sim
+  NAO          // Não
+  PARCIAL      // Parcial
+  NAO_APLICA   // Não aplica
+}
+
+// Model: LessonRecord (Registro de aula)
+// Registro do que aconteceu na aula: presença, tipo, livro, página, tarefa, notas (se avaliação)
+model LessonRecord {
+  id                      String            @id @default(cuid())
+  lessonId                String            @unique @map("lesson_id")
+  status                  LessonStatus      @default(CONFIRMED) // status da aula: confirmada, cancelada, reposição
+  presence                RecordPresence    @default(PRESENTE)
+  lessonType              RecordLessonType  @default(NORMAL) @map("lesson_type")
+  curso                   String?           @db.VarChar(50) // INGLES, ESPANHOL, INGLES_E_ESPANHOL
+  tempoAulaMinutos        Int?             @map("tempo_aula_minutos") // preenchido automaticamente da aula selecionada
+  book                    String?           @db.VarChar(255) // livro do aluno
+  lastPage                String?           @db.VarChar(100) @map("last_page") // última página trabalhada
+  assignedHomework        String?           @db.Text @map("assigned_homework") // tarefa designada
+  homeworkDone            RecordHomeworkDone? @map("homework_done") // última tarefa feita
+  conversationDescription String?           @db.Text @map("conversation_description") // descrição da aula de conversação (quando tipo = Só conversação)
+  notes                   String?           @db.Text // obs geral
+  notesForStudent         String?           @db.Text @map("notes_for_student") // obs para os alunos
+  notesForParents         String?           @db.Text @map("notes_for_parents") // obs para os pais
+  gradeGrammar            Float?            @map("grade_grammar")
+  gradeSpeaking           Float?            @map("grade_speaking")
+  gradeListening          Float?            @map("grade_listening")
+  gradeUnderstanding      Float?            @map("grade_understanding")
+  criadoEm                DateTime          @default(now()) @map("created_at")
+  atualizadoEm            DateTime          @updatedAt @map("updated_at")
+
+  lesson                  Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  studentPresences        LessonRecordStudent[] // quando aula é em grupo: presença por aluno
+
+  @@index([lessonId])
+  @@index([status])
+  @@map("lesson_records")
+}
+
+// Presença por aluno em aula em grupo (um registro por aluno do grupo)
+model LessonRecordStudent {
+  id              String          @id @default(cuid())
+  lessonRecordId  String          @map("lesson_record_id")
+  enrollmentId    String          @map("enrollment_id")
+  presence        RecordPresence  @default(PRESENTE)
+
+  lessonRecord    LessonRecord    @relation(fields: [lessonRecordId], references: [id], onDelete: Cascade)
+  enrollment      Enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonRecordId, enrollmentId])
+  @@index([lessonRecordId])
+  @@index([enrollmentId])
+  @@map("lesson_record_students")
 }

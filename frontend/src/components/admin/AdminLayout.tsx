@@ -19,6 +19,7 @@ import {
   Bell,
   GraduationCap,
   CalendarDays,
+  ClipboardList,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -40,6 +41,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/livros': 'livros',
   '/admin/alertas': 'alertas',
   '/admin/calendario': 'calendario',
+  '/admin/registros-aulas': 'registros-aulas',
 }
 
 const baseMenuItems: MenuItem[] = [
@@ -50,6 +52,7 @@ const baseMenuItems: MenuItem[] = [
   { href: '/admin/livros', labelKey: 'admin.books', icon: BookOpen },
   { href: '/admin/alertas', labelKey: 'admin.alerts', icon: Bell },
   { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
+  { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
 ]
 
 export default function AdminLayout({ children }: AdminLayoutProps) {

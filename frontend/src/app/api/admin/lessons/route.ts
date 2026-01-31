@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
         startAt: { gte: startAt, lte: endAt },
       },
       include: {
-        enrollment: { select: { id: true, nome: true, frequenciaSemanal: true } },
+        enrollment: { select: { id: true, nome: true, frequenciaSemanal: true, tipoAula: true, nomeGrupo: true, curso: true } },
         teacher: { select: { id: true, nome: true } },
       },
       orderBy: { startAt: 'asc' },

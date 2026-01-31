@@ -47,6 +47,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.books': 'Livros',
     'admin.alerts': 'Alertas',
     'admin.calendar': 'Calendário',
+    'admin.lessonRecords': 'Registros de aulas',
 
     // Geral
     'common.cancel': 'Cancelar',
@@ -94,6 +95,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.books': 'Books',
     'admin.alerts': 'Alerts',
     'admin.calendar': 'Calendar',
+    'admin.lessonRecords': 'Class records',
 
     'common.cancel': 'Cancel',
     'common.save': 'Save',
@@ -140,6 +142,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.books': 'Libros',
     'admin.alerts': 'Alertas',
     'admin.calendar': 'Calendario',
+    'admin.lessonRecords': 'Registros de clases',
 
     'common.cancel': 'Cancelar',
     'common.save': 'Guardar',

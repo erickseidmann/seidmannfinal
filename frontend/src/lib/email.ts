@@ -143,6 +143,90 @@ Estamos à disposição para ajudar.
 Atenciosamente,
 Equipe Seidmann Institute`
 
+const RODAPE_REGISTRO_AULA = `
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+
+Em caso de dúvidas, entre em contato com a gestão de aulas ou acesse o Portal do Aluno.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+
+const STATUS_LABEL: Record<string, string> = {
+  CONFIRMED: 'Confirmada',
+  CANCELLED: 'Cancelada',
+  REPOSICAO: 'Reposição',
+}
+const PRESENCE_LABEL: Record<string, string> = {
+  PRESENTE: 'Presente',
+  NAO_COMPARECEU: 'Não compareceu',
+  ATRASADO: 'Atrasado',
+}
+const LESSON_TYPE_LABEL: Record<string, string> = {
+  NORMAL: 'Normal',
+  CONVERSAÇÃO: 'Só conversação',
+  REVISAO: 'Revisão',
+  AVALIACAO: 'Avaliação',
+}
+const HOMEWORK_DONE_LABEL: Record<string, string> = {
+  SIM: 'Sim',
+  NAO: 'Não',
+  PARCIAL: 'Parcial',
+  NAO_APLICA: 'Não aplica',
+}
+const CURSO_LABEL: Record<string, string> = {
+  INGLES: 'Inglês',
+  ESPANHOL: 'Espanhol',
+  INGLES_E_ESPANHOL: 'Inglês e Espanhol',
+}
+
+/** Mensagem: registro de aula criado – envia para o aluno com as infos da aula registrada */
+export function mensagemAulaRegistrada(opcoes: {
+  nomeAluno: string
+  dataAula: Date
+  nomeProfessor: string
+  status: string
+  presence: string
+  lessonType: string
+  curso?: string | null
+  tempoAulaMinutos?: number | null
+  book: string | null
+  lastPage: string | null
+  assignedHomework: string | null
+  homeworkDone: string | null
+  notesForStudent: string | null
+}): { subject: string; text: string } {
+  const { nomeAluno, dataAula, nomeProfessor, status, presence, lessonType, curso, tempoAulaMinutos, book, lastPage, assignedHomework, homeworkDone, notesForStudent } = opcoes
+  const { diaSemana, data: dataStr, horario } = formatarDataHora(new Date(dataAula))
+  const horarioCurto = horario.replace(/:00$/, 'h')
+  const subject = 'Registro de aula – Seidmann Institute'
+  const linhas: string[] = [
+    `Olá, ${nomeAluno}!`,
+    '',
+    'O registro da sua aula foi realizado com as seguintes informações:',
+    '',
+    `📅 Data e horário: ${diaSemana}, ${dataStr}, às ${horarioCurto}`,
+    `👤 Professor(a): ${nomeProfessor}`,
+    `📋 Status da aula: ${STATUS_LABEL[status] ?? status}`,
+    `✓ Sua presença: ${PRESENCE_LABEL[presence] ?? presence}`,
+    `📖 Tipo de aula: ${LESSON_TYPE_LABEL[lessonType] ?? lessonType}`,
+  ]
+  if (curso) linhas.push(`🌐 Curso: ${CURSO_LABEL[curso] ?? curso}`)
+  if (tempoAulaMinutos != null) linhas.push(`⏱️ Tempo de aula: ${tempoAulaMinutos} min`)
+  if (book?.trim()) linhas.push(`📚 Livro: ${book.trim()}`)
+  if (lastPage?.trim()) linhas.push(`📄 Última página trabalhada: ${lastPage.trim()}`)
+  if (assignedHomework?.trim()) linhas.push(`📝 Tarefa designada: ${assignedHomework.trim()}`)
+  if (homeworkDone) linhas.push(`✓ Última tarefa feita: ${HOMEWORK_DONE_LABEL[homeworkDone] ?? homeworkDone}`)
+  if (notesForStudent?.trim()) {
+    linhas.push('')
+    linhas.push('Observações para você:')
+    linhas.push(notesForStudent.trim())
+  }
+  linhas.push(RODAPE_REGISTRO_AULA)
+  const text = linhas.join('\n')
+  return { subject, text }
+}
+
 const MENSAGEM_CANCELAMENTO_PROFESSOR = `Olá,
 
 Atenção!
