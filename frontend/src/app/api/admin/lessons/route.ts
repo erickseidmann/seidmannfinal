@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { sendEmail, mensagemAulaConfirmada } from '@/lib/email'
 
 export async function GET(request: NextRequest) {
   try {
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
       startAt: startAtStr,
       durationMinutes = 60,
       notes,
+      repeatWeeks: repeatWeeksParam,
     } = body
 
     if (!enrollmentId || !teacherId || !startAtStr) {
@@ -113,25 +115,67 @@ export async function POST(request: NextRequest) {
     const validStatus = ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status)
       ? status
       : 'CONFIRMED'
+    const duration = Number(durationMinutes) || 60
+    const notesTrim = notes?.trim() || null
 
-    const lesson = await prisma.lesson.create({
-      data: {
-        enrollmentId,
-        teacherId,
-        status: validStatus,
-        startAt,
-        durationMinutes: Number(durationMinutes) || 60,
-        notes: notes?.trim() || null,
-      },
-      include: {
-        enrollment: { select: { id: true, nome: true, frequenciaSemanal: true } },
-        teacher: { select: { id: true, nome: true } },
-      },
-    })
+    const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
+
+    const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
+    for (let w = 0; w < repeatWeeks; w++) {
+      const lessonStart = new Date(startAt)
+      lessonStart.setDate(lessonStart.getDate() + w * 7)
+      const lesson = await prisma.lesson.create({
+        data: {
+          enrollmentId,
+          teacherId,
+          status: validStatus,
+          startAt: lessonStart,
+          durationMinutes: duration,
+          notes: notesTrim,
+        },
+        include: {
+          enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+          teacher: { select: { id: true, nome: true, email: true } },
+        },
+      })
+      lessonsCreated.push(lesson)
+    }
+
+    // E-mail: aula(s) confirmada(s) para aluno e professor
+    if (validStatus === 'CONFIRMED' && lessonsCreated.length > 0) {
+      const first = lessonsCreated[0]
+      const nomeAluno = first.enrollment.nome
+      const nomeProfessor = first.teacher.nome
+      const emailAluno = first.enrollment.email
+      const emailProfessor = first.teacher.email
+      const aulas = lessonsCreated.map((l) => ({ startAt: l.startAt }))
+      try {
+        if (emailAluno) {
+          const { subject, text } = mensagemAulaConfirmada({
+            nomeAluno,
+            nomeProfessor,
+            aulas,
+            destinatario: 'aluno',
+          })
+          await sendEmail({ to: emailAluno, subject, text })
+        }
+        if (emailProfessor) {
+          const { subject, text } = mensagemAulaConfirmada({
+            nomeAluno,
+            nomeProfessor,
+            aulas,
+            destinatario: 'professor',
+          })
+          await sendEmail({ to: emailProfessor, subject, text })
+        }
+      } catch (err) {
+        console.error('[api/admin/lessons POST] Erro ao enviar e-mail:', err)
+      }
+    }
 
     return NextResponse.json({
       ok: true,
-      data: { lesson },
+      data: { lesson: lessonsCreated[0], lessons: lessonsCreated, count: lessonsCreated.length },
     })
   } catch (error) {
     console.error('[api/admin/lessons POST]', error)

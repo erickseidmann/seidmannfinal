@@ -164,7 +164,10 @@ export default function AdminCalendarioPage() {
     startAt: '',
     durationMinutes: 60,
     notes: '',
+    repeatEnabled: false,
+    repeatWeeks: 4,
   })
+  const [deleteLessonModalOpen, setDeleteLessonModalOpen] = useState(false)
   const [listModal, setListModal] = useState<{
     title: string
     type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors'
@@ -299,6 +302,8 @@ export default function AdminCalendarioPage() {
       startAt: toDatetimeLocal(start),
       durationMinutes: 60,
       notes: '',
+      repeatEnabled: false,
+      repeatWeeks: 4,
     })
     setLessonModalOpen(true)
   }
@@ -313,6 +318,8 @@ export default function AdminCalendarioPage() {
       startAt: toDatetimeLocal(start),
       durationMinutes: lesson.durationMinutes,
       notes: lesson.notes || '',
+      repeatEnabled: false,
+      repeatWeeks: 4,
     })
     setLessonModalOpen(true)
   }
@@ -350,6 +357,7 @@ export default function AdminCalendarioPage() {
         }
         setToast({ message: 'Aula atualizada', type: 'success' })
       } else {
+        const repeatWeeks = lessonForm.repeatEnabled ? Math.min(52, Math.max(1, lessonForm.repeatWeeks)) : 1
         const res = await fetch('/api/admin/lessons', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -361,6 +369,7 @@ export default function AdminCalendarioPage() {
             startAt: startAt.toISOString(),
             durationMinutes: lessonForm.durationMinutes,
             notes: lessonForm.notes || null,
+            repeatWeeks,
           }),
         })
         const json = await res.json()
@@ -368,7 +377,8 @@ export default function AdminCalendarioPage() {
           setToast({ message: json.message || 'Erro ao criar aula', type: 'error' })
           return
         }
-        setToast({ message: 'Aula criada', type: 'success' })
+        const count = json.data?.count ?? 1
+        setToast({ message: count > 1 ? `${count} aulas criadas` : 'Aula criada', type: 'success' })
       }
       setLessonModalOpen(false)
       fetchLessons()
@@ -378,13 +388,19 @@ export default function AdminCalendarioPage() {
     }
   }
 
-  const handleDeleteLesson = async () => {
+  const openDeleteLessonModal = () => {
+    if (editingLesson) setDeleteLessonModalOpen(true)
+  }
+
+  const handleDeleteLesson = async (deleteFuture: boolean) => {
     if (!editingLesson) return
-    if (!confirm('Deseja realmente excluir esta aula?')) return
+    setDeleteLessonModalOpen(false)
     try {
       const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
         method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({ deleteFuture }),
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
@@ -393,7 +409,8 @@ export default function AdminCalendarioPage() {
       }
       setLessonModalOpen(false)
       setEditingLesson(null)
-      setToast({ message: 'Aula excluída', type: 'success' })
+      const count = json.data?.count ?? 1
+      setToast({ message: count > 1 ? `${count} aulas excluídas` : 'Aula excluída', type: 'success' })
       fetchLessons()
       fetchStats()
     } catch (err) {
@@ -799,7 +816,7 @@ export default function AdminCalendarioPage() {
               {editingLesson && (
                 <Button
                   variant="outline"
-                  onClick={handleDeleteLesson}
+                  onClick={openDeleteLessonModal}
                   className="mr-auto text-red-600 border-red-200 hover:bg-red-50"
                 >
                   <Trash2 className="w-4 h-4 mr-1" />
@@ -890,7 +907,60 @@ export default function AdminCalendarioPage() {
                 placeholder="Opcional"
               />
             </div>
+            {!editingLesson && (
+              <div className="space-y-2 pt-2 border-t border-gray-200">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={lessonForm.repeatEnabled}
+                    onChange={(e) => setLessonForm({ ...lessonForm, repeatEnabled: e.target.checked })}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Repetir nas próximas semanas (mesmo dia e hora)</span>
+                </label>
+                {lessonForm.repeatEnabled && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Quantas semanas?</label>
+                    <select
+                      value={lessonForm.repeatWeeks}
+                      onChange={(e) => setLessonForm({ ...lessonForm, repeatWeeks: Number(e.target.value) })}
+                      className="input w-full max-w-[120px]"
+                    >
+                      <option value={4}>4 semanas</option>
+                      <option value={8}>8 semanas</option>
+                      <option value={12}>12 semanas</option>
+                      <option value={52}>52 semanas (1 ano)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
           </form>
+        </Modal>
+
+        {/* Modal: excluir apenas esta ou esta e todas à frente */}
+        <Modal
+          isOpen={deleteLessonModalOpen}
+          onClose={() => setDeleteLessonModalOpen(false)}
+          title="Excluir aula"
+          size="sm"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setDeleteLessonModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDeleteLesson(false)}>
+                Apenas esta aula
+              </Button>
+              <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={() => handleDeleteLesson(true)}>
+                Esta e todas as aulas futuras (mesmo dia e hora)
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-gray-700">
+            Deseja excluir apenas esta aula ou esta aula e todas as futuras no mesmo dia e horário? Aulas que já passaram não serão excluídas.
+          </p>
         </Modal>
 
         {/* Modal lista (ao clicar no cubo) */}
