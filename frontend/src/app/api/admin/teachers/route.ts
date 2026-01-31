@@ -37,6 +37,10 @@ export async function GET(request: NextRequest) {
             email: true,
           },
         },
+        alerts: {
+          select: { id: true, message: true, level: true },
+          orderBy: { criadoEm: 'desc' },
+        },
         _count: {
           select: {
             attendances: true,
@@ -55,13 +59,21 @@ export async function GET(request: NextRequest) {
         teachers: teachers.map((t) => ({
           id: t.id,
           nome: t.nome,
+          nomePreferido: t.nomePreferido,
           email: t.email,
           whatsapp: t.whatsapp,
+          cpf: t.cpf,
+          cnpj: t.cnpj,
+          valorPorHora: t.valorPorHora != null ? Number(t.valorPorHora) : null,
+          metodoPagamento: t.metodoPagamento,
+          infosPagamento: t.infosPagamento,
+          nota: t.nota,
           status: t.status,
           userId: t.userId,
           user: t.user,
           attendancesCount: t._count.attendances,
           alertsCount: t._count.alerts,
+          alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
           criadoEm: t.criadoEm.toISOString(),
           atualizadoEm: t.atualizadoEm.toISOString(),
         })),
@@ -87,9 +99,20 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { nome, email, whatsapp, status } = body
+    const {
+      nome,
+      email,
+      whatsapp,
+      status,
+      nomePreferido,
+      valorPorHora,
+      metodoPagamento,
+      infosPagamento,
+      cpf,
+      cnpj,
+      nota,
+    } = body
 
-    // Validações
     if (!nome || !email) {
       return NextResponse.json(
         { ok: false, message: 'Nome e email são obrigatórios' },
@@ -99,7 +122,13 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.trim().toLowerCase()
 
-    // Verificar se email já existe
+    if (metodoPagamento && !['PIX', 'CARTAO', 'OUTRO'].includes(metodoPagamento)) {
+      return NextResponse.json(
+        { ok: false, message: 'Método de pagamento inválido' },
+        { status: 400 }
+      )
+    }
+
     const existing = await prisma.teacher.findUnique({
       where: { email: normalizedEmail },
     })
@@ -114,8 +143,15 @@ export async function POST(request: NextRequest) {
     const teacher = await prisma.teacher.create({
       data: {
         nome: nome.trim(),
+        nomePreferido: nomePreferido?.trim() || null,
         email: normalizedEmail,
         whatsapp: whatsapp?.trim() || null,
+        cpf: cpf?.trim() || null,
+        cnpj: cnpj?.trim() || null,
+        valorPorHora: valorPorHora != null && valorPorHora !== '' ? Number(valorPorHora) : null,
+        metodoPagamento: metodoPagamento || null,
+        infosPagamento: infosPagamento?.trim() || null,
+        nota: nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null,
         status: status || 'ACTIVE',
       },
     })
@@ -126,8 +162,15 @@ export async function POST(request: NextRequest) {
         teacher: {
           id: teacher.id,
           nome: teacher.nome,
+          nomePreferido: teacher.nomePreferido,
           email: teacher.email,
           whatsapp: teacher.whatsapp,
+          cpf: teacher.cpf,
+          cnpj: teacher.cnpj,
+          valorPorHora: teacher.valorPorHora != null ? Number(teacher.valorPorHora) : null,
+          metodoPagamento: teacher.metodoPagamento,
+          infosPagamento: teacher.infosPagamento,
+          nota: teacher.nota,
           status: teacher.status,
           criadoEm: teacher.criadoEm.toISOString(),
         },

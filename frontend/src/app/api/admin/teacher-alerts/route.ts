@@ -46,6 +46,13 @@ export async function GET(request: NextRequest) {
             email: true,
           },
         },
+        createdBy: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          },
+        },
       },
       orderBy: {
         criadoEm: 'desc',
@@ -64,6 +71,7 @@ export async function GET(request: NextRequest) {
           isActive: a.isActive,
           criadoEm: a.criadoEm.toISOString(),
           atualizadoEm: a.atualizadoEm.toISOString(),
+          createdBy: a.createdBy ? { id: a.createdBy.id, nome: a.createdBy.nome, email: a.createdBy.email } : null,
         })),
       },
     })
@@ -118,15 +126,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const createdById = auth.session?.sub ?? null
+
     const alert = await prisma.teacherAlert.create({
       data: {
         teacherId,
         message: message.trim(),
         level: level || 'INFO',
         isActive: true,
+        createdById,
       },
       include: {
         teacher: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          },
+        },
+        createdBy: {
           select: {
             id: true,
             nome: true,
@@ -147,6 +165,7 @@ export async function POST(request: NextRequest) {
           level: alert.level,
           isActive: alert.isActive,
           criadoEm: alert.criadoEm.toISOString(),
+          createdBy: alert.createdBy ? { id: alert.createdBy.id, nome: alert.createdBy.nome, email: alert.createdBy.email } : null,
         },
         message: 'Alerta criado com sucesso',
       },

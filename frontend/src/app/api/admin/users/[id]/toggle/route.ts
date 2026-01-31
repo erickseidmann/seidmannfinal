@@ -6,14 +6,16 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth'
+import { requireSuperAdmin } from '@/lib/auth'
+
+const SEIDMANN_SUFFIX = '@seidmann.com'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const auth = await requireAdmin(request)
+    const auth = await requireSuperAdmin(request)
     if (!auth.authorized) {
       return NextResponse.json(
         { ok: false, message: auth.message || 'Não autorizado' },
@@ -31,6 +33,12 @@ export async function POST(
       return NextResponse.json(
         { ok: false, message: 'Usuário não encontrado' },
         { status: 404 }
+      )
+    }
+    if (!user.email.endsWith(SEIDMANN_SUFFIX)) {
+      return NextResponse.json(
+        { ok: false, message: 'Só é possível alterar status de usuários do ADM' },
+        { status: 403 }
       )
     }
 

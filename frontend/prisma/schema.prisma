@@ -17,6 +17,8 @@ enum EnrollmentStatus {
   CONTRACT_ACCEPTED
   PAYMENT_PENDING
   ACTIVE
+  INACTIVE   // Aluno inativo
+  PAUSED     // Aluno pausado
   BLOCKED
   COMPLETED
 }
@@ -74,14 +76,18 @@ model User {
   senha        String       @map("password_hash") // Hash da senha (bcrypt)
   role         UserRole     @default(STUDENT) // ADMIN, TEACHER, STUDENT
   status       UserStatus   @default(PENDING) // PENDING, ACTIVE, BLOCKED
+  funcao       String?      @db.VarChar(255) @map("funcao") // Função/cargo (para usuários do ADM)
+  adminPages   Json?        @map("admin_pages") // Páginas do dashboard que pode acessar (array de strings)
   criadoEm     DateTime     @default(now()) @map("created_at")
   atualizadoEm DateTime     @updatedAt @map("updated_at")
   
   // Relacionamentos
-  enrollments    Enrollment[]
-  attendances    Attendance[]
-  bookReleases   BookRelease[]
-  teacher        Teacher?
+  enrollments        Enrollment[]
+  attendances        Attendance[]
+  bookReleases       BookRelease[]
+  teacher            Teacher?
+  teacherAlertsCreated TeacherAlert[]
+  studentAlertsCreated StudentAlert[]
   
   // Índices
   @@index([email])
@@ -90,23 +96,50 @@ model User {
   @@map("users")
 }
 
-// Model: Enrollment (Matrícula)
+// Model: Enrollment (Matrícula / Aluno)
 // Representa uma matrícula/lead no sistema
 model Enrollment {
   id             String           @id @default(cuid())
   userId         String?          @map("user_id")
   
-  // Dados do formulário de matrícula
+  // Dados básicos
   nome           String
   email          String
   whatsapp       String
-  idioma         Language?    // Opcional: pode ser null quando criado pelo cadastro direto
-  nivel          String?      // Opcional: pode ser null quando criado pelo cadastro direto
+  idioma         Language?    // Opcional
+  nivel          String?
   objetivo       String?
   disponibilidade String?
   
+  // Dados completos do aluno (cadastro admin)
+  dataNascimento   DateTime?     @map("data_nascimento")
+  nomeResponsavel  String?        @db.VarChar(255) @map("nome_responsavel") // se menor
+  cpf              String?        @db.VarChar(14)
+  cpfResponsavel   String?        @db.VarChar(14) @map("cpf_responsavel")   // se menor
+  curso            String?        @db.VarChar(50)  // INGLES, ESPANHOL, INGLES_E_ESPANHOL
+  frequenciaSemanal Int?          @map("frequencia_semanal") // 1-7
+  tempoAulaMinutos  Int?          @map("tempo_aula_minutos") // 30, 40, 60, 120
+  tipoAula         String?        @db.VarChar(20) @map("tipo_aula") // PARTICULAR, GRUPO
+  nomeGrupo        String?        @db.VarChar(255) @map("nome_grupo") // quando tipoAula = GRUPO
+  cep               String?       @db.VarChar(9)
+  rua               String?      @db.VarChar(255)
+  cidade            String?      @db.VarChar(100)
+  estado            String?      @db.VarChar(2)
+  numero            String?      @db.VarChar(20)
+  complemento       String?      @db.VarChar(255)
+  moraNoExterior    Boolean      @default(false) @map("mora_no_exterior")
+  enderecoExterior  String?      @db.Text @map("endereco_exterior")
+  valorMensalidade  Decimal?     @db.Decimal(10, 2) @map("valor_mensalidade")
+  metodoPagamento   String?      @db.VarChar(50) @map("metodo_pagamento")
+  diaPagamento      Int?         @map("dia_pagamento") // 1-31
+  melhoresHorarios  String?      @db.VarChar(255) @map("melhores_horarios")
+  melhoresDiasSemana String?     @db.VarChar(255) @map("melhores_dias_semana")
+  nomeVendedor      String?      @db.VarChar(255) @map("nome_vendedor")
+  nomeEmpresaOuIndicador String?  @db.VarChar(255) @map("nome_empresa_ou_indicador")
+  observacoes       String?      @db.Text
+  
   status         EnrollmentStatus @default(LEAD)
-  trackingCode   String?          @unique @map("tracking_code") // Código único para acompanhamento (ex: MAT-A7F3K1Q9)
+  trackingCode   String?          @unique @map("tracking_code")
   contractAcceptedAt DateTime?    @map("contract_accepted_at")
   contractVersion    String?      @map("contract_version")
   criadoEm       DateTime         @default(now()) @map("created_at")
@@ -115,8 +148,9 @@ model Enrollment {
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
-  
-  // Índices para buscar por email/whatsapp
+  alerts         StudentAlert[]
+  lessons        Lesson[]
+
   @@index([email])
   @@index([whatsapp])
   @@index([trackingCode])
@@ -152,20 +186,28 @@ model PaymentInfo {
 // Model: Teacher (Professor)
 // Representa um professor do instituto
 model Teacher {
-  id           String       @id @default(cuid())
-  nome         String
-  email        String       @unique
-  whatsapp     String?
-  status       UserStatus   @default(ACTIVE) // ACTIVE ou INACTIVE
-  userId       String?      @unique @map("user_id") // Opcional: link com User se tiver conta
-  criadoEm     DateTime     @default(now()) @map("created_at")
-  atualizadoEm DateTime     @updatedAt @map("updated_at")
+  id              String       @id @default(cuid())
+  nome            String
+  nomePreferido   String?      @map("nome_preferido") // Nome que prefere ser chamado
+  email           String       @unique
+  whatsapp        String?
+  cpf             String?      // CPF (opcional)
+  cnpj            String?      // CNPJ (opcional)
+  valorPorHora    Decimal?     @db.Decimal(10, 2) @map("valor_por_hora")
+  metodoPagamento String?      @map("metodo_pagamento") // PIX, CARTAO
+  infosPagamento  String?      @db.Text @map("infos_pagamento")
+  nota            Int?         // Avaliação 1-5 estrelas
+  status          UserStatus   @default(ACTIVE) // ACTIVE ou INACTIVE
+  userId          String?      @unique @map("user_id") // Opcional: link com User se tiver conta
+  criadoEm        DateTime     @default(now()) @map("created_at")
+  atualizadoEm    DateTime     @updatedAt @map("updated_at")
   
   // Relacionamentos
   user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   attendances  Attendance[]
   alerts       TeacherAlert[]
-  
+  lessons      Lesson[]
+
   // Índices
   @@index([email])
   @@index([status])
@@ -246,12 +288,63 @@ model TeacherAlert {
   isActive     Boolean   @default(true) @map("is_active")
   criadoEm     DateTime  @default(now()) @map("created_at")
   atualizadoEm DateTime  @updatedAt @map("updated_at")
+  createdById  String?   @map("created_by_id") // Admin que criou o alerta
   
-  // Relacionamento
+  // Relacionamentos
   teacher      Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  createdBy    User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
   
   // Índices
   @@index([teacherId])
   @@index([isActive])
   @@map("teacher_alerts")
+}
+
+// Model: StudentAlert (Alerta para Aluno/Matrícula)
+// Alertas específicos para alunos (como TeacherAlert para professores)
+model StudentAlert {
+  id            String     @id @default(cuid())
+  enrollmentId  String     @map("enrollment_id")
+  message       String
+  level         String?    // "INFO", "WARN", "ERROR"
+  isActive      Boolean    @default(true) @map("is_active")
+  criadoEm      DateTime   @default(now()) @map("created_at")
+  atualizadoEm  DateTime   @updatedAt @map("updated_at")
+  createdById   String?    @map("created_by_id")
+
+  enrollment    Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  createdBy     User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([enrollmentId])
+  @@index([isActive])
+  @@map("student_alerts")
+}
+
+// Status da aula no calendário (segunda a sábado = semana para frequência)
+enum LessonStatus {
+  CONFIRMED   // Confirmada
+  CANCELLED   // Cancelada
+  REPOSICAO   // Reposição
+}
+
+// Model: Lesson (Aula no calendário)
+// Aula agendada: aluno (enrollment) + professor + status + data/hora
+model Lesson {
+  id                String       @id @default(cuid())
+  enrollmentId      String       @map("enrollment_id")
+  teacherId         String       @map("teacher_id")
+  status            LessonStatus @default(CONFIRMED)
+  startAt           DateTime     @map("start_at")
+  durationMinutes   Int          @default(60) @map("duration_minutes")
+  notes             String?      @db.Text
+  criadoEm          DateTime     @default(now()) @map("created_at")
+  atualizadoEm      DateTime     @updatedAt @map("updated_at")
+
+  enrollment        Enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  teacher           Teacher      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([startAt])
+  @@index([enrollmentId])
+  @@index([teacherId])
+  @@map("lessons")
 }

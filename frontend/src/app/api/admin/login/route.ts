@@ -68,21 +68,40 @@ export async function POST(request: NextRequest) {
     const normalizedEmail = email.trim().toLowerCase()
     const normalizedAdminEmail = ADMIN_EMAIL.trim().toLowerCase()
 
-    // Validar que é o email do admin
-    if (normalizedEmail !== normalizedAdminEmail) {
-      // Mensagem genérica para não revelar email do admin
+    // Apenas emails @seidmann.com podem fazer login admin
+    if (!normalizedEmail.endsWith('@seidmann.com')) {
       return NextResponse.json(
         { ok: false, message: 'Credenciais inválidas' },
         { status: 401 }
       )
     }
 
-    // Garantir que admin existe no banco
-    const admin = await ensureAdminExists()
+    // Se for o admin principal, garantir que existe no banco
+    if (normalizedEmail === normalizedAdminEmail) {
+      await ensureAdminExists()
+    }
 
-    // Comparar senha
+    const admin = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        senha: true,
+        role: true,
+        status: true,
+        adminPages: true,
+      },
+    })
+
+    if (!admin) {
+      return NextResponse.json(
+        { ok: false, message: 'Credenciais inválidas' },
+        { status: 401 }
+      )
+    }
+
     const senhaValida = await bcrypt.compare(senha, admin.senha)
-
     if (!senhaValida) {
       return NextResponse.json(
         { ok: false, message: 'Credenciais inválidas' },
@@ -90,7 +109,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verificar role e status
     if (admin.role !== 'ADMIN') {
       return NextResponse.json(
         { ok: false, message: 'Acesso negado. Apenas administradores podem acessar.' },
@@ -105,7 +123,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Criar resposta com sessão
+    const adminPages = Array.isArray(admin.adminPages) ? admin.adminPages : undefined
+
     const response = NextResponse.json({
       ok: true,
       data: {
@@ -118,11 +137,11 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Definir cookie de sessão
     await setSessionCookie(response, {
       sub: admin.id,
       role: 'ADMIN',
       email: admin.email,
+      adminPages,
     })
 
     return response

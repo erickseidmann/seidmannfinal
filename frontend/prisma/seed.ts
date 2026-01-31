@@ -1,14 +1,15 @@
 /**
- * Prisma Seed
- * 
- * Cria o usuário admin inicial usando variáveis de ambiente.
- * 
- * Variáveis necessárias:
- * - ADMIN_EMAIL
- * - ADMIN_PASSWORD
+ * Prisma Seed – Admin inicial
+ *
+ * Cria o usuário ADMIN apenas se ainda não existir (não sobrescreve).
+ * Usa bcrypt (10 rounds), igual ao login.
+ *
+ * Variáveis de ambiente:
+ * - ADMIN_EMAIL (obrigatório)
+ * - ADMIN_PASSWORD (obrigatório)
  * - ADMIN_NAME (opcional, default: "Admin")
- * 
- * Executar: npm run db:seed
+ *
+ * Uso: npx prisma db seed | npm run db:seed
  */
 
 import { PrismaClient } from '@prisma/client'
@@ -21,53 +22,48 @@ async function main() {
   const adminPassword = process.env.ADMIN_PASSWORD
   const adminName = process.env.ADMIN_NAME || 'Admin'
 
-  if (!adminEmail || !adminPassword) {
-    console.error('❌ Erro: ADMIN_EMAIL e ADMIN_PASSWORD devem estar configurados no .env.local')
-    console.error('Exemplo:')
-    console.error('  ADMIN_EMAIL=admin@seidmann.com')
-    console.error('  ADMIN_PASSWORD=senhaSegura123')
+  if (!adminEmail?.trim() || !adminPassword) {
+    console.error('❌ ADMIN_EMAIL e ADMIN_PASSWORD são obrigatórios no .env')
+    console.error('   Ex.: ADMIN_EMAIL=admin@seidmann.com  ADMIN_PASSWORD=123456')
     process.exit(1)
   }
 
   const normalizedEmail = adminEmail.trim().toLowerCase()
 
-  // Hash da senha (10 salt rounds)
+  const existing = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  })
+
+  if (existing) {
+    if (existing.role === 'ADMIN' && existing.status === 'ACTIVE') {
+      console.log('✅ Admin já existe:', normalizedEmail)
+      return
+    }
+    console.error('❌ Já existe usuário com esse email e não é ADMIN ativo:', normalizedEmail)
+    process.exit(1)
+  }
+
   const senhaHash = await bcrypt.hash(adminPassword, 10)
 
-  // Usar upsert para criar ou atualizar admin (idempotente)
-  const admin = await prisma.user.upsert({
-    where: { email: normalizedEmail },
-    update: {
-      // Atualizar role, status e senha para garantir idempotência
-      role: 'ADMIN',
-      status: 'ACTIVE',
-      senha: senhaHash, // Atualiza senha se mudou no .env
-      nome: adminName.trim(), // Atualiza nome se mudou
-    },
-    create: {
+  await prisma.user.create({
+    data: {
       nome: adminName.trim(),
       email: normalizedEmail,
-      whatsapp: '00000000000', // Placeholder - admin pode não ter whatsapp
+      whatsapp: '00000000000',
       senha: senhaHash,
       role: 'ADMIN',
       status: 'ACTIVE',
     },
   })
 
-  console.log('✅ Usuário admin garantido (criado ou atualizado)!')
-  console.log('   Email:', normalizedEmail)
-  console.log('   Nome:', admin.nome)
-  console.log('   Role:', admin.role)
-  console.log('   Status:', admin.status)
-  console.log('')
-  console.log('⚠️  IMPORTANTE: Guarde suas credenciais com segurança!')
+  console.log('✅ Admin criado:', normalizedEmail)
+  console.log('   Nome:', adminName.trim(), '| Role: ADMIN | Status: ACTIVE')
+  console.log('   ⚠️ Troque a senha em produção.')
 }
 
 main()
-  .catch((error) => {
-    console.error('❌ Erro ao executar seed:', error)
+  .catch((e) => {
+    console.error('❌ Seed falhou:', e)
     process.exit(1)
   })
-  .finally(async () => {
-    await prisma.$disconnect()
-  })
+  .finally(() => prisma.$disconnect())

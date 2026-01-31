@@ -23,7 +23,19 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { nome, email, whatsapp, status } = body
+    const {
+      nome,
+      email,
+      whatsapp,
+      status,
+      nomePreferido,
+      valorPorHora,
+      metodoPagamento,
+      infosPagamento,
+      cpf,
+      cnpj,
+      nota,
+    } = body
 
     // Verificar se o model existe no Prisma Client
     if (!prisma.teacher) {
@@ -61,11 +73,25 @@ export async function PATCH(
       }
     }
 
-    const updateData: any = {}
+    if (metodoPagamento && !['PIX', 'CARTAO', 'OUTRO'].includes(metodoPagamento)) {
+      return NextResponse.json(
+        { ok: false, message: 'Método de pagamento inválido' },
+        { status: 400 }
+      )
+    }
+
+    const updateData: Record<string, unknown> = {}
     if (nome) updateData.nome = nome.trim()
     if (email) updateData.email = email.trim().toLowerCase()
     if (whatsapp !== undefined) updateData.whatsapp = whatsapp?.trim() || null
     if (status) updateData.status = status
+    if (nomePreferido !== undefined) updateData.nomePreferido = nomePreferido?.trim() || null
+    if (valorPorHora !== undefined) updateData.valorPorHora = valorPorHora != null && valorPorHora !== '' ? Number(valorPorHora) : null
+    if (metodoPagamento !== undefined) updateData.metodoPagamento = metodoPagamento || null
+    if (infosPagamento !== undefined) updateData.infosPagamento = infosPagamento?.trim() || null
+    if (cpf !== undefined) updateData.cpf = cpf?.trim() || null
+    if (cnpj !== undefined) updateData.cnpj = cnpj?.trim() || null
+    if (nota !== undefined) updateData.nota = nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null
 
     const teacher = await prisma.teacher.update({
       where: { id },
@@ -78,8 +104,15 @@ export async function PATCH(
         teacher: {
           id: teacher.id,
           nome: teacher.nome,
+          nomePreferido: teacher.nomePreferido,
           email: teacher.email,
           whatsapp: teacher.whatsapp,
+          cpf: teacher.cpf,
+          cnpj: teacher.cnpj,
+          valorPorHora: teacher.valorPorHora != null ? Number(teacher.valorPorHora) : null,
+          metodoPagamento: teacher.metodoPagamento,
+          infosPagamento: teacher.infosPagamento,
+          nota: teacher.nota,
           status: teacher.status,
           criadoEm: teacher.criadoEm.toISOString(),
           atualizadoEm: teacher.atualizadoEm.toISOString(),

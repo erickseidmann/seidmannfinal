@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8
+    container_name: seidmann-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: seidmann_app
+      MYSQL_USER: seidmann
+      MYSQL_PASSWORD: seidmann123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - seidmann-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:15-alpine
     container_name: seidmann-postgres
@@ -42,5 +62,6 @@ networks:
     driver: bridge
 
 volumes:
+  mysql_data:
   postgres_data:
   pgadmin_data:

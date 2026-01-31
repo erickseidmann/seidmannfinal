@@ -1,16 +1,17 @@
 /**
  * Página de Login
- * 
- * Login para alunos e administradores com toggle entre modos
+ *
+ * Login único: identifica automaticamente se é aluno ou admin pelas credenciais.
  */
 
 'use client'
 
-import { useState, FormEvent, useEffect } from 'react'
+import { useState, FormEvent } from 'react'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import Link from 'next/link'
-import type { LoginResponse, ApiResponse } from '@/contracts/api.contract'
+import { useTranslation } from '@/contexts/LanguageContext'
+import type { ApiResponse } from '@/contracts/api.contract'
 
 interface FormErrors {
   email?: string
@@ -18,7 +19,7 @@ interface FormErrors {
 }
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<'aluno' | 'admin'>('aluno')
+  const { t } = useTranslation()
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -30,27 +31,17 @@ export default function LoginPage() {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loggedUser, setLoggedUser] = useState<{ name: string } | null>(null)
 
-  // Atualizar modo quando URL mudar (query param tab=admin ou admin=1)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search)
-      if (urlParams.get('tab') === 'admin' || urlParams.get('admin') === '1') {
-        setMode('admin')
-      }
-    }
-  }, [])
-
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {}
 
     if (!formData.email.trim()) {
-      newErrors.email = 'Email é obrigatório'
+      newErrors.email = t('login.emailRequired')
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Email inválido'
+      newErrors.email = t('login.emailInvalid')
     }
 
     if (!formData.password) {
-      newErrors.password = 'Senha é obrigatória'
+      newErrors.password = t('login.passwordRequired')
     }
 
     setErrors(newErrors)
@@ -70,15 +61,12 @@ export default function LoginPage() {
     setIsSubmitting(true)
 
     try {
-      // Escolher endpoint baseado no modo
-      const endpoint = mode === 'admin' ? '/api/admin/login' : '/api/login'
-      
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include', // Importante para cookies httpOnly
+        credentials: 'include',
         body: JSON.stringify({
           email: formData.email,
           senha: formData.password,
@@ -97,26 +85,15 @@ export default function LoginPage() {
         return
       }
 
-      // Sucesso
       setLoginSuccess(true)
       setLoggedUser({ name: json.data.user.nome || json.data.user.email })
       setIsSubmitting(false)
 
-      // Redirecionar
-      if (mode === 'admin') {
-        // Admin vai para dashboard
-        setTimeout(() => {
-          window.location.href = '/admin/dashboard'
-        }, 1000)
-      } else {
-        // Aluno redireciona conforme resposta
-        const redirectTo = json.data.redirectTo || '/'
-        setTimeout(() => {
-          window.location.href = redirectTo
-        }, 1000)
-      }
+      const redirectTo = json.data.redirectTo || '/'
+      setTimeout(() => {
+        window.location.href = redirectTo
+      }, 1000)
 
-      // Limpar formulário
       setFormData({
         email: '',
         password: '',
@@ -152,45 +129,17 @@ export default function LoginPage() {
           {/* Título */}
           <div className="text-center mb-8">
             <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-text mb-4">
-              Login
+              {t('login.title')}
             </h1>
           </div>
-
-          {/* Toggle Aluno/Admin */}
-          <Card className="p-6 mb-6">
-            <div className="flex gap-2 bg-gray-100 p-1 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setMode('aluno')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${
-                  mode === 'aluno'
-                    ? 'bg-white text-brand-orange shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Aluno
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('admin')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${
-                  mode === 'admin'
-                    ? 'bg-white text-brand-orange shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Admin
-              </button>
-            </div>
-          </Card>
 
           {/* Mensagem de sucesso */}
           {loginSuccess && loggedUser && (
             <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
               <p className="text-green-800 font-semibold mb-2">
-                Bem-vindo, {loggedUser.name}!
+                {t('login.welcome')}, {loggedUser.name}!
               </p>
-              <p className="text-green-700 text-sm">Redirecionando...</p>
+              <p className="text-green-700 text-sm">{t('login.redirecting')}</p>
             </div>
           )}
 
@@ -200,10 +149,10 @@ export default function LoginPage() {
               <p className="text-red-800 font-semibold mb-2">
                 {loginError}
               </p>
-              {mode === 'aluno' && loginError.includes('acesso ainda não foi liberado') && (
+              {loginError.includes('liberad') && (
                 <div className="mt-4 space-y-3">
                   <p className="text-red-700 text-sm">
-                    Aguarde liberação do acesso. Se você já fez o pagamento, entre em contato com a escola.
+                    {t('login.awaitAccess')}
                   </p>
                   <div className="flex flex-col sm:flex-row gap-3">
                     <Button
@@ -212,7 +161,7 @@ export default function LoginPage() {
                       size="md"
                       className="flex-1"
                     >
-                      Voltar
+                      {t('login.back')}
                     </Button>
                     <Link href="/status" className="flex-1">
                       <Button
@@ -220,7 +169,7 @@ export default function LoginPage() {
                         size="md"
                         className="w-full"
                       >
-                        Acompanhar status
+                        {t('nav.trackStatus')}
                       </Button>
                     </Link>
                   </div>
@@ -232,39 +181,25 @@ export default function LoginPage() {
           {/* Card do Formulário */}
           {!loginSuccess && (
             <Card className="p-6 md:p-8">
-              {/* Mini Header: Já sou aluno + Acompanhar status (apenas modo aluno) */}
-              {mode === 'aluno' && (
-                <div className="mb-6 pb-6 border-b border-gray-200">
-                  <div className="flex items-center justify-between flex-wrap gap-4">
-                    <h2 className="text-xl font-semibold text-gray-900">
-                      Já sou aluno
-                    </h2>
-                    <Link
-                      href="/status"
-                      className="text-sm font-medium text-brand-orange hover:text-orange-700 transition-colors"
-                    >
-                      Acompanhar status →
-                    </Link>
-                  </div>
-                </div>
-              )}
-
-              {mode === 'admin' && (
-                <div className="mb-6 pb-6 border-b border-gray-200">
+              <div className="mb-6 pb-6 border-b border-gray-200">
+                <div className="flex items-center justify-between flex-wrap gap-4">
                   <h2 className="text-xl font-semibold text-gray-900">
-                    Acesso administrativo
+                    {t('login.alreadyHaveAccount')}
                   </h2>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Use as credenciais configuradas no servidor
-                  </p>
+                  <Link
+                    href="/status"
+                    className="text-sm font-medium text-brand-orange hover:text-orange-700 transition-colors"
+                  >
+                    {t('nav.trackStatus')} →
+                  </Link>
                 </div>
-              )}
+              </div>
 
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Email */}
                 <div>
                   <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
-                    Email <span className="text-red-500">*</span>
+                    {t('login.email')} <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="email"
@@ -285,7 +220,7 @@ export default function LoginPage() {
                 {/* Senha */}
                 <div>
                   <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
-                    Senha <span className="text-red-500">*</span>
+                    {t('login.password')} <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="password"
@@ -293,7 +228,7 @@ export default function LoginPage() {
                     name="password"
                     value={formData.password}
                     onChange={handleChange}
-                    placeholder="Digite sua senha"
+                    placeholder={t('login.passwordPlaceholder')}
                     autoComplete="current-password"
                     className={`input ${errors.password ? 'border-red-500 focus:ring-red-500' : ''}`}
                     aria-invalid={errors.password ? 'true' : 'false'}
@@ -312,29 +247,24 @@ export default function LoginPage() {
                     className="w-full"
                     disabled={isSubmitting}
                   >
-                    {isSubmitting ? 'Entrando...' : 'Entrar'}
+                    {isSubmitting ? t('login.entering') : t('login.enter')}
                   </Button>
-                  {mode === 'aluno' && (
-                    <Button
-                      href="/cadastro"
-                      variant="outline"
-                      size="lg"
-                      className="w-full"
-                    >
-                      Criar conta
-                    </Button>
-                  )}
+                  <Button
+                    href="/cadastro"
+                    variant="outline"
+                    size="lg"
+                    className="w-full"
+                  >
+                    {t('login.createAccount')}
+                  </Button>
                 </div>
               </form>
 
-              {/* Mensagem sobre acesso (apenas modo aluno) */}
-              {mode === 'aluno' && (
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <p className="text-xs text-gray-500 text-center">
-                    Se seu acesso ainda não foi liberado, aguarde a confirmação do pagamento.
-                  </p>
-                </div>
-              )}
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <p className="text-xs text-gray-500 text-center">
+                  {t('login.accessNotReleased')}
+                </p>
+              </div>
             </Card>
           )}
         </div>

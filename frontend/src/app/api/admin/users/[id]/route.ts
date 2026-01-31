@@ -1,19 +1,21 @@
 /**
  * API Route: PATCH /api/admin/users/[id]
- * 
- * Atualizar usuário
+ * Atualizar usuário do ADM (apenas admin@seidmann.com, email deve terminar @seidmann.com)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth'
+import { requireSuperAdmin } from '@/lib/auth'
+import bcrypt from 'bcryptjs'
+
+const SEIDMANN_SUFFIX = '@seidmann.com'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const auth = await requireAdmin(request)
+    const auth = await requireSuperAdmin(request)
     if (!auth.authorized) {
       return NextResponse.json(
         { ok: false, message: auth.message || 'Não autorizado' },
@@ -23,41 +25,64 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { nome, email, whatsapp, role, status } = body
+    const { nome, email, whatsapp, telefone, funcao, adminPages, status, senha } = body
 
-    // Verificar se usuário existe
     const existing = await prisma.user.findUnique({
       where: { id },
     })
-
     if (!existing) {
       return NextResponse.json(
         { ok: false, message: 'Usuário não encontrado' },
         { status: 404 }
       )
     }
-
-    // Se email mudou, verificar se não está em uso
-    if (email && email !== existing.email) {
-      const normalizedEmail = email.trim().toLowerCase()
-      const emailInUse = await prisma.user.findUnique({
-        where: { email: normalizedEmail },
-      })
-
-      if (emailInUse) {
-        return NextResponse.json(
-          { ok: false, message: 'Email já está em uso' },
-          { status: 409 }
-        )
-      }
+    if (!existing.email.endsWith(SEIDMANN_SUFFIX)) {
+      return NextResponse.json(
+        { ok: false, message: 'Só é possível editar usuários do ADM (@seidmann.com)' },
+        { status: 403 }
+      )
     }
 
-    const updateData: any = {}
-    if (nome) updateData.nome = nome.trim()
-    if (email) updateData.email = email.trim().toLowerCase()
-    if (whatsapp !== undefined) updateData.whatsapp = whatsapp.trim()
-    if (role) updateData.role = role
-    if (status) updateData.status = status
+    // Montar objeto de atualização (tipagem explícita para Prisma aceitar senha)
+    const updateData: {
+      nome?: string
+      email?: string
+      whatsapp?: string
+      status?: string
+      funcao?: string | null
+      adminPages?: string[] | null
+      senha?: string
+    } = {}
+    if (nome != null) updateData.nome = String(nome).trim()
+    if (email != null) {
+      const normalizedEmail = String(email).trim().toLowerCase()
+      if (!normalizedEmail.endsWith(SEIDMANN_SUFFIX)) {
+        return NextResponse.json(
+          { ok: false, message: 'Email de acesso deve terminar com @seidmann.com' },
+          { status: 400 }
+        )
+      }
+      if (normalizedEmail !== existing.email) {
+        const inUse = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+        if (inUse) {
+          return NextResponse.json(
+            { ok: false, message: 'Email já está em uso' },
+            { status: 409 }
+          )
+        }
+        updateData.email = normalizedEmail
+      }
+    }
+    const tel = telefone ?? whatsapp
+    if (tel !== undefined) updateData.whatsapp = String(tel).trim()
+    if (status != null) updateData.status = status
+    if (funcao !== undefined) updateData.funcao = (funcao || '').trim() || null
+    if (adminPages !== undefined) {
+      updateData.adminPages = Array.isArray(adminPages) ? adminPages : null
+    }
+    if (senha && String(senha).trim().length >= 6) {
+      updateData.senha = await bcrypt.hash(String(senha).trim(), 10)
+    }
 
     const user = await prisma.user.update({
       where: { id },
@@ -69,6 +94,8 @@ export async function PATCH(
         whatsapp: true,
         role: true,
         status: true,
+        funcao: true,
+        adminPages: true,
         criadoEm: true,
         atualizadoEm: true,
       },
@@ -79,6 +106,7 @@ export async function PATCH(
       data: {
         user: {
           ...user,
+          adminPages: Array.isArray(user.adminPages) ? user.adminPages : [],
           criadoEm: user.criadoEm.toISOString(),
           atualizadoEm: user.atualizadoEm.toISOString(),
         },

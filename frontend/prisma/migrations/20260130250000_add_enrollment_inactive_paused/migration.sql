@@ -1,0 +1,2 @@
+-- AlterTable: adicionar status INACTIVE e PAUSED ao enum de enrollments
+ALTER TABLE `enrollments` MODIFY `status` ENUM('LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED') NOT NULL DEFAULT 'LEAD';

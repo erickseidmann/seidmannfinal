@@ -10,6 +10,7 @@ import { Inter, Poppins } from 'next/font/google'
 import './globals.css'
 import { Header } from '@/components/layout/Header'
 import { Footer } from '@/components/layout/Footer'
+import { LanguageProvider } from '@/contexts/LanguageContext'
 
 const inter = Inter({ 
   subsets: ['latin'],
@@ -54,11 +55,11 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className="scrollbar-brand">
       <body className={`${inter.variable} ${poppins.variable} font-sans min-h-screen flex flex-col bg-white`}>
-        <Header variant="transparent" />
-        <main className="flex-1">
-          {children}
-        </main>
-        <Footer />
+        <LanguageProvider>
+          <Header variant="transparent" />
+          <main className="flex-1">{children}</main>
+          <Footer />
+        </LanguageProvider>
       </body>
     </html>
   )

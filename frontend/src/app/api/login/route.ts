@@ -1,13 +1,12 @@
 /**
  * API Route: POST /api/login
- * 
- * Login simples (sem JWT por enquanto).
+ *
  * Valida email e senha, retorna dados do usuário.
- * 
+ *
  * Proteções:
- * - Rate limiting por IP (5 tentativas / 15 minutos)
+ * - Rate limiting por IP (5 tentativas / 15 min) — desativado em NODE_ENV=development
  * - Mensagem genérica de erro (não revela se email existe)
- * 
+ *
  * Endpoint usado pela página /login
  */
 
@@ -16,6 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { isValidEmail } from '@/lib/validators'
 import { checkRateLimit, getClientIP } from '@/lib/rateLimit'
 import { createSession } from '@/lib/session'
+import { setSessionCookie } from '@/lib/adminSession'
 import bcrypt from 'bcryptjs'
 
 export async function POST(request: NextRequest) {
@@ -72,9 +72,20 @@ export async function POST(request: NextRequest) {
     // Normalizar email
     const normalizedEmail = email.trim().toLowerCase()
 
-    // Buscar user por email
+    // Buscar user por email (inclui adminPages para sessão admin)
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        whatsapp: true,
+        senha: true,
+        role: true,
+        status: true,
+        criadoEm: true,
+        adminPages: true,
+      },
     })
 
     // Sempre retornar mensagem genérica (não revelar se email existe ou não)
@@ -109,7 +120,7 @@ export async function POST(request: NextRequest) {
     // ADMIN com status ACTIVE pode fazer login sem verificar Enrollment
     // Outros usuários precisam ter Enrollment.status = ACTIVE
     if (user.role === 'ADMIN' && user.status === 'ACTIVE') {
-      // Admin: login permitido diretamente
+      // Admin: login permitido diretamente; único login identifica automaticamente
       const response = NextResponse.json({
         ok: true,
         data: {
@@ -122,16 +133,22 @@ export async function POST(request: NextRequest) {
             status: user.status,
             createdAt: user.criadoEm,
           },
-          redirectTo: '/admin', // Admin vai para dashboard
+          redirectTo: '/admin/dashboard',
         },
       })
 
-      // Criar sessão
       await createSession(response, {
         userId: user.id,
         email: user.email,
         role: user.role,
         status: user.status,
+      })
+      const adminPages = Array.isArray(user.adminPages) ? user.adminPages : undefined
+      await setSessionCookie(response, {
+        sub: user.id,
+        role: 'ADMIN',
+        email: user.email,
+        adminPages,
       })
 
       return response

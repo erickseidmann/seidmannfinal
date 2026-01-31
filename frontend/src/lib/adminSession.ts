@@ -19,6 +19,7 @@ export interface AdminTokenPayload {
   sub: string // userId
   role: 'ADMIN'
   email: string
+  adminPages?: string[] // Páginas do dashboard que pode acessar (só para não super-admin)
 }
 
 /**
@@ -53,6 +54,7 @@ async function verifyAdminToken(token: string): Promise<AdminTokenPayload | null
       sub: payload.sub as string,
       role: 'ADMIN',
       email: payload.email as string,
+      adminPages: Array.isArray(payload.adminPages) ? (payload.adminPages as string[]) : undefined,
     }
   } catch (error) {
     return null

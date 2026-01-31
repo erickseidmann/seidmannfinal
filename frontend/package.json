@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/ensure-admin.js && next dev",
+    "clean": "node scripts/clean-next.js",
+    "dev:clean": "node scripts/clean-next.js && node scripts/ensure-admin.js && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -11,10 +13,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:clean": "node scripts/clean-prisma-windows.js",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "node prisma/seed.cjs"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node prisma/seed.cjs"
   },
   "dependencies": {
     "@prisma/client": "6.19.2",
@@ -40,6 +42,7 @@
     "postcss": "^8.4.32",
     "prisma": "6.19.2",
     "tailwindcss": "^3.3.6",
+    "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }
 }

@@ -395,6 +395,19 @@ Se a API retorna 500 ou 503:
    - Ver console do servidor para detalhes do erro
    - Logs têm prefixo `[api/matricula]` para facilitar debug
 
+### ChunkLoadError: Loading chunk app/layout failed (timeout)
+
+Se aparecer **ChunkLoadError** ou **Loading chunk ... failed (timeout)** no navegador:
+
+1. **Pare o servidor** no terminal onde está rodando `npm run dev` (Ctrl+C).
+2. **Apague a pasta `.next`** (cache do Next.js):
+   - No Explorador de Arquivos: vá em `frontend` e exclua a pasta `.next`.
+   - Se der "acesso negado", feche o Cursor/IDE, exclua a pasta e abra o projeto de novo.
+   - Ou no PowerShell (com o servidor parado): `Remove-Item -Recurse -Force .next`
+3. **Suba o servidor de novo:** `npm run dev`.
+
+Isso regenera o cache e costuma resolver o erro de chunk/timeout.
+
 ## 🔐 Dashboard Admin
 
 Dashboard para administradores aprovarem pagamentos e gerenciar matrículas.

@@ -6,11 +6,11 @@ Monorepo completo para gestão de escola de idiomas com funcionalidades para alu
 
 ```
 seidmann-institute/
-├── frontend/          # Next.js App Router + TypeScript
-├── backend/           # NestJS + TypeScript + Prisma
+├── frontend/          # Next.js App Router + TypeScript (Prisma + MySQL)
+├── backend/           # NestJS + TypeScript + Prisma (PostgreSQL)
 ├── docs/              # Documentação do projeto
-├── scripts/           # Scripts utilitários
-└── docker-compose.yml # PostgreSQL + pgAdmin
+├── scripts/           # Scripts utilitários (ex.: setup-db.ps1)
+└── docker-compose.yml # MySQL + PostgreSQL + pgAdmin
 ```
 
 ## 🚀 Início Rápido
@@ -45,19 +45,34 @@ seidmann-institute/
    # Edite frontend/.env.local se necessário
    ```
 
-4. **Inicie o PostgreSQL com Docker**
+4. **Inicie os serviços com Docker** (PostgreSQL + MySQL)
    ```bash
    docker-compose up -d
    ```
 
-5. **Configure o banco de dados**
+5. **Configure o banco do frontend (MySQL) e crie o admin**
+   ```powershell
+   # Windows
+   .\scripts\setup-db.ps1
+   ```
+   Ou manualmente:
+   ```bash
+   cd frontend
+   cp .env.example .env   # ajuste DATABASE_URL, ADMIN_EMAIL, ADMIN_PASSWORD
+   npx prisma generate
+   npx prisma migrate dev
+   npx prisma db seed
+   ```
+   Admin inicial: `admin@seidmann.com` / `123456` (troque depois no .env e rode o seed de novo, ou altere no sistema).
+
+6. **Configure o banco do backend** (opcional; PostgreSQL)
    ```bash
    cd backend
    npm run prisma:generate
    npm run prisma:migrate
    ```
 
-6. **Inicie o desenvolvimento**
+7. **Inicie o desenvolvimento**
    ```bash
    # Na raiz do projeto
    npm run dev
@@ -66,6 +81,7 @@ seidmann-institute/
 Isso iniciará:
 - Frontend: http://localhost:3000
 - Backend: http://localhost:3001
+- MySQL (frontend): localhost:3306
 - PostgreSQL: localhost:5432
 - pgAdmin: http://localhost:5050
 

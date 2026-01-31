@@ -9,10 +9,13 @@
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Button from '@/components/ui/Button'
+import { LanguageSelector } from '@/components/layout/LanguageSelector'
+import { useTranslation } from '@/contexts/LanguageContext'
 import { LogOut, LayoutDashboard } from 'lucide-react'
 
 export default function AdminHeader() {
   const router = useRouter()
+  const { t } = useTranslation()
 
   const handleLogout = async () => {
     try {
@@ -33,21 +36,23 @@ export default function AdminHeader() {
           {/* Logo / Dashboard */}
           <Link href="/admin/dashboard" className="flex items-center gap-2 text-brand-orange font-bold text-lg">
             <LayoutDashboard className="w-5 h-5" />
-            <span>Dashboard Admin</span>
+            <span>{t('admin.dashboard')}</span>
           </Link>
 
           {/* Navegação removida - agora está no sidebar do AdminLayout */}
 
-          {/* Botão Sair */}
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Sair
-          </Button>
+          <div className="flex items-center gap-4">
+            <LanguageSelector />
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              {t('nav.logout')}
+            </Button>
+          </div>
         </div>
       </div>
     </header>

@@ -11,8 +11,32 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
+import ConfirmModal from '@/components/admin/ConfirmModal'
+import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
-import { Plus, Send, X } from 'lucide-react'
+import { Plus, Send, X, Trash2 } from 'lucide-react'
+
+interface TeacherAlertItem {
+  id: string
+  teacherId: string
+  teacher: { id: string; nome: string; email: string }
+  message: string
+  level: string | null
+  isActive: boolean
+  criadoEm: string
+  createdBy: { id: string; nome: string } | null
+}
+
+interface StudentAlertItem {
+  id: string
+  enrollmentId: string
+  enrollment: { id: string; nome: string; email: string; whatsapp: string }
+  message: string
+  level: string | null
+  isActive: boolean
+  criadoEm: string
+  createdBy: { id: string; nome: string } | null
+}
 
 interface Announcement {
   id: string
@@ -30,9 +54,15 @@ interface Announcement {
 export default function AdminAlertasPage() {
   const router = useRouter()
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [teacherAlerts, setTeacherAlerts] = useState<TeacherAlertItem[]>([])
+  const [studentAlerts, setStudentAlerts] = useState<StudentAlertItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingAlerts, setLoadingAlerts] = useState(true)
+  const [loadingStudentAlerts, setLoadingStudentAlerts] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; confirmLabel?: string } | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [formData, setFormData] = useState({
     title: '',
     message: '',
@@ -43,6 +73,86 @@ export default function AdminAlertasPage() {
   useEffect(() => {
     fetchAnnouncements()
   }, [])
+
+  useEffect(() => {
+    fetchTeacherAlerts()
+  }, [])
+
+  useEffect(() => {
+    fetchStudentAlerts()
+  }, [])
+
+  const fetchTeacherAlerts = async () => {
+    setLoadingAlerts(true)
+    try {
+      const res = await fetch('/api/admin/teacher-alerts', { credentials: 'include' })
+      const json = await res.json()
+      if (json.ok) setTeacherAlerts(json.data.alerts || [])
+    } catch (err) {
+      console.error('Erro ao buscar alertas de professores:', err)
+    } finally {
+      setLoadingAlerts(false)
+    }
+  }
+
+  const fetchStudentAlerts = async () => {
+    setLoadingStudentAlerts(true)
+    try {
+      const res = await fetch('/api/admin/student-alerts', { credentials: 'include' })
+      const json = await res.json()
+      if (json.ok) setStudentAlerts(json.data.alerts || [])
+    } catch (err) {
+      console.error('Erro ao buscar alertas de alunos:', err)
+    } finally {
+      setLoadingStudentAlerts(false)
+    }
+  }
+
+  const handleDeleteTeacherAlert = (id: string) => {
+    setConfirmModal({
+      title: 'Excluir alerta',
+      message: 'Deseja excluir este alerta?',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/teacher-alerts/${id}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (json.ok) {
+            fetchTeacherAlerts()
+            setToast({ message: 'Alerta excluído', type: 'success' })
+          } else setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir alerta', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleDeleteStudentAlert = (id: string) => {
+    setConfirmModal({
+      title: 'Excluir alerta',
+      message: 'Deseja excluir este alerta do aluno?',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/student-alerts/${id}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (json.ok) {
+            fetchStudentAlerts()
+            setToast({ message: 'Alerta excluído', type: 'success' })
+          } else setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir alerta', type: 'error' })
+        }
+      },
+    })
+  }
 
   const fetchAnnouncements = async () => {
     setLoading(true)
@@ -99,56 +209,54 @@ export default function AdminAlertasPage() {
         throw new Error(json.message || 'Erro ao criar anúncio')
       }
 
-      alert('Anúncio criado com sucesso!')
+      setToast({ message: 'Anúncio criado com sucesso!', type: 'success' })
       setIsModalOpen(false)
       fetchAnnouncements()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao criar anúncio')
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao criar anúncio', type: 'error' })
     }
   }
 
-  const handleSend = async (id: string) => {
-    if (!confirm('Deseja enviar este anúncio agora?')) return
-
-    try {
-      const response = await fetch(`/api/admin/announcements/${id}/send`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-
-      const json = await response.json()
-
-      if (!response.ok || !json.ok) {
-        throw new Error(json.message || 'Erro ao enviar anúncio')
-      }
-
-      alert('Anúncio enviado com sucesso!')
-      fetchAnnouncements()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao enviar anúncio')
-    }
+  const handleSend = (id: string) => {
+    setConfirmModal({
+      title: 'Enviar anúncio',
+      message: 'Deseja enviar este anúncio agora?',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/admin/announcements/${id}/send`, {
+            method: 'POST',
+            credentials: 'include',
+          })
+          const json = await response.json()
+          if (!response.ok || !json.ok) throw new Error(json.message || 'Erro ao enviar anúncio')
+          setToast({ message: 'Anúncio enviado com sucesso!', type: 'success' })
+          fetchAnnouncements()
+        } catch (err) {
+          setToast({ message: err instanceof Error ? err.message : 'Erro ao enviar anúncio', type: 'error' })
+        }
+      },
+    })
   }
 
-  const handleCancel = async (id: string) => {
-    if (!confirm('Deseja cancelar este anúncio?')) return
-
-    try {
-      const response = await fetch(`/api/admin/announcements/${id}/cancel`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-
-      const json = await response.json()
-
-      if (!response.ok || !json.ok) {
-        throw new Error(json.message || 'Erro ao cancelar anúncio')
-      }
-
-      alert('Anúncio cancelado com sucesso!')
-      fetchAnnouncements()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao cancelar anúncio')
-    }
+  const handleCancel = (id: string) => {
+    setConfirmModal({
+      title: 'Cancelar anúncio',
+      message: 'Deseja cancelar este anúncio?',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/admin/announcements/${id}/cancel`, {
+            method: 'POST',
+            credentials: 'include',
+          })
+          const json = await response.json()
+          if (!response.ok || !json.ok) throw new Error(json.message || 'Erro ao cancelar anúncio')
+          setToast({ message: 'Anúncio cancelado com sucesso!', type: 'success' })
+          fetchAnnouncements()
+        } catch (err) {
+          setToast({ message: err instanceof Error ? err.message : 'Erro ao cancelar anúncio', type: 'error' })
+        }
+      },
+    })
   }
 
   const columns = [
@@ -227,6 +335,130 @@ export default function AdminAlertasPage() {
           loading={loading}
           emptyMessage="Nenhum anúncio criado"
         />
+
+        {/* Alertas de Professores */}
+        <div className="mt-12">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">Notificações de Professores</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Alertas criados na página de Professores (ícone de sino). Passe o mouse para ver o conteúdo.
+          </p>
+          <Table
+            columns={[
+              {
+                key: 'teacher',
+                label: 'Professor',
+                render: (a: TeacherAlertItem) => a.teacher.nome,
+              },
+              {
+                key: 'message',
+                label: 'Mensagem',
+                render: (a: TeacherAlertItem) => (
+                  <span title={a.message} className="max-w-xs truncate block" style={{ maxWidth: 250 }}>
+                    {a.message}
+                  </span>
+                ),
+              },
+              {
+                key: 'createdBy',
+                label: 'Adicionado por',
+                render: (a: TeacherAlertItem) => a.createdBy?.nome ?? '—',
+              },
+              { key: 'level', label: 'Nível', render: (a: TeacherAlertItem) => a.level || '-' },
+              {
+                key: 'criadoEm',
+                label: 'Criado em',
+                render: (a: TeacherAlertItem) => new Date(a.criadoEm).toLocaleString('pt-BR'),
+              },
+              {
+                key: 'actions',
+                label: 'Ações',
+                render: (a: TeacherAlertItem) => (
+                  <button
+                    onClick={() => handleDeleteTeacherAlert(a.id)}
+                    className="text-red-600 hover:text-red-800 text-sm font-medium"
+                    title="Excluir"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                ),
+              },
+            ]}
+            data={teacherAlerts}
+            loading={loadingAlerts}
+            emptyMessage="Nenhuma notificação de professor"
+          />
+        </div>
+
+        {/* Alertas de Alunos */}
+        <div className="mt-12">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">Notificações de Alunos</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Alertas criados na página de Alunos (ícone de sino). Ao adicionar um alerta para um aluno, ele aparece aqui.
+          </p>
+          <Table
+            columns={[
+              {
+                key: 'enrollment',
+                label: 'Aluno',
+                render: (a: StudentAlertItem) => a.enrollment.nome,
+              },
+              {
+                key: 'message',
+                label: 'Mensagem',
+                render: (a: StudentAlertItem) => (
+                  <span title={a.message} className="max-w-xs truncate block" style={{ maxWidth: 250 }}>
+                    {a.message}
+                  </span>
+                ),
+              },
+              {
+                key: 'createdBy',
+                label: 'Adicionado por',
+                render: (a: StudentAlertItem) => a.createdBy?.nome ?? '—',
+              },
+              { key: 'level', label: 'Nível', render: (a: StudentAlertItem) => a.level || '-' },
+              {
+                key: 'criadoEm',
+                label: 'Criado em',
+                render: (a: StudentAlertItem) => new Date(a.criadoEm).toLocaleString('pt-BR'),
+              },
+              {
+                key: 'actions',
+                label: 'Ações',
+                render: (a: StudentAlertItem) => (
+                  <button
+                    onClick={() => handleDeleteStudentAlert(a.id)}
+                    className="text-red-600 hover:text-red-800 text-sm font-medium"
+                    title="Excluir"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                ),
+              },
+            ]}
+            data={studentAlerts}
+            loading={loadingStudentAlerts}
+            emptyMessage="Nenhuma notificação de aluno"
+          />
+        </div>
+
+        {/* Modal de Confirmação */}
+        {confirmModal && (
+          <ConfirmModal
+            isOpen={!!confirmModal}
+            onClose={() => setConfirmModal(null)}
+            onConfirm={confirmModal.onConfirm}
+            title={confirmModal.title}
+            message={confirmModal.message}
+            confirmLabel={confirmModal.confirmLabel ?? 'Confirmar'}
+            cancelLabel="Cancelar"
+          />
+        )}
+
+        {/* Toast */}
+        {toast && (
+          <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+        )}
 
         {/* Modal Criar Anúncio */}
         <Modal

@@ -46,27 +46,56 @@ export default function AdminDashboardPage() {
 
   const fetchMetrics = async () => {
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 8000) // 8s timeout
+
       const response = await fetch('/api/admin/metrics', {
-        credentials: 'include', // Importante para cookies httpOnly
+        credentials: 'include',
+        signal: controller.signal,
       })
+      clearTimeout(timeoutId)
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
           router.push('/login?tab=admin')
           return
         }
-        throw new Error('Erro ao carregar métricas')
+        const text = await response.text()
+        let msg = 'Erro ao carregar métricas'
+        try {
+          const json = JSON.parse(text)
+          if (json?.message) msg = json.message
+        } catch {
+          if (text?.startsWith('Internal')) msg = 'Servidor indisponível. Tente recarregar.'
+        }
+        throw new Error(msg)
       }
 
-      const json = await response.json()
-      if (json.ok) {
+      const text = await response.text()
+      let json: { ok?: boolean; data?: Metrics; message?: string }
+      try {
+        json = JSON.parse(text)
+      } catch {
+        setError('Resposta inválida do servidor. Tente recarregar.')
+        setLoading(false)
+        return
+      }
+      if (json.ok && json.data) {
         setMetrics(json.data)
       } else {
         throw new Error(json.message || 'Erro ao carregar métricas')
       }
     } catch (err) {
       console.error('Erro ao buscar métricas:', err)
-      setError(err instanceof Error ? err.message : 'Erro ao carregar dados')
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          setError('A requisição demorou demais. Verifique a conexão e tente recarregar.')
+        } else {
+          setError(err.message)
+        }
+      } else {
+        setError('Erro ao carregar dados')
+      }
     } finally {
       setLoading(false)
     }
@@ -91,7 +120,20 @@ export default function AdminDashboardPage() {
   if (error) {
     return (
       <AdminLayout>
-        <div className="text-center py-12 text-red-600">{error}</div>
+        <div className="text-center py-12">
+          <p className="text-red-600 mb-4">{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null)
+              setLoading(true)
+              fetchMetrics()
+            }}
+            className="px-4 py-2 bg-brand-orange text-white rounded-lg font-medium hover:opacity-90"
+          >
+            Tentar novamente
+          </button>
+        </div>
       </AdminLayout>
     )
   }

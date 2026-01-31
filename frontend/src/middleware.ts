@@ -15,11 +15,8 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
     const session = await getAdminSession(request)
 
-    // Se não está logado, redirecionar para /login?tab=admin
     if (!session) {
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('tab', 'admin')
-      return NextResponse.redirect(loginUrl)
+      return NextResponse.redirect(new URL('/login', request.url))
     }
 
     // Validar que é ADMIN (o token já garante isso, mas validação extra)

@@ -22,11 +22,14 @@ setInterval(() => {
 
 /**
  * Verifica se um IP excedeu o limite de tentativas
- * 
+ *
+ * Em desenvolvimento (NODE_ENV=development), o rate limit é desabilitado
+ * para evitar bloqueios durante o desenvolvimento local.
+ *
  * @param ip - IP do cliente
  * @param maxAttempts - Número máximo de tentativas
  * @param windowMs - Janela de tempo em milissegundos
- * @returns true se excedeu o limite, false caso contrário
+ * @returns allowed, remaining, resetAt
  */
 export function checkRateLimit(
   ip: string,
@@ -34,6 +37,15 @@ export function checkRateLimit(
   windowMs: number = 15 * 60 * 1000 // 15 minutos
 ): { allowed: boolean; remaining: number; resetAt: number } {
   const now = Date.now()
+
+  if (process.env.NODE_ENV === 'development') {
+    return {
+      allowed: true,
+      remaining: maxAttempts,
+      resetAt: now + windowMs,
+    }
+  }
+
   const entry = store.get(ip)
 
   // Se não existe entrada ou expirou, criar nova

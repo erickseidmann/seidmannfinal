@@ -10,15 +10,18 @@
 import { useState, useEffect } from 'react'
 import { Menu, X } from 'lucide-react'
 import Logo from '@/components/branding/Logo'
+import { LanguageSelector } from './LanguageSelector'
 import Button from '../ui/Button'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTranslation } from '@/contexts/LanguageContext'
 
 interface HeaderProps {
   variant?: 'default' | 'transparent'
 }
 
 export function Header({ variant = 'default' }: HeaderProps) {
+  const { t } = useTranslation()
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const pathname = usePathname()
@@ -34,13 +37,15 @@ export function Header({ variant = 'default' }: HeaderProps) {
   const isTransparent = variant === 'transparent' && !isScrolled
   const isLanding = pathname === '/'
 
-  const navLinks = isLanding ? [
-    { name: 'Início', href: '#inicio' },
-    { name: 'Como funciona', href: '#como-funciona' },
-    { name: 'Planos', href: '#planos' },
-    { name: 'Professores', href: '#professores' },
-    { name: 'FAQ', href: '#faq' },
-  ] : []
+  const navLinks = isLanding
+    ? [
+        { nameKey: 'nav.home', href: '#inicio' },
+        { nameKey: 'nav.howItWorks', href: '#como-funciona' },
+        { nameKey: 'nav.plans', href: '#planos' },
+        { nameKey: 'nav.teachers', href: '#professores' },
+        { nameKey: 'nav.faq', href: '#faq' },
+      ]
+    : []
 
   const scrollToSection = (href: string) => {
     if (href.startsWith('#')) {
@@ -84,11 +89,11 @@ export function Header({ variant = 'default' }: HeaderProps) {
             <nav className="hidden md:flex items-center space-x-8">
               {navLinks.map((link) => (
                 <button
-                  key={link.name}
+                  key={link.nameKey}
                   onClick={() => scrollToSection(link.href)}
                   className="text-sm font-medium text-gray-800 hover:text-brand-orange transition-colors duration-200"
                 >
-                  {link.name}
+                  {t(link.nameKey)}
                 </button>
               ))}
             </nav>
@@ -96,6 +101,7 @@ export function Header({ variant = 'default' }: HeaderProps) {
 
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-4">
+            {!isLanding && <LanguageSelector />}
             <Link
               href="/login"
               className={`text-sm font-medium transition-colors duration-200 ${
@@ -104,10 +110,10 @@ export function Header({ variant = 'default' }: HeaderProps) {
                   : 'text-gray-800 hover:text-brand-orange'
               }`}
             >
-              Login
+              {t('nav.login')}
             </Link>
             <Button href="/matricula" size="sm">
-              Matricule-se
+              {t('nav.enroll')}
             </Button>
           </div>
 
@@ -128,23 +134,28 @@ export function Header({ variant = 'default' }: HeaderProps) {
           <div className="container-content py-4 space-y-4">
             {isLanding && navLinks.map((link) => (
               <button
-                key={link.name}
+                key={link.nameKey}
                 onClick={() => scrollToSection(link.href)}
                 className="block w-full text-left text-brand-text hover:text-brand-orange font-medium py-2 transition-colors duration-200"
               >
-                {link.name}
+                {t(link.nameKey)}
               </button>
             ))}
             <div className="pt-4 border-t space-y-2">
+              {!isLanding && (
+                <div className="pb-4 border-b">
+                  <LanguageSelector />
+                </div>
+              )}
               <Link
                 href="/login"
                 className="block w-full text-left text-brand-text hover:text-brand-orange font-medium py-2 transition-colors duration-200"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Login
+                {t('nav.login')}
               </Link>
               <Button href="/matricula" size="sm" className="w-full">
-                Matricule-se
+                {t('nav.enroll')}
               </Button>
             </div>
           </div>

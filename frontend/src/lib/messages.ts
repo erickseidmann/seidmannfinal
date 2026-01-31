@@ -1,0 +1,156 @@
+/**
+ * Mensagens de tradução
+ * Chave em português como fallback; valores por idioma
+ */
+
+export type Locale = 'pt-BR' | 'en' | 'es'
+
+export const messages: Record<Locale, Record<string, string>> = {
+  'pt-BR': {
+    // Navegação
+    'nav.login': 'Login',
+    'nav.enroll': 'Matricule-se',
+    'nav.dashboard': 'Dashboard',
+    'nav.logout': 'Sair',
+    'nav.home': 'Início',
+    'nav.howItWorks': 'Como funciona',
+    'nav.plans': 'Planos',
+    'nav.teachers': 'Professores',
+    'nav.faq': 'FAQ',
+    'nav.trackStatus': 'Acompanhar status',
+    'nav.alreadyHaveAccount': 'Já tenho conta',
+
+    // Login
+    'login.title': 'Login',
+    'login.email': 'Email',
+    'login.password': 'Senha',
+    'login.enter': 'Entrar',
+    'login.entering': 'Entrando...',
+    'login.createAccount': 'Criar conta',
+    'login.credentialsError': 'Credenciais inválidas',
+    'login.accessNotReleased': 'Se seu acesso ainda não foi liberado, aguarde a confirmação do pagamento.',
+    'login.alreadyHaveAccount': 'Já tenho conta',
+    'login.welcome': 'Bem-vindo',
+    'login.redirecting': 'Redirecionando...',
+    'login.awaitAccess': 'Aguarde liberação do acesso. Se você já fez o pagamento, entre em contato com a escola.',
+    'login.back': 'Voltar',
+    'login.emailRequired': 'Email é obrigatório',
+    'login.emailInvalid': 'Email inválido',
+    'login.passwordRequired': 'Senha é obrigatória',
+    'login.passwordPlaceholder': 'Digite sua senha',
+
+    // Admin
+    'admin.dashboard': 'Dashboard Admin',
+    'admin.professors': 'Professores',
+    'admin.students': 'Alunos',
+    'admin.users': 'Usuários do ADM',
+    'admin.books': 'Livros',
+    'admin.alerts': 'Alertas',
+    'admin.calendar': 'Calendário',
+
+    // Geral
+    'common.cancel': 'Cancelar',
+    'common.save': 'Salvar',
+    'common.create': 'Criar',
+    'common.edit': 'Editar',
+    'common.delete': 'Excluir',
+    'common.search': 'Buscar',
+  },
+  en: {
+    'nav.login': 'Login',
+    'nav.enroll': 'Enroll',
+    'nav.dashboard': 'Dashboard',
+    'nav.logout': 'Logout',
+    'nav.home': 'Home',
+    'nav.howItWorks': 'How it works',
+    'nav.plans': 'Plans',
+    'nav.teachers': 'Teachers',
+    'nav.faq': 'FAQ',
+    'nav.trackStatus': 'Track status',
+    'nav.alreadyHaveAccount': 'I already have an account',
+
+    'login.title': 'Login',
+    'login.email': 'Email',
+    'login.password': 'Password',
+    'login.enter': 'Sign in',
+    'login.entering': 'Signing in...',
+    'login.createAccount': 'Create account',
+    'login.credentialsError': 'Invalid credentials',
+    'login.accessNotReleased': 'If your access has not been released yet, await payment confirmation.',
+    'login.alreadyHaveAccount': 'I already have an account',
+    'login.welcome': 'Welcome',
+    'login.redirecting': 'Redirecting...',
+    'login.awaitAccess': 'Await access release. If you have already paid, contact the school.',
+    'login.back': 'Back',
+    'login.emailRequired': 'Email is required',
+    'login.emailInvalid': 'Invalid email',
+    'login.passwordRequired': 'Password is required',
+    'login.passwordPlaceholder': 'Enter your password',
+
+    'admin.dashboard': 'Admin Dashboard',
+    'admin.professors': 'Teachers',
+    'admin.students': 'Students',
+    'admin.users': 'Users',
+    'admin.books': 'Books',
+    'admin.alerts': 'Alerts',
+    'admin.calendar': 'Calendar',
+
+    'common.cancel': 'Cancel',
+    'common.save': 'Save',
+    'common.create': 'Create',
+    'common.edit': 'Edit',
+    'common.delete': 'Delete',
+    'common.search': 'Search',
+  },
+  es: {
+    'nav.login': 'Iniciar sesión',
+    'nav.enroll': 'Matricularse',
+    'nav.dashboard': 'Panel',
+    'nav.logout': 'Salir',
+    'nav.home': 'Inicio',
+    'nav.howItWorks': 'Cómo funciona',
+    'nav.plans': 'Planes',
+    'nav.teachers': 'Profesores',
+    'nav.faq': 'Preguntas frecuentes',
+    'nav.trackStatus': 'Seguir estado',
+    'nav.alreadyHaveAccount': 'Ya tengo cuenta',
+
+    'login.title': 'Iniciar sesión',
+    'login.email': 'Email',
+    'login.password': 'Contraseña',
+    'login.enter': 'Entrar',
+    'login.entering': 'Entrando...',
+    'login.createAccount': 'Crear cuenta',
+    'login.credentialsError': 'Credenciales inválidas',
+    'login.accessNotReleased': 'Si su acceso aún no ha sido liberado, espere la confirmación del pago.',
+    'login.alreadyHaveAccount': 'Ya tengo cuenta',
+    'login.welcome': 'Bienvenido',
+    'login.redirecting': 'Redirigiendo...',
+    'login.awaitAccess': 'Espere la liberación del acceso. Si ya pagó, contacte a la escuela.',
+    'login.back': 'Volver',
+    'login.emailRequired': 'El email es obligatorio',
+    'login.emailInvalid': 'Email inválido',
+    'login.passwordRequired': 'La contraseña es obligatoria',
+    'login.passwordPlaceholder': 'Ingrese su contraseña',
+
+    'admin.dashboard': 'Panel de Admin',
+    'admin.professors': 'Profesores',
+    'admin.students': 'Estudiantes',
+    'admin.users': 'Usuarios',
+    'admin.books': 'Libros',
+    'admin.alerts': 'Alertas',
+    'admin.calendar': 'Calendario',
+
+    'common.cancel': 'Cancelar',
+    'common.save': 'Guardar',
+    'common.create': 'Crear',
+    'common.edit': 'Editar',
+    'common.delete': 'Eliminar',
+    'common.search': 'Buscar',
+  },
+}
+
+export function getMessage(locale: Locale, key: string): string {
+  const localeMessages = messages[locale] ?? messages['pt-BR']
+  return localeMessages[key] ?? messages['pt-BR'][key] ?? key
+}
