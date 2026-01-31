@@ -93,6 +93,18 @@ Estamos à disposição para ajudar.
 Atenciosamente,
 Equipe Seidmann Institute`
 
+const RODAPE_REPOSICAO = `
+
+📌 Esta é uma mensagem automática. Por favor, não responda este e-mail.
+
+Caso você tenha qualquer dúvida, identifique alguma informação incorreta ou precise de apoio adicional, entre em contato com a gestão de aulas pelo WhatsApp:
+📞 +55 19 97809-4000
+
+Estamos à disposição para ajudar.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+
 /** Mensagem: aula cancelada */
 export function mensagemAulaCancelada(opcoes: {
   nomeAluno: string
@@ -140,12 +152,12 @@ export function mensagemReposicaoAgendada(opcoes: {
   data: Date
   destinatario: 'aluno' | 'professor'
 }): { subject: string; text: string } {
-  const { nomeAluno, nomeProfessor, data, destinatario } = opcoes
-  const { diaSemana, data: dataStr, horario } = formatarDataHora(new Date(data))
+  const { data } = opcoes
+  const { data: dataStr, horario } = formatarDataHora(new Date(data))
+  const horarioCurto = horario.replace(/:00$/, 'h')
   const subject = 'Reposição de aula agendada – Seidmann Institute'
-  const text =
-    destinatario === 'aluno'
-      ? `Olá, ${nomeAluno}!\n\nFoi agendada uma reposição de aula com o(a) professor(a) ${nomeProfessor}:\n\n• ${diaSemana}, ${dataStr}, às ${horario}\n\nQualquer dúvida, entre em contato conosco.\n\nSeidmann Institute`
-      : `Olá, ${nomeProfessor}!\n\nFoi agendada uma reposição de aula com o(a) aluno(a) ${nomeAluno}:\n\n• ${diaSemana}, ${dataStr}, às ${horario}\n\nSeidmann Institute`
+  const text = `Olá,
+
+Informamos que a reposição da aula agendada para o dia ${dataStr}, às ${horarioCurto}, foi confirmada com sucesso ✅.${RODAPE_REPOSICAO}`
   return { subject, text }
 }

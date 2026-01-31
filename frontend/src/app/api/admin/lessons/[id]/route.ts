@@ -9,7 +9,6 @@ import { requireAdmin } from '@/lib/auth'
 import {
   sendEmail,
   mensagemAulaCancelada,
-  mensagemAulasCanceladas,
   mensagemReposicaoAgendada,
 } from '@/lib/email'
 
@@ -128,7 +127,7 @@ export async function PATCH(
       },
     })
 
-    // E-mail: só envia quando o status mudou para CANCELLED ou REPOSICAO
+    // E-mail: envia quando o status mudou para CANCELLED (ex.: Confirmada→Cancelada ou Reposição→Cancelada) ou para REPOSICAO
     const oldStatus = lessonBefore?.status
     const newStatus = updateData.status ?? oldStatus
     const statusChanged = updateData.status != null && oldStatus !== newStatus
@@ -223,60 +222,23 @@ export async function DELETE(
 
     const deleteFuture = body.deleteFuture === true
 
-    const lessonWithRelations = await prisma.lesson.findUnique({
+    const lesson = await prisma.lesson.findUnique({
       where: { id },
-      include: {
-        enrollment: { select: { nome: true, email: true } },
-        teacher: { select: { nome: true, email: true } },
-      },
     })
 
-    if (!lessonWithRelations) {
+    if (!lesson) {
       return NextResponse.json(
         { ok: false, message: 'Aula não encontrada' },
         { status: 404 }
       )
     }
 
-    const { enrollment, teacher } = lessonWithRelations
-    const nomeAluno = enrollment?.nome ?? ''
-    const nomeProfessor = teacher?.nome ?? ''
-    const emailAluno = enrollment?.email
-    const emailProfessor = teacher?.email
-
-    const sendCancelEmails = async (startAt: Date) => {
-      try {
-        if (emailAluno) {
-          const { subject, text } = mensagemAulaCancelada({
-            nomeAluno,
-            nomeProfessor,
-            data: startAt,
-            destinatario: 'aluno',
-          })
-          await sendEmail({ to: emailAluno, subject, text })
-        }
-        if (emailProfessor) {
-          const { subject, text } = mensagemAulaCancelada({
-            nomeAluno,
-            nomeProfessor,
-            data: startAt,
-            destinatario: 'professor',
-          })
-          await sendEmail({ to: emailProfessor, subject, text })
-        }
-      } catch (err) {
-        console.error('[api/admin/lessons/[id] DELETE] Erro ao enviar e-mail:', err)
-      }
-    }
-
+    // Excluir aula(s): não envia e-mail. E-mail de cancelamento só ao salvar com status "Cancelada".
     if (!deleteFuture) {
-      const startAt = lessonWithRelations.startAt
       await prisma.lesson.delete({ where: { id } })
-      await sendCancelEmails(startAt)
       return NextResponse.json({ ok: true, data: { deleted: id, count: 1 } })
     }
 
-    const lesson = lessonWithRelations
     const refDay = lesson.startAt.getDay()
     const refHours = lesson.startAt.getHours()
     const refMinutes = lesson.startAt.getMinutes()
@@ -293,34 +255,6 @@ export async function DELETE(
       const d = new Date(l.startAt)
       return d.getDay() === refDay && d.getHours() === refHours && d.getMinutes() === refMinutes
     })
-
-    try {
-      if (toDelete.length === 1) {
-        await sendCancelEmails(toDelete[0].startAt)
-      } else if (toDelete.length > 1) {
-        const aulas = toDelete.map((l) => ({ startAt: l.startAt }))
-        if (emailAluno) {
-          const { subject, text } = mensagemAulasCanceladas({
-            nomeAluno,
-            nomeProfessor,
-            aulas,
-            destinatario: 'aluno',
-          })
-          await sendEmail({ to: emailAluno, subject, text })
-        }
-        if (emailProfessor) {
-          const { subject, text } = mensagemAulasCanceladas({
-            nomeAluno,
-            nomeProfessor,
-            aulas,
-            destinatario: 'professor',
-          })
-          await sendEmail({ to: emailProfessor, subject, text })
-        }
-      }
-    } catch (err) {
-      console.error('[api/admin/lessons/[id] DELETE] Erro ao enviar e-mail:', err)
-    }
 
     await prisma.lesson.deleteMany({
       where: { id: { in: toDelete.map((l) => l.id) } },

@@ -13,7 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2 } from 'lucide-react'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -168,6 +168,8 @@ export default function AdminCalendarioPage() {
     repeatWeeks: 4,
   })
   const [deleteLessonModalOpen, setDeleteLessonModalOpen] = useState(false)
+  const [savingLesson, setSavingLesson] = useState(false)
+  const [deletingLesson, setDeletingLesson] = useState(false)
   const [listModal, setListModal] = useState<{
     title: string
     type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors'
@@ -335,6 +337,7 @@ export default function AdminCalendarioPage() {
       setToast({ message: 'Data/hora inválida', type: 'error' })
       return
     }
+    setSavingLesson(true)
     try {
       if (editingLesson) {
         const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
@@ -385,6 +388,8 @@ export default function AdminCalendarioPage() {
       fetchStats()
     } catch (err) {
       setToast({ message: 'Erro ao salvar', type: 'error' })
+    } finally {
+      setSavingLesson(false)
     }
   }
 
@@ -394,7 +399,7 @@ export default function AdminCalendarioPage() {
 
   const handleDeleteLesson = async (deleteFuture: boolean) => {
     if (!editingLesson) return
-    setDeleteLessonModalOpen(false)
+    setDeletingLesson(true)
     try {
       const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
         method: 'DELETE',
@@ -407,6 +412,7 @@ export default function AdminCalendarioPage() {
         setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
         return
       }
+      setDeleteLessonModalOpen(false)
       setLessonModalOpen(false)
       setEditingLesson(null)
       const count = json.data?.count ?? 1
@@ -415,6 +421,8 @@ export default function AdminCalendarioPage() {
       fetchStats()
     } catch (err) {
       setToast({ message: 'Erro ao excluir aula', type: 'error' })
+    } finally {
+      setDeletingLesson(false)
     }
   }
 
@@ -818,16 +826,26 @@ export default function AdminCalendarioPage() {
                   variant="outline"
                   onClick={openDeleteLessonModal}
                   className="mr-auto text-red-600 border-red-200 hover:bg-red-50"
+                  disabled={savingLesson}
                 >
                   <Trash2 className="w-4 h-4 mr-1" />
                   Excluir aula
                 </Button>
               )}
-              <Button variant="outline" onClick={() => setLessonModalOpen(false)}>
+              <Button variant="outline" onClick={() => setLessonModalOpen(false)} disabled={savingLesson}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSaveLesson}>
-                {editingLesson ? 'Salvar' : 'Criar'}
+              <Button variant="primary" onClick={handleSaveLesson} disabled={savingLesson}>
+                {savingLesson ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Salvando...
+                  </>
+                ) : editingLesson ? (
+                  'Salvar'
+                ) : (
+                  'Criar'
+                )}
               </Button>
             </>
           }
@@ -946,14 +964,28 @@ export default function AdminCalendarioPage() {
           size="sm"
           footer={
             <>
-              <Button variant="outline" onClick={() => setDeleteLessonModalOpen(false)}>
+              <Button variant="outline" onClick={() => setDeleteLessonModalOpen(false)} disabled={deletingLesson}>
                 Cancelar
               </Button>
-              <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDeleteLesson(false)}>
-                Apenas esta aula
+              <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDeleteLesson(false)} disabled={deletingLesson}>
+                {deletingLesson ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Excluindo...
+                  </>
+                ) : (
+                  'Apenas esta aula'
+                )}
               </Button>
-              <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={() => handleDeleteLesson(true)}>
-                Esta e todas as aulas futuras (mesmo dia e hora)
+              <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={() => handleDeleteLesson(true)} disabled={deletingLesson}>
+                {deletingLesson ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Excluindo...
+                  </>
+                ) : (
+                  'Esta e todas as aulas futuras (mesmo dia e hora)'
+                )}
               </Button>
             </>
           }
