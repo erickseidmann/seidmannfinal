@@ -20,6 +20,9 @@ import {
   GraduationCap,
   CalendarDays,
   ClipboardList,
+  Wallet,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -33,6 +36,13 @@ interface MenuItem {
   superAdminOnly?: boolean
 }
 
+interface MenuGroup {
+  type: 'group'
+  labelKey: string
+  icon: typeof Wallet
+  children: { href: string; labelKey: string }[]
+}
+
 const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/dashboard': 'dashboard',
   '/admin/professores': 'professores',
@@ -42,9 +52,14 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/alertas': 'alertas',
   '/admin/calendario': 'calendario',
   '/admin/registros-aulas': 'registros-aulas',
+  '/admin/financeiro/geral': 'financeiro',
+  '/admin/financeiro/alunos': 'financeiro',
+  '/admin/financeiro/professores': 'financeiro',
+  '/admin/financeiro/administracao': 'financeiro',
+  '/admin/financeiro/relatorios': 'financeiro',
 }
 
-const baseMenuItems: MenuItem[] = [
+const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
   { href: '/admin/professores', labelKey: 'admin.professors', icon: GraduationCap },
   { href: '/admin/alunos', labelKey: 'admin.students', icon: UserCircle },
@@ -53,6 +68,18 @@ const baseMenuItems: MenuItem[] = [
   { href: '/admin/alertas', labelKey: 'admin.alerts', icon: Bell },
   { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
   { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
+  {
+    type: 'group',
+    labelKey: 'admin.financeiro',
+    icon: Wallet,
+    children: [
+      { href: '/admin/financeiro/geral', labelKey: 'admin.financeiroGeral' },
+      { href: '/admin/financeiro/alunos', labelKey: 'admin.financeiroAlunos' },
+      { href: '/admin/financeiro/professores', labelKey: 'admin.financeiroProfessores' },
+      { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
+      { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
+    ],
+  },
 ]
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
@@ -104,13 +131,19 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   }, [meLoaded, pathname, isSuperAdmin, adminPages, router])
 
   const menuItems = baseMenuItems.filter((item) => {
-    if (item.superAdminOnly) return isSuperAdmin
+    if ('type' in item && item.type === 'group') {
+      if (isSuperAdmin) return true
+      return adminPages.includes('financeiro')
+    }
+    const menuItem = item as MenuItem
+    if (menuItem.superAdminOnly) return isSuperAdmin
     if (isSuperAdmin) return true
-    const pageKey = PAGE_KEY_BY_HREF[item.href]
-    // Sem páginas configuradas: mostrar ao menos o dashboard
+    const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
+
+  const isFinanceiroExpanded = pathname?.startsWith('/admin/financeiro')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -125,12 +158,57 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               </div>
             ) : (
               menuItems.map((item) => {
-                const Icon = item.icon
-                const isActive = pathname === item.href
+                if ('type' in item && item.type === 'group') {
+                  const group = item as MenuGroup
+                  const Icon = group.icon
+                  return (
+                    <div key={group.labelKey} className="space-y-0.5">
+                      <Link
+                        href={group.children[0].href}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                          isFinanceiroExpanded
+                            ? 'bg-brand-orange/10 text-brand-orange font-semibold'
+                            : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        <Icon className="w-5 h-5 shrink-0" />
+                        <span>{t(group.labelKey)}</span>
+                        {isFinanceiroExpanded ? (
+                          <ChevronDown className="w-4 h-4 ml-auto" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 ml-auto" />
+                        )}
+                      </Link>
+                      {isFinanceiroExpanded && (
+                        <div className="pl-4 space-y-0.5 border-l-2 border-gray-200 ml-4">
+                          {group.children.map((child) => {
+                            const isActive = pathname === child.href
+                            return (
+                              <Link
+                                key={child.href}
+                                href={child.href}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-brand-orange text-white font-medium'
+                                    : 'text-gray-600 hover:bg-gray-100'
+                                }`}
+                              >
+                                <span>{t(child.labelKey)}</span>
+                              </Link>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+                const menuItem = item as MenuItem
+                const Icon = menuItem.icon
+                const isActive = pathname === menuItem.href
                 return (
                   <Link
-                    key={item.href}
-                    href={item.href}
+                    key={menuItem.href}
+                    href={menuItem.href}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                       isActive
                         ? 'bg-brand-orange text-white font-semibold'
@@ -138,7 +216,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                     }`}
                   >
                     <Icon className="w-5 h-5" />
-                    <span>{t(item.labelKey)}</span>
+                    <span>{t(menuItem.labelKey)}</span>
                   </Link>
                 )
               })

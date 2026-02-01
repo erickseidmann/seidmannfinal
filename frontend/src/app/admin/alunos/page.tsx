@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2 } from 'lucide-react'
 
 interface StudentAlertItem {
   id: string
@@ -115,6 +115,8 @@ async function buscarCep(cep: string): Promise<{ logradouro: string; localidade:
   }
 }
 
+const LAST_IMPORTED_IDS_KEY = 'seidmann_admin_last_imported_ids'
+
 const STATUS_LABELS: Record<string, string> = {
   LEAD: 'Lead',
   REGISTERED: 'Matriculado',
@@ -184,6 +186,22 @@ export default function AdminAlunosPage() {
     created: number
     enrollments: { id: string; nome: string; email: string }[]
     errors: { row: number; message: string }[]
+  } | null>(null)
+  const [lastImportedIds, setLastImportedIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const raw = localStorage.getItem(LAST_IMPORTED_IDS_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.filter((id: unknown) => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  })
+  const [importValidationErrors, setImportValidationErrors] = useState<{
+    message: string
+    validationErrors: { row: number; message: string }[]
+    totalValidationErrors: number
   } | null>(null)
   const isMinor = isMenorDeIdade(formData.dataNascimento || null)
 
@@ -402,6 +420,7 @@ export default function AdminAlunosPage() {
     }
     setImportLoading(true)
     setImportResult(null)
+    setImportValidationErrors(null)
     try {
       const form = new FormData()
       form.append('file', importFile)
@@ -412,12 +431,25 @@ export default function AdminAlunosPage() {
       })
       const json = await res.json()
       if (!res.ok) {
-        setToast({ message: json.message || 'Erro ao importar', type: 'error' })
+        if (json.validationErrors && json.totalValidationErrors) {
+          setImportValidationErrors({
+            message: json.message || 'Arquivo com colunas incorretas.',
+            validationErrors: json.validationErrors || [],
+            totalValidationErrors: json.totalValidationErrors || 0,
+          })
+        } else {
+          setToast({ message: json.message || 'Erro ao importar', type: 'error' })
+        }
         return
       }
       if (json.ok && json.data) {
         setImportResult(json.data)
-        if (json.data.created > 0) {
+        if (json.data.created > 0 && json.data.enrollments?.length) {
+          const ids = json.data.enrollments.map((e: { id: string }) => e.id)
+          setLastImportedIds(ids)
+          try {
+            localStorage.setItem(LAST_IMPORTED_IDS_KEY, JSON.stringify(ids))
+          } catch {}
           fetchStudents()
           setToast({
             message: `${json.data.created} aluno(s) adicionado(s) com sucesso!`,
@@ -439,6 +471,76 @@ export default function AdminAlunosPage() {
     setImportModalOpen(false)
     setImportFile(null)
     setImportResult(null)
+    setImportValidationErrors(null)
+  }
+
+  const handleUndoLastImport = () => {
+    if (lastImportedIds.length === 0) return
+    setConfirmModal({
+      title: 'Excluir última lista adicionada',
+      message: `Deseja excluir os ${lastImportedIds.length} aluno(s) da última importação? Esta ação não pode ser desfeita.`,
+      variant: 'danger',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/admin/enrollments/undo-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ enrollmentIds: lastImportedIds }),
+          })
+          const json = await res.json()
+          if (res.ok && json.ok) {
+            setLastImportedIds([])
+            try {
+              localStorage.removeItem(LAST_IMPORTED_IDS_KEY)
+            } catch {}
+            fetchStudents()
+            setToast({ message: 'Última lista adicionada foi excluída.', type: 'success' })
+          } else {
+            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+          }
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir última lista', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleDeleteLast30Min = () => {
+    setConfirmModal({
+      title: 'Excluir alunos dos últimos 30 minutos',
+      message:
+        'Serão excluídos todos os alunos (matrículas) criados nos últimos 30 minutos. Esta ação não pode ser desfeita. Deseja continuar?',
+      variant: 'danger',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/admin/enrollments/delete-recent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ minutes: 30 }),
+          })
+          const json = await res.json()
+          if (res.ok && json.ok) {
+            setLastImportedIds([])
+            try {
+              localStorage.removeItem(LAST_IMPORTED_IDS_KEY)
+            } catch {}
+            fetchStudents()
+            setToast({
+              message: `${json.data?.deleted ?? 0} aluno(s) criado(s) nos últimos 30 min foram excluídos.`,
+              type: 'success',
+            })
+          } else {
+            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+          }
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir alunos recentes', type: 'error' })
+        }
+      },
+    })
   }
 
   const handleCepBlur = useCallback(async () => {
@@ -752,6 +854,31 @@ export default function AdminAlunosPage() {
             <p className="text-sm text-gray-600">Lista de alunos e matrículas do instituto</p>
           </div>
           <div className="flex gap-2">
+            <Button
+              onClick={handleUndoLastImport}
+              variant="outline"
+              size="md"
+              disabled={lastImportedIds.length === 0}
+              className="flex items-center gap-2 border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={
+                lastImportedIds.length > 0
+                  ? `Excluir os ${lastImportedIds.length} aluno(s) da última importação (somente admin)`
+                  : 'Disponível após importar uma lista por CSV'
+              }
+            >
+              <Undo2 className="w-4 h-4" />
+              Excluir última lista adicionada
+            </Button>
+            <Button
+              onClick={handleDeleteLast30Min}
+              variant="outline"
+              size="md"
+              className="flex items-center gap-2 border-red-300 text-red-700 hover:bg-red-50"
+              title="Excluir todos os alunos criados nos últimos 30 minutos (somente admin)"
+            >
+              <Trash2 className="w-4 h-4" />
+              Excluir alunos dos últimos 30 min
+            </Button>
             <Button
               onClick={() => setImportModalOpen(true)}
               variant="outline"
@@ -1457,10 +1584,32 @@ export default function AdminAlunosPage() {
                   const f = e.target.files?.[0]
                   setImportFile(f || null)
                   setImportResult(null)
+                  setImportValidationErrors(null)
                 }}
                 className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
               />
             </div>
+            {importValidationErrors && (
+              <div className="space-y-2 pt-2 border-t border-amber-200 bg-amber-50 rounded-lg p-4">
+                <p className="text-sm font-medium text-amber-800">
+                  {importValidationErrors.message}
+                </p>
+                {importValidationErrors.totalValidationErrors > 0 && (
+                  <>
+                    <p className="text-xs text-amber-700">
+                      {importValidationErrors.totalValidationErrors} problema(s) encontrado(s). Use a planilha modelo e mantenha a mesma ordem das colunas.
+                    </p>
+                    <ul className="text-xs text-gray-700 max-h-32 overflow-y-auto space-y-0.5 list-disc list-inside">
+                      {importValidationErrors.validationErrors.map((err, i) => (
+                        <li key={i}>
+                          Linha {err.row}: {err.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
             {importResult && (
               <div className="space-y-2 pt-2 border-t">
                 <p className="text-sm font-medium text-green-700">

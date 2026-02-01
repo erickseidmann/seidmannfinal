@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     // Normalizar email
     const normalizedEmail = email.trim().toLowerCase()
 
-    // Buscar user por email (inclui adminPages para sessão admin)
+    // Buscar user por email (inclui adminPages e mustChangePassword para professor)
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: {
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
         status: true,
         criadoEm: true,
         adminPages: true,
+        mustChangePassword: true,
       },
     })
 
@@ -118,7 +119,6 @@ export async function POST(request: NextRequest) {
 
     // Verificar status do usuário
     // ADMIN com status ACTIVE pode fazer login sem verificar Enrollment
-    // Outros usuários precisam ter Enrollment.status = ACTIVE
     if (user.role === 'ADMIN' && user.status === 'ACTIVE') {
       // Admin: login permitido diretamente; único login identifica automaticamente
       const response = NextResponse.json({
@@ -154,7 +154,37 @@ export async function POST(request: NextRequest) {
       return response
     }
 
-    // Para não-admin: verificar status do usuário
+    // Professor: login com role TEACHER e status ACTIVE → Dashboard Professores (ou alterar-senha se primeira vez)
+    if (user.role === 'TEACHER' && user.status === 'ACTIVE') {
+      const mustChangePassword = Boolean((user as { mustChangePassword?: boolean }).mustChangePassword)
+      const response = NextResponse.json({
+        ok: true,
+        data: {
+          user: {
+            id: user.id,
+            nome: user.nome,
+            email: user.email,
+            whatsapp: user.whatsapp,
+            role: user.role,
+            status: user.status,
+            createdAt: user.criadoEm,
+            mustChangePassword,
+          },
+          redirectTo: mustChangePassword ? '/dashboard-professores/alterar-senha' : '/dashboard-professores',
+        },
+      })
+
+      await createSession(response, {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+      })
+
+      return response
+    }
+
+    // Para aluno (STUDENT): verificar status do usuário
     if (user.status !== 'ACTIVE') {
       const statusMessage = 'Aguarde liberação do acesso. Entre em contato com a escola se necessário.'
       return NextResponse.json(

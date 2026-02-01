@@ -48,6 +48,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.alerts': 'Alertas',
     'admin.calendar': 'Calendário',
     'admin.lessonRecords': 'Registros de aulas',
+    'admin.financeiro': 'Financeiro',
+    'admin.financeiroGeral': 'Geral',
+    'admin.financeiroAlunos': 'Alunos',
+    'admin.financeiroProfessores': 'Professores',
+    'admin.financeiroAdministracao': 'Administração',
+    'admin.financeiroRelatorios': 'Relatórios',
 
     // Geral
     'common.cancel': 'Cancelar',
@@ -96,6 +102,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.alerts': 'Alerts',
     'admin.calendar': 'Calendar',
     'admin.lessonRecords': 'Class records',
+    'admin.financeiro': 'Financial',
+    'admin.financeiroGeral': 'General',
+    'admin.financeiroAlunos': 'Students',
+    'admin.financeiroProfessores': 'Teachers',
+    'admin.financeiroAdministracao': 'Administration',
+    'admin.financeiroRelatorios': 'Reports',
 
     'common.cancel': 'Cancel',
     'common.save': 'Save',
@@ -143,6 +155,12 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.alerts': 'Alertas',
     'admin.calendar': 'Calendario',
     'admin.lessonRecords': 'Registros de clases',
+    'admin.financeiro': 'Financiero',
+    'admin.financeiroGeral': 'General',
+    'admin.financeiroAlunos': 'Alumnos',
+    'admin.financeiroProfessores': 'Profesores',
+    'admin.financeiroAdministracao': 'Administración',
+    'admin.financeiroRelatorios': 'Informes',
 
     'common.cancel': 'Cancelar',
     'common.save': 'Guardar',

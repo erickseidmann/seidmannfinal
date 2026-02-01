@@ -1,9 +1,10 @@
 /**
- * Helpers de autenticação admin
+ * Helpers de autenticação admin e professor
  */
 
 import { NextRequest } from 'next/server'
 import { getAdminSession } from './adminSession'
+import { getSession } from './session'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -52,4 +53,31 @@ export async function requireSuperAdmin(request: NextRequest) {
 
 export function isSuperAdminEmail(email: string | undefined): boolean {
   return (email || '').toLowerCase() === SUPER_ADMIN_EMAIL
+}
+
+/** Sessão do professor (Dashboard Professores) – exige role TEACHER */
+export async function requireTeacher(request: NextRequest) {
+  const session = await getSession(request)
+
+  if (!session) {
+    return {
+      authorized: false,
+      message: 'Não autenticado',
+      session: null,
+    }
+  }
+
+  if (session.role !== 'TEACHER') {
+    return {
+      authorized: false,
+      message: 'Acesso negado. Apenas professores podem acessar.',
+      session: null,
+    }
+  }
+
+  return {
+    authorized: true,
+    message: null,
+    session,
+  }
 }

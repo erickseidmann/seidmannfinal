@@ -78,6 +78,7 @@ model User {
   status       UserStatus   @default(PENDING) // PENDING, ACTIVE, BLOCKED
   funcao       String?      @db.VarChar(255) @map("funcao") // Função/cargo (para usuários do ADM)
   adminPages   Json?        @map("admin_pages") // Páginas do dashboard que pode acessar (array de strings)
+  mustChangePassword Boolean @default(false) @map("must_change_password") // Professor: obrigar a alterar senha no primeiro acesso
   criadoEm     DateTime     @default(now()) @map("created_at")
   atualizadoEm DateTime     @updatedAt @map("updated_at")
   
@@ -139,6 +140,7 @@ model Enrollment {
   observacoes       String?      @db.Text
   
   status         EnrollmentStatus @default(LEAD)
+  inactiveAt     DateTime?        @map("inactive_at") // Data em que foi marcado como inativo (para histórico por mês)
   trackingCode   String?          @unique @map("tracking_code")
   contractAcceptedAt DateTime?    @map("contract_accepted_at")
   contractVersion    String?      @map("contract_version")
@@ -148,6 +150,7 @@ model Enrollment {
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
+  paymentMonths  EnrollmentPaymentMonth[]
   alerts         StudentAlert[]
   lessons        Lesson[]
   lessonRecordPresences LessonRecordStudent[]
@@ -161,27 +164,50 @@ model Enrollment {
 // Model: PaymentInfo (Informações de Pagamento)
 // Informações de pagamento vinculadas a uma matrícula
 model PaymentInfo {
-  id               String          @id @default(cuid())
-  enrollmentId     String          @unique @map("enrollment_id")
-  metodo           PaymentMethod   @default(PIX)
-  plan             String?         // Ex: "1h semanal", "2h semanais", "grupo 2h"
-  valorMensal      Decimal?        @db.Decimal(10, 2) @map("valor_mensal") // Valor combinado mensal
-  monthlyValue     Decimal?        @db.Decimal(10, 2) @map("monthly_value")
-  dataPagamento    DateTime?       @map("data_pagamento")
-  dueDay           Int?            @map("due_day") // Dia do mês (1-31)
-  dueDate          DateTime?       @map("due_date") // Data específica de vencimento
-  reminderEnabled  Boolean         @default(true) @map("reminder_enabled")
-  paymentStatus    String?         @map("payment_status") // "PENDING", "CONFIRMED"
-  paidAt           DateTime?         @map("paid_at")
-  transactionRef    String?         @map("transaction_ref") // Referência da transação
-  lembrete         Boolean         @default(false) // Mantido para compatibilidade
-  criadoEm         DateTime        @default(now()) @map("created_at")
-  atualizadoEm     DateTime        @updatedAt @map("updated_at")
+  id                  String          @id @default(cuid())
+  enrollmentId        String          @unique @map("enrollment_id")
+  metodo              PaymentMethod   @default(PIX)
+  plan                String?         // Ex: "1h semanal", "2h semanais", "grupo 2h"
+  valorMensal         Decimal?        @db.Decimal(10, 2) @map("valor_mensal") // Valor combinado mensal
+  monthlyValue        Decimal?        @db.Decimal(10, 2) @map("monthly_value")
+  dataPagamento       DateTime?       @map("data_pagamento")
+  dueDay              Int?            @map("due_day") // Dia do mês (1-31)
+  dueDate             DateTime?       @map("due_date") // Data específica de vencimento
+  reminderEnabled     Boolean         @default(true) @map("reminder_enabled")
+  paymentStatus       String?         @map("payment_status") // PAGO, ATRASADO, PENDING
+  paidAt              DateTime?       @map("paid_at") // data último pagamento
+  transactionRef      String?         @map("transaction_ref") // Referência da transação
+  lembrete            Boolean         @default(false) // Mantido para compatibilidade
+  quemPaga            String?         @db.VarChar(255) @map("quem_paga") // Quem paga (funcionário financeiro adiciona)
+  valorHora           Decimal?        @db.Decimal(10, 2) @map("valor_hora") // Valor da hora
+  banco               String?         @db.VarChar(100) @map("banco")
+  periodoPagamento    String?         @db.VarChar(20) @map("periodo_pagamento") // MENSAL, ANUAL, SEMESTRAL, TRIMESTRAL
+  notaFiscalEmitida   Boolean?        @map("nota_fiscal_emitida") // Nota fiscal emitida?
+  criadoEm            DateTime        @default(now()) @map("created_at")
+  atualizadoEm        DateTime        @updatedAt @map("updated_at")
   
   // Relacionamento
-  enrollment       Enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  enrollment          Enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   
   @@map("payment_info")
+}
+
+// Status e NF por mês/ano (independentes por mês; único global é paidAt em PaymentInfo)
+model EnrollmentPaymentMonth {
+  id                   String   @id @default(cuid())
+  enrollmentId         String   @map("enrollment_id")
+  year                 Int
+  month                Int      // 1-12
+  paymentStatus        String?  @map("payment_status") // PAGO, ATRASADO, PENDING
+  notaFiscalEmitida    Boolean? @map("nota_fiscal_emitida")
+  criadoEm             DateTime @default(now()) @map("created_at")
+  atualizadoEm         DateTime @updatedAt @map("updated_at")
+
+  enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, year, month])
+  @@index([enrollmentId])
+  @@map("enrollment_payment_months")
 }
 
 // Model: Teacher (Professor)
@@ -200,6 +226,8 @@ model Teacher {
   nota            Int?         // Avaliação 1-5 estrelas
   status          UserStatus   @default(ACTIVE) // ACTIVE ou INACTIVE
   userId          String?      @unique @map("user_id") // Opcional: link com User se tiver conta
+  periodoPagamentoInicio  DateTime? @map("periodo_pagamento_inicio") // Data início do período de pagamento (por professor)
+  periodoPagamentoTermino DateTime? @map("periodo_pagamento_termino") // Data término do período de pagamento (por professor)
   criadoEm        DateTime     @default(now()) @map("created_at")
   atualizadoEm    DateTime     @updatedAt @map("updated_at")
   

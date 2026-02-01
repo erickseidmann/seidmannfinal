@@ -1,12 +1,13 @@
 /**
  * API Route: POST /api/admin/announcements/[id]/send
- * 
- * Envia anúncio (stub: apenas marca como SENT)
+ *
+ * Envia anúncio: envia e-mail aos destinatários (professores e/ou alunos) conforme audiência.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { sendEmail } from '@/lib/email'
 
 export async function POST(
   request: NextRequest,
@@ -23,9 +24,7 @@ export async function POST(
 
     const { id } = params
 
-    // Verificar se o model existe no Prisma Client
     if (!prisma.announcement) {
-      console.error('[api/admin/announcements/[id]/send] Model Announcement não encontrado no Prisma Client. Execute: npx prisma generate')
       return NextResponse.json(
         { ok: false, message: 'Modelo Announcement não disponível. Execute: npx prisma generate' },
         { status: 503 }
@@ -57,9 +56,60 @@ export async function POST(
       )
     }
 
-    // TODO: Aqui seria o envio real (email/SMS)
-    // Por enquanto, apenas marca como enviado
-    console.log(`[STUB] Enviando anúncio ${id} via ${announcement.channel} para ${announcement.audience}`)
+    const subject = announcement.title
+    const text = announcement.message
+
+    if (announcement.channel === 'EMAIL') {
+      const audience = announcement.audience
+      const sendToTeachers = audience === 'TEACHERS' || audience === 'ALL' || audience === 'ACTIVE_ONLY'
+      const sendToStudents = audience === 'STUDENTS' || audience === 'ALL' || audience === 'ACTIVE_ONLY'
+      const activeOnly = audience === 'ACTIVE_ONLY'
+
+      if (sendToTeachers) {
+        const teacherWhere = activeOnly ? { status: 'ACTIVE' as const } : {}
+        const teachers = await prisma.teacher.findMany({
+          where: teacherWhere,
+          select: { email: true, nome: true },
+        })
+        for (const t of teachers) {
+          if (t.email?.trim()) {
+            try {
+              await sendEmail({
+                to: t.email.trim(),
+                subject,
+                text: `Olá, ${t.nome}\n\n${text}`,
+              })
+            } catch (err) {
+              console.error('[api/admin/announcements/send] Erro ao enviar e-mail para professor:', t.email, err)
+            }
+          }
+        }
+      }
+
+      if (sendToStudents) {
+        const enrollmentWhere = activeOnly ? { status: 'ACTIVE' as const } : {}
+        const enrollments = await prisma.enrollment.findMany({
+          where: enrollmentWhere,
+          select: { email: true, nome: true },
+        })
+        const seen = new Set<string>()
+        for (const e of enrollments) {
+          const email = e.email?.trim()
+          if (email && !seen.has(email.toLowerCase())) {
+            seen.add(email.toLowerCase())
+            try {
+              await sendEmail({
+                to: email,
+                subject,
+                text: `Olá, ${e.nome}\n\n${text}`,
+              })
+            } catch (err) {
+              console.error('[api/admin/announcements/send] Erro ao enviar e-mail para aluno:', email, err)
+            }
+          }
+        }
+      }
+    }
 
     const updated = await prisma.announcement.update({
       where: { id },

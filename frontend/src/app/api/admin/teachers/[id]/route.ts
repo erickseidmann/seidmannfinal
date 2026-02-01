@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import bcrypt from 'bcryptjs'
+
+const SENHA_PADRAO_PROFESSOR = '123456'
 
 export async function PATCH(
   request: NextRequest,
@@ -35,6 +38,9 @@ export async function PATCH(
       cpf,
       cnpj,
       nota,
+      senha,
+      periodoPagamentoInicio,
+      periodoPagamentoTermino,
     } = body
 
     // Verificar se o model existe no Prisma Client
@@ -92,11 +98,47 @@ export async function PATCH(
     if (cpf !== undefined) updateData.cpf = cpf?.trim() || null
     if (cnpj !== undefined) updateData.cnpj = cnpj?.trim() || null
     if (nota !== undefined) updateData.nota = nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null
+    if (periodoPagamentoInicio !== undefined) updateData.periodoPagamentoInicio = periodoPagamentoInicio ? new Date(periodoPagamentoInicio) : null
+    if (periodoPagamentoTermino !== undefined) updateData.periodoPagamentoTermino = periodoPagamentoTermino ? new Date(periodoPagamentoTermino) : null
 
     const teacher = await prisma.teacher.update({
       where: { id },
       data: updateData,
     })
+
+    // Criar ou atualizar login (User) do professor: senha informada (obriga troca se for a padrão) ou padrão 123456
+    const senhaTrim = senha != null ? String(senha).trim() : ''
+    const useDefaultPassword = senhaTrim.length < 6
+    const passwordToUse = useDefaultPassword ? SENHA_PADRAO_PROFESSOR : senhaTrim
+    if (passwordToUse) {
+      const normalizedEmail = (teacher.email || existing.email).trim().toLowerCase()
+      const passwordHash = await bcrypt.hash(passwordToUse, 10)
+      if (existing.userId) {
+        await prisma.user.update({
+          where: { id: existing.userId },
+          data: { senha: passwordHash, mustChangePassword: useDefaultPassword },
+        })
+      } else {
+        const userExists = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+        if (!userExists) {
+          const user = await prisma.user.create({
+            data: {
+              nome: teacher.nome,
+              email: teacher.email,
+              whatsapp: teacher.whatsapp || '00000000000',
+              senha: passwordHash,
+              role: 'TEACHER',
+              status: 'ACTIVE',
+              mustChangePassword: useDefaultPassword,
+            },
+          })
+          await prisma.teacher.update({
+            where: { id },
+            data: { userId: user.id },
+          })
+        }
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -114,6 +156,8 @@ export async function PATCH(
           infosPagamento: teacher.infosPagamento,
           nota: teacher.nota,
           status: teacher.status,
+          periodoPagamentoInicio: teacher.periodoPagamentoInicio?.toISOString().slice(0, 10) ?? null,
+          periodoPagamentoTermino: teacher.periodoPagamentoTermino?.toISOString().slice(0, 10) ?? null,
           criadoEm: teacher.criadoEm.toISOString(),
           atualizadoEm: teacher.atualizadoEm.toISOString(),
         },

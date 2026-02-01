@@ -40,6 +40,15 @@ function parseCSV(text: string): string[][] {
   return lines.map((l) => parseCSVLine(l))
 }
 
+/** Normaliza nome de coluna: trim, minúsculas, sem espaços/underscores (ex: "Valor Mensalidade" -> "valormensalidade") */
+function normalizeHeader(h: string): string {
+  return h
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '')
+}
+
 const VALID_STATUS = [
   'LEAD',
   'REGISTERED',
@@ -53,6 +62,7 @@ const VALID_STATUS = [
 ]
 const VALID_CURSO = ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL']
 const VALID_TEMPO = [30, 40, 60, 120]
+const VALID_TIPO_AULA = ['PARTICULAR', 'GRUPO']
 
 export async function POST(request: NextRequest) {
   try {
@@ -91,7 +101,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const headerRow = rows[0].map((h) => h.trim().toLowerCase())
+    const headerRow = rows[0].map((h) => normalizeHeader(h))
     const headerMap: Record<string, number> = {}
     headerRow.forEach((h, i) => {
       headerMap[h] = i
@@ -107,10 +117,67 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const get = (row: string[], key: string) => row[headerMap[normalizeHeader(key)] ?? -1]?.trim() ?? ''
+
+    // Validação: só importa se os dados estiverem nas colunas certas (ex: valor numérico em valorMensalidade)
+    const validationErrors: { row: number; message: string }[] = []
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r]
+      const rowNum = r + 1
+
+      const vm = get(row, 'valormensalidade')
+      if (vm !== '') {
+        const n = Number(String(vm).replace(',', '.'))
+        if (Number.isNaN(n)) {
+          validationErrors.push({
+            row: rowNum,
+            message: `Coluna "Valor Mensalidade" deve conter número (valor encontrado: "${vm}"). Verifique se as colunas do CSV estão na mesma ordem do modelo.`,
+          })
+        }
+      }
+
+      const dp = get(row, 'diapagamento')
+      if (dp !== '') {
+        const n = Number(dp)
+        if (Number.isNaN(n) || n < 1 || n > 31) {
+          validationErrors.push({
+            row: rowNum,
+            message: `Coluna "Dia Pagamento" deve ser um número entre 1 e 31 (valor: "${dp}").`,
+          })
+        }
+      }
+
+      const ta = get(row, 'tempoaulaminutos')
+      if (ta !== '' && !VALID_TEMPO.includes(Number(ta))) {
+        validationErrors.push({
+          row: rowNum,
+          message: `Coluna "Tempo Aula Minutos" deve ser 30, 40, 60 ou 120 (valor: "${ta}").`,
+        })
+      }
+
+      const metodoVal = get(row, 'metodopagamento')
+      if (metodoVal !== '' && /^\d+([.,]\d+)?$/.test(metodoVal)) {
+        validationErrors.push({
+          row: rowNum,
+          message: `Coluna "Método de Pagamento" parece conter valor numérico ("${metodoVal}"). Verifique se as colunas do CSV estão na mesma ordem do modelo.`,
+        })
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: 'Arquivo com colunas em ordem incorreta ou dados inválidos. Corrija o CSV usando o modelo e tente novamente.',
+          validationErrors: validationErrors.slice(0, 20),
+          totalValidationErrors: validationErrors.length,
+        },
+        { status: 400 }
+      )
+    }
+
     const created: { id: string; nome: string; email: string }[] = []
     const errors: { row: number; message: string }[] = []
-
-    const get = (row: string[], key: string) => row[headerMap[key] ?? -1]?.trim() ?? ''
 
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r]
@@ -155,6 +222,10 @@ export async function POST(request: NextRequest) {
         if (!Number.isNaN(n) && VALID_TEMPO.includes(n)) tempoAulaMinutos = n
       }
 
+      let tipoAula: string | null = (get(row, 'tipoaula') || '').toUpperCase() || null
+      if (tipoAula && !VALID_TIPO_AULA.includes(tipoAula)) tipoAula = null
+      const nomeGrupo = tipoAula === 'GRUPO' ? (get(row, 'nomegrupo') || null) : null
+
       const moraNoExterior = /^(1|true|sim|s|yes|y)$/i.test(get(row, 'moranoexterior'))
 
       let valorMensalidade: number | null = null
@@ -195,6 +266,8 @@ export async function POST(request: NextRequest) {
             curso,
             frequenciaSemanal,
             tempoAulaMinutos,
+            tipoAula,
+            nomeGrupo,
             cep: moraNoExterior ? null : (get(row, 'cep')?.replace(/\D/g, '').slice(0, 9) || null),
             rua: moraNoExterior ? null : (get(row, 'rua') || null),
             cidade: moraNoExterior ? null : (get(row, 'cidade') || null),

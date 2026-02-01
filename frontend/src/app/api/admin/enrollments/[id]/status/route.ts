@@ -71,12 +71,16 @@ export async function PATCH(
       )
     }
 
-    // Atualizar status do Enrollment
+    // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao voltar para ACTIVE limpa
+    const updateData: { status: string; inactiveAt?: Date | null } = { status: status as any }
+    if (status === 'INACTIVE') {
+      updateData.inactiveAt = new Date()
+    } else {
+      updateData.inactiveAt = null
+    }
     const updatedEnrollment = await prisma.enrollment.update({
       where: { id },
-      data: {
-        status: status as any,
-      },
+      data: updateData,
       include: {
         user: {
           select: {

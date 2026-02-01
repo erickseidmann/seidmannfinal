@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import bcrypt from 'bcryptjs'
+
+const SENHA_PADRAO_PROFESSOR = '123456'
 
 export async function GET(request: NextRequest) {
   try {
@@ -111,6 +114,7 @@ export async function POST(request: NextRequest) {
       cpf,
       cnpj,
       nota,
+      senha,
     } = body
 
     if (!nome || !email) {
@@ -155,6 +159,29 @@ export async function POST(request: NextRequest) {
         status: status || 'ACTIVE',
       },
     })
+
+    // Criar login (User) para o professor: senha padrão 123456 (obriga troca no 1º acesso) ou senha informada
+    const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+    if (!existingUser) {
+      const useDefaultPassword = !senha || String(senha).trim().length < 6
+      const passwordToUse = useDefaultPassword ? SENHA_PADRAO_PROFESSOR : String(senha).trim()
+      const passwordHash = await bcrypt.hash(passwordToUse, 10)
+      const user = await prisma.user.create({
+        data: {
+          nome: teacher.nome,
+          email: teacher.email,
+          whatsapp: teacher.whatsapp || '00000000000',
+          senha: passwordHash,
+          role: 'TEACHER',
+          status: 'ACTIVE',
+          mustChangePassword: useDefaultPassword,
+        },
+      })
+      await prisma.teacher.update({
+        where: { id: teacher.id },
+        data: { userId: user.id },
+      })
+    }
 
     return NextResponse.json({
       ok: true,

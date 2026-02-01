@@ -1,15 +1,33 @@
 /**
  * Next.js Middleware
- * 
- * Protege rotas admin verificando sessão JWT via cookie httpOnly.
- * Protege: /admin/* e /api/admin/* (exceto /api/admin/login)
+ *
+ * Protege rotas admin (cookie admin_session) e Dashboard Professores (cookie session_token, role TEACHER).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession } from './lib/adminSession'
+import { getSession } from './lib/session'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Proteger rotas Dashboard Professores e API professor
+  if (pathname.startsWith('/dashboard-professores') || pathname.startsWith('/api/professor')) {
+    const session = await getSession(request)
+    if (!session) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ ok: false, message: 'Não autenticado' }, { status: 401 })
+      }
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+    if (session.role !== 'TEACHER') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ ok: false, message: 'Acesso negado' }, { status: 403 })
+      }
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+    return NextResponse.next()
+  }
 
   // Proteger rotas /admin/* (exceto login que redireciona)
   if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
@@ -57,6 +75,9 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/dashboard-professores',
+    '/dashboard-professores/:path*',
+    '/api/professor/:path*',
     '/admin/:path*',
     '/api/admin/:path*',
   ],

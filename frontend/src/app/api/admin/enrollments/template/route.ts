@@ -7,10 +7,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 
 const CSV_HEADERS =
-  'nome,email,whatsapp,dataNascimento,cpf,nomeResponsavel,cpfResponsavel,curso,frequenciaSemanal,tempoAulaMinutos,cep,rua,cidade,estado,numero,complemento,moraNoExterior,enderecoExterior,valorMensalidade,metodoPagamento,diaPagamento,melhoresHorarios,melhoresDiasSemana,nomeVendedor,nomeEmpresaOuIndicador,observacoes,status'
+  'nome,email,whatsapp,dataNascimento,cpf,nomeResponsavel,cpfResponsavel,curso,frequenciaSemanal,tempoAulaMinutos,tipoAula,nomeGrupo,cep,rua,cidade,estado,numero,complemento,moraNoExterior,enderecoExterior,valorMensalidade,metodoPagamento,diaPagamento,melhoresHorarios,melhoresDiasSemana,nomeVendedor,nomeEmpresaOuIndicador,observacoes,status'
 
-const CSV_EXAMPLE =
-  'João Silva,joao@email.com,19987654321,2005-03-15,,,,INGLES,2,60,13050123,Rua Exemplo,100,Campinas,SP,100,Apto 1,0,,350.00,PIX,10,manhã,seg qua,,,Observação,LEAD'
+// Curso: INGLES | ESPANHOL | INGLES_E_ESPANHOL | tempoAulaMinutos: 30, 40, 60 ou 120 | tipoAula: PARTICULAR | GRUPO | nomeGrupo: quando tipoAula=GRUPO
+const CSV_EXAMPLE_PARTICULAR =
+  'João Silva,joao@email.com,19987654321,2005-03-15,,,,INGLES,2,60,PARTICULAR,,13050123,Rua Exemplo,100,Campinas,SP,100,Apto 1,0,,350.00,PIX,10,manhã,seg qua,,,Observação,LEAD'
+const CSV_EXAMPLE_GRUPO =
+  'Maria Santos,maria@email.com,19991234567,2010-05-20,,,,ESPANHOL,1,60,GRUPO,Turma Kids,13050123,Rua B,200,Campinas,SP,50,,0,,280.00,PIX,5,tarde,sáb,,,Observação,LEAD'
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,7 +25,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const csv = [CSV_HEADERS, CSV_EXAMPLE].join('\n')
+    const csv = [CSV_HEADERS, CSV_EXAMPLE_PARTICULAR, CSV_EXAMPLE_GRUPO].join('\n')
     const BOM = '\uFEFF'
     const body = BOM + csv
 

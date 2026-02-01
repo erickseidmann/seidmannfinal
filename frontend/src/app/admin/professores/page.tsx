@@ -15,7 +15,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key } from 'lucide-react'
 
 interface Teacher {
   id: string
@@ -63,7 +63,15 @@ export default function AdminProfessoresPage() {
     cnpj: '',
     nota: '',
     status: 'ACTIVE',
+    senha: '',
   })
+  const [criarAcessoTeacher, setCriarAcessoTeacher] = useState<Teacher | null>(null)
+  const [criarAcessoSenha, setCriarAcessoSenha] = useState('')
+  const [criarAcessoLoading, setCriarAcessoLoading] = useState(false)
+  const [alterarSenhaTeacher, setAlterarSenhaTeacher] = useState<Teacher | null>(null)
+  const [alterarSenhaNova, setAlterarSenhaNova] = useState('')
+  const [alterarSenhaConfirmar, setAlterarSenhaConfirmar] = useState('')
+  const [alterarSenhaLoading, setAlterarSenhaLoading] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importLoading, setImportLoading] = useState(false)
@@ -129,6 +137,7 @@ export default function AdminProfessoresPage() {
       cnpj: '',
       nota: '',
       status: 'ACTIVE',
+      senha: '',
     })
     setIsModalOpen(true)
   }
@@ -147,6 +156,7 @@ export default function AdminProfessoresPage() {
       cnpj: teacher.cnpj || '',
       nota: teacher.nota != null ? String(teacher.nota) : '',
       status: teacher.status,
+      senha: '',
     })
     setIsModalOpen(true)
   }
@@ -160,11 +170,15 @@ export default function AdminProfessoresPage() {
         : '/api/admin/teachers'
       const method = editingTeacher ? 'PATCH' : 'POST'
 
+      const payload: Record<string, unknown> = { ...formData }
+      if (!payload.senha || String(payload.senha).trim() === '') delete payload.senha
+      else payload.senha = String(payload.senha).trim()
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       })
 
       const json = await response.json()
@@ -182,6 +196,70 @@ export default function AdminProfessoresPage() {
       setToast({ message: 'Professor salvo com sucesso!', type: 'success' })
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao salvar professor', type: 'error' })
+    }
+  }
+
+  const handleAlterarSenhaSubmit = async () => {
+    if (!alterarSenhaTeacher || !alterarSenhaNova.trim() || alterarSenhaNova.trim().length < 6) {
+      setToast({ message: 'Nova senha deve ter no mínimo 6 caracteres', type: 'error' })
+      return
+    }
+    if (alterarSenhaNova !== alterarSenhaConfirmar) {
+      setToast({ message: 'A nova senha e a confirmação não coincidem', type: 'error' })
+      return
+    }
+    setAlterarSenhaLoading(true)
+    try {
+      const res = await fetch(`/api/admin/teachers/${alterarSenhaTeacher.id}/alterar-senha`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ novaSenha: alterarSenhaNova.trim() }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao alterar senha', type: 'error' })
+        return
+      }
+      setToast({ message: json.data?.message || 'Senha alterada.', type: 'success' })
+      setAlterarSenhaTeacher(null)
+      setAlterarSenhaNova('')
+      setAlterarSenhaConfirmar('')
+      fetchTeachers()
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao alterar senha', type: 'error' })
+    } finally {
+      setAlterarSenhaLoading(false)
+    }
+  }
+
+  const handleCriarAcessoSubmit = async () => {
+    if (!criarAcessoTeacher) return
+    if (criarAcessoSenha.trim().length > 0 && criarAcessoSenha.trim().length < 6) {
+      setToast({ message: 'Senha deve ter no mínimo 6 caracteres', type: 'error' })
+      return
+    }
+    setCriarAcessoLoading(true)
+    try {
+      const res = await fetch(`/api/admin/teachers/${criarAcessoTeacher.id}/criar-acesso`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(criarAcessoSenha.trim().length >= 6 ? { senha: criarAcessoSenha.trim() } : {}),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao criar acesso', type: 'error' })
+        return
+      }
+      setToast({ message: json.data?.message || 'Acesso ao Dashboard Professores criado.', type: 'success' })
+      setCriarAcessoTeacher(null)
+      setCriarAcessoSenha('')
+      fetchTeachers()
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao criar acesso', type: 'error' })
+    } finally {
+      setCriarAcessoLoading(false)
     }
   }
 
@@ -411,6 +489,48 @@ export default function AdminProfessoresPage() {
           {t.status}
         </span>
       ),
+    },
+    {
+      key: 'acesso',
+      label: 'Acesso Dashboard',
+      render: (t: Teacher) =>
+        t.userId ? (
+          <span className="text-green-600 text-sm">Sim</span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setCriarAcessoTeacher(t)
+              setCriarAcessoSenha('')
+            }}
+            className="text-brand-orange hover:text-orange-700 text-sm font-medium flex items-center gap-1"
+            title="Criar login para o professor acessar o Dashboard Professores"
+          >
+            <Key className="w-4 h-4" />
+            Criar acesso
+          </button>
+        ),
+    },
+    {
+      key: 'alterarSenha',
+      label: 'Alterar senha',
+      render: (t: Teacher) =>
+        t.userId ? (
+          <button
+            type="button"
+            onClick={() => {
+              setAlterarSenhaTeacher(t)
+              setAlterarSenhaNova('')
+              setAlterarSenhaConfirmar('')
+            }}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            title="Alterar senha do professor"
+          >
+            Alterar senha
+          </button>
+        ) : (
+          <span className="text-gray-400 text-sm">—</span>
+        ),
     },
     {
       key: 'actions',
@@ -873,7 +993,146 @@ export default function AdminProfessoresPage() {
                 <option value="INACTIVE">Inativo</option>
               </select>
             </div>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Senha para acesso ao Dashboard Professores <span className="text-gray-500 font-normal">(opcional)</span>
+              </label>
+              <input
+                type="password"
+                value={formData.senha}
+                onChange={(e) => setFormData({ ...formData, senha: e.target.value })}
+                className="input w-full"
+                placeholder="Deixe em branco para usar 123456 (professor altera no 1º acesso)"
+                minLength={6}
+                autoComplete="new-password"
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                Em branco: senha padrão 123456 (o professor deve alterar no primeiro acesso). Preencha para definir outra senha.
+              </p>
+            </div>
           </form>
+        </Modal>
+
+        {/* Modal Criar acesso ao Dashboard (para professor sem userId) */}
+        <Modal
+          isOpen={!!criarAcessoTeacher}
+          onClose={() => {
+            setCriarAcessoTeacher(null)
+            setCriarAcessoSenha('')
+          }}
+          title={`Criar acesso ao Dashboard – ${criarAcessoTeacher?.nome ?? ''}`}
+          size="md"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCriarAcessoTeacher(null)
+                  setCriarAcessoSenha('')
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleCriarAcessoSubmit}
+                disabled={criarAcessoLoading}
+              >
+                {criarAcessoLoading ? 'Salvando...' : criarAcessoSenha.trim().length >= 6 ? 'Criar acesso' : 'Usar senha padrão (123456)'}
+              </Button>
+            </>
+          }
+        >
+          {criarAcessoTeacher && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                O professor <strong>{criarAcessoTeacher.nome}</strong> acessará o Dashboard Professores com o email <strong>{criarAcessoTeacher.email}</strong>. Deixe em branco para usar a senha padrão <strong>123456</strong> (o professor deverá alterar no primeiro acesso) ou defina uma senha personalizada.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Senha <span className="text-gray-500 font-normal">(opcional – padrão: 123456)</span>
+                </label>
+                <input
+                  type="password"
+                  value={criarAcessoSenha}
+                  onChange={(e) => setCriarAcessoSenha(e.target.value)}
+                  className="input w-full"
+                  placeholder="Deixe em branco para 123456"
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Alterar senha do professor (admin) */}
+        <Modal
+          isOpen={!!alterarSenhaTeacher}
+          onClose={() => {
+            setAlterarSenhaTeacher(null)
+            setAlterarSenhaNova('')
+            setAlterarSenhaConfirmar('')
+          }}
+          title={`Alterar senha – ${alterarSenhaTeacher?.nome ?? ''}`}
+          size="md"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setAlterarSenhaTeacher(null)
+                  setAlterarSenhaNova('')
+                  setAlterarSenhaConfirmar('')
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleAlterarSenhaSubmit}
+                disabled={alterarSenhaNova.trim().length < 6 || alterarSenhaNova !== alterarSenhaConfirmar || alterarSenhaLoading}
+              >
+                {alterarSenhaLoading ? 'Salvando...' : 'Alterar senha'}
+              </Button>
+            </>
+          }
+        >
+          {alterarSenhaTeacher && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Defina uma nova senha para o professor <strong>{alterarSenhaTeacher.nome}</strong>. Ele usará o mesmo email e esta nova senha no próximo login.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Nova senha <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="password"
+                  value={alterarSenhaNova}
+                  onChange={(e) => setAlterarSenhaNova(e.target.value)}
+                  className="input w-full"
+                  placeholder="Mínimo 6 caracteres"
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Confirmar nova senha <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="password"
+                  value={alterarSenhaConfirmar}
+                  onChange={(e) => setAlterarSenhaConfirmar(e.target.value)}
+                  className="input w-full"
+                  placeholder="Repita a nova senha"
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+          )}
         </Modal>
       </div>
     </AdminLayout>
