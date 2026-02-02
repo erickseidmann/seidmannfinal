@@ -6,7 +6,7 @@
 
 'use client'
 
-import { ReactNode, useState, useEffect } from 'react'
+import { ReactNode, useState, useEffect, useCallback } from 'react'
 import AdminHeader from './AdminHeader'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -23,6 +23,7 @@ import {
   Wallet,
   ChevronDown,
   ChevronRight,
+  MessageCircle,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -57,6 +58,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/professores': 'financeiro',
   '/admin/financeiro/administracao': 'financeiro',
   '/admin/financeiro/relatorios': 'financeiro',
+  '/admin/chat': 'chat',
 }
 
 const baseMenuItems: (MenuItem | MenuGroup)[] = [
@@ -68,6 +70,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/alertas', labelKey: 'admin.alerts', icon: Bell },
   { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
   { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
+  { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -89,6 +92,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
   const [adminPages, setAdminPages] = useState<string[]>([])
   const [meLoaded, setMeLoaded] = useState(false)
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -129,6 +133,27 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       router.replace('/admin/dashboard')
     }
   }, [meLoaded, pathname, isSuperAdmin, adminPages, router])
+
+  const fetchChatUnreadCount = useCallback(() => {
+    fetch('/api/admin/chat/unread-count', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.unreadCount != null) {
+          setUnreadChatCount(json.data.unreadCount)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchChatUnreadCount()
+  }, [pathname, fetchChatUnreadCount])
+
+  useEffect(() => {
+    const onChatUpdated = () => fetchChatUnreadCount()
+    window.addEventListener('admin-chat-updated', onChatUpdated)
+    return () => window.removeEventListener('admin-chat-updated', onChatUpdated)
+  }, [fetchChatUnreadCount])
 
   const menuItems = baseMenuItems.filter((item) => {
     if ('type' in item && item.type === 'group') {
@@ -205,6 +230,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 const menuItem = item as MenuItem
                 const Icon = menuItem.icon
                 const isActive = pathname === menuItem.href
+                const isChat = menuItem.href === '/admin/chat'
+                const showChatDot = isChat && unreadChatCount > 0
                 return (
                   <Link
                     key={menuItem.href}
@@ -215,8 +242,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                         : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    <Icon className="w-5 h-5" />
+                    <Icon className="w-5 h-5 shrink-0" />
                     <span>{t(menuItem.labelKey)}</span>
+                    {showChatDot && (
+                      <span
+                        className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
+                        title={`${unreadChatCount} mensagem(ns) não lida(s)`}
+                        aria-label={`${unreadChatCount} não lidas`}
+                      />
+                    )}
                   </Link>
                 )
               })

@@ -1,7 +1,7 @@
 /**
- * API: GET /api/admin/financeiro/professores
- * Lista professores ativos; cada um com seu próprio período (periodoPagamentoInicio/Termino).
- * Horas e valor a pagar são calculados no período específico de cada professor.
+ * API: GET /api/admin/financeiro/professores?year=YYYY&month=M
+ * Lista professores ativos. Com year e month: período = esse mês para todos; status e valores vêm de TeacherPaymentMonth (como financeiro alunos).
+ * Sem year/month: período e status vêm do cadastro do professor (periodoPagamentoInicio/Termino, periodoPagamentoPago).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -38,19 +38,43 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const { searchParams } = new URL(request.url)
+    const yearParam = searchParams.get('year')
+    const monthParam = searchParams.get('month')
+    const year = yearParam ? parseInt(yearParam, 10) : null
+    const month = monthParam ? parseInt(monthParam, 10) : null
+    const useMonthMode = year != null && month != null && month >= 1 && month <= 12
+
     const now = new Date()
     const defaultStart = firstDayOfMonth(now)
     const defaultEnd = lastDayOfMonth(now)
 
+    let periodStart = defaultStart
+    let periodEnd = defaultEnd
+    if (useMonthMode) {
+      periodStart = startOfDay(new Date(year!, month! - 1, 1))
+      periodEnd = lastDayOfMonth(new Date(year!, month! - 1, 1))
+    }
+
+    const teacherSelect = {
+      id: true,
+      nome: true,
+      valorPorHora: true,
+      metodoPagamento: true,
+      infosPagamento: true,
+      periodoPagamentoInicio: true,
+      periodoPagamentoTermino: true,
+      periodoPagamentoPago: true,
+      valorPorPeriodo: true,
+      valorExtra: true,
+      ...(useMonthMode && {
+        paymentMonths: { where: { year: year!, month: month! }, take: 1 },
+      }),
+    } as const
+
     const teachers = await prisma.teacher.findMany({
       where: { status: 'ACTIVE' },
-      select: {
-        id: true,
-        nome: true,
-        valorPorHora: true,
-        periodoPagamentoInicio: true,
-        periodoPagamentoTermino: true,
-      },
+      select: teacherSelect,
       orderBy: { nome: 'asc' },
     })
 
@@ -62,23 +86,50 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Período global para buscar dados: do menor início ao maior término entre os professores
-    let globalStart = defaultStart.getTime()
-    let globalEnd = defaultEnd.getTime()
+    let globalStart = periodStart.getTime()
+    let globalEnd = periodEnd.getTime()
     const teacherPeriods: { id: string; start: number; end: number }[] = []
 
-    for (const t of teachers) {
-      const start = t.periodoPagamentoInicio ? startOfDay(t.periodoPagamentoInicio).getTime() : defaultStart.getTime()
-      const end = t.periodoPagamentoTermino ? endOfDay(t.periodoPagamentoTermino).getTime() : defaultEnd.getTime()
-      if (start < globalStart) globalStart = start
-      if (end > globalEnd) globalEnd = end
-      teacherPeriods.push({ id: t.id, start, end })
+    if (!useMonthMode) {
+      for (const t of teachers) {
+        const start = t.periodoPagamentoInicio ? startOfDay(t.periodoPagamentoInicio).getTime() : defaultStart.getTime()
+        const end = t.periodoPagamentoTermino ? endOfDay(t.periodoPagamentoTermino).getTime() : defaultEnd.getTime()
+        if (start < globalStart) globalStart = start
+        if (end > globalEnd) globalEnd = end
+        teacherPeriods.push({ id: t.id, start, end })
+      }
+    } else {
+      globalStart = periodStart.getTime()
+      globalEnd = periodEnd.getTime()
+      for (const t of teachers) {
+        const pm = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
+          ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
+          : null
+        const start = pm?.periodoInicio ? startOfDay(pm.periodoInicio).getTime() : globalStart
+        const end = pm?.periodoTermino ? endOfDay(pm.periodoTermino).getTime() : globalEnd
+        if (start < globalStart) globalStart = start
+        if (end > globalEnd) globalEnd = end
+        teacherPeriods.push({ id: t.id, start, end })
+      }
     }
 
     const globalStartDate = new Date(globalStart)
     const globalEndDate = new Date(globalEnd)
 
-    // Aulas no intervalo global (para contagem por professor no período dele)
+    function toDateKey(d: Date): string {
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${y}-${m}-${day}`
+    }
+    const startKey = toDateKey(globalStartDate)
+    const endKey = toDateKey(globalEndDate)
+    const holidayRows = await prisma.holiday.findMany({
+      where: { dateKey: { gte: startKey, lte: endKey } },
+      select: { dateKey: true },
+    })
+    const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
+
     const lessonsInRange = await prisma.lesson.findMany({
       where: {
         startAt: { gte: globalStartDate, lte: globalEndDate },
@@ -115,8 +166,22 @@ export async function GET(request: NextRequest) {
     const list = teachers.map((t) => {
       const period = teacherPeriods.find((p) => p.id === t.id)!
       const valorPorHora = t.valorPorHora != null ? Number(t.valorPorHora) : 0
+      const pm = useMonthMode && 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
+        ? (t.paymentMonths[0] as { paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; periodoInicio: Date | null; periodoTermino: Date | null; teacherConfirmedAt: Date | null })
+        : null
 
-      let totalMinutos = 0
+      const valorPorPeriodo = useMonthMode && pm?.valorPorPeriodo != null
+        ? Number(pm.valorPorPeriodo)
+        : (t.valorPorPeriodo != null ? Number(t.valorPorPeriodo) : 0)
+      const valorExtra = useMonthMode && pm?.valorExtra != null
+        ? Number(pm.valorExtra)
+        : (t.valorExtra != null ? Number(t.valorExtra) : 0)
+      const statusPagamento = useMonthMode && pm?.paymentStatus === 'PAGO'
+        ? 'PAGO'
+        : (useMonthMode ? 'EM_ABERTO' : (t.periodoPagamentoPago ? 'PAGO' : 'EM_ABERTO'))
+
+      let totalMinutosRegistrados = 0
+      let totalMinutosEstimados = 0
       let totalRegistrosEsperados = 0
 
       for (const r of recordsInRange) {
@@ -124,19 +189,24 @@ export async function GET(request: NextRequest) {
         if (lesson.teacherId !== t.id) continue
         const startAt = new Date(lesson.startAt).getTime()
         if (startAt < period.start || startAt > period.end) continue
+        if (holidaySet.has(toDateKey(lesson.startAt))) continue
         const mins = r.tempoAulaMinutos ?? lesson.durationMinutes ?? 60
-        totalMinutos += mins
+        totalMinutosRegistrados += mins
       }
 
       for (const l of lessonsInRange) {
         if (l.teacherId !== t.id) continue
         const startAt = new Date(l.startAt).getTime()
         if (startAt < period.start || startAt > period.end) continue
+        if (holidaySet.has(toDateKey(l.startAt))) continue
         totalRegistrosEsperados += 1
+        totalMinutosEstimados += l.durationMinutes ?? 60
       }
 
-      const totalHorasRegistradas = Math.round((totalMinutos / 60) * 100) / 100
-      const valorAPagar = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
+      const totalHorasRegistradas = Math.round((totalMinutosRegistrados / 60) * 100) / 100
+      const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
+      const valorHoras = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
+      const valorAPagar = Math.round((valorHoras + valorPorPeriodo + valorExtra) * 100) / 100
 
       const dataInicioISO = new Date(period.start).toISOString().slice(0, 10)
       const dataTerminoISO = new Date(period.end).toISOString().slice(0, 10)
@@ -147,9 +217,17 @@ export async function GET(request: NextRequest) {
         valorPorHora,
         dataInicio: dataInicioISO,
         dataTermino: dataTerminoISO,
+        totalHorasEstimadas,
         totalHorasRegistradas,
         totalRegistrosEsperados,
+        valorPorHoras: valorHoras,
+        valorPorPeriodo,
+        valorExtra,
         valorAPagar,
+        metodoPagamento: t.metodoPagamento ?? null,
+        infosPagamento: t.infosPagamento ?? null,
+        statusPagamento: statusPagamento as 'PAGO' | 'EM_ABERTO',
+        pagamentoProntoParaFazer: !!(pm?.teacherConfirmedAt),
       }
     })
 
@@ -157,6 +235,8 @@ export async function GET(request: NextRequest) {
       ok: true,
       data: {
         professores: list,
+        year: useMonthMode ? year : null,
+        month: useMonthMode ? month : null,
       },
     })
   } catch (error) {

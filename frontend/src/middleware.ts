@@ -29,6 +29,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Proteger rotas Dashboard Aluno e API student
+  if (pathname.startsWith('/dashboard-aluno') || pathname.startsWith('/api/student')) {
+    const session = await getSession(request)
+    if (!session) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ ok: false, message: 'Não autenticado' }, { status: 401 })
+      }
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+    if (session.role !== 'STUDENT') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ ok: false, message: 'Acesso negado' }, { status: 403 })
+      }
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+    return NextResponse.next()
+  }
+
   // Proteger rotas /admin/* (exceto login que redireciona)
   if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
     const session = await getAdminSession(request)
@@ -78,6 +96,9 @@ export const config = {
     '/dashboard-professores',
     '/dashboard-professores/:path*',
     '/api/professor/:path*',
+    '/dashboard-aluno',
+    '/dashboard-aluno/:path*',
+    '/api/student/:path*',
     '/admin/:path*',
     '/api/admin/:path*',
   ],

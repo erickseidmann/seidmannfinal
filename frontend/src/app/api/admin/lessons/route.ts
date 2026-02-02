@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const startParam = searchParams.get('start') // ISO date or datetime
     const endParam = searchParams.get('end')
+    const teacherIdParam = searchParams.get('teacherId')
 
     if (!startParam || !endParam) {
       return NextResponse.json(
@@ -45,10 +46,15 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const where: { startAt: { gte: Date; lte: Date }; teacherId?: string } = {
+      startAt: { gte: startAt, lte: endAt },
+    }
+    if (teacherIdParam?.trim()) {
+      where.teacherId = teacherIdParam.trim()
+    }
+
     const lessons = await prisma.lesson.findMany({
-      where: {
-        startAt: { gte: startAt, lte: endAt },
-      },
+      where,
       include: {
         enrollment: { select: { id: true, nome: true, frequenciaSemanal: true, tipoAula: true, nomeGrupo: true, curso: true } },
         teacher: { select: { id: true, nome: true } },
@@ -104,6 +110,44 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Validar idioma: professor deve ensinar o(s) idioma(s) do curso do aluno
+    const [enrollment, teacher] = await Promise.all([
+      prisma.enrollment.findUnique({
+        where: { id: enrollmentId },
+        select: { curso: true },
+      }),
+      prisma.teacher.findUnique({
+        where: { id: teacherId },
+        select: { idiomasEnsina: true },
+      }),
+    ])
+    if (enrollment && teacher) {
+      const curso = (enrollment as { curso?: string | null }).curso
+      const ensina = Array.isArray(teacher.idiomasEnsina)
+        ? (teacher.idiomasEnsina as string[])
+        : teacher.idiomasEnsina
+          ? [String(teacher.idiomasEnsina)]
+          : []
+      if (curso === 'INGLES' && !ensina.includes('INGLES')) {
+        return NextResponse.json(
+          { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+          { status: 400 }
+        )
+      }
+      if (curso === 'ESPANHOL' && !ensina.includes('ESPANHOL')) {
+        return NextResponse.json(
+          { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+          { status: 400 }
+        )
+      }
+      if (curso === 'INGLES_E_ESPANHOL' && (!ensina.includes('INGLES') || !ensina.includes('ESPANHOL'))) {
+        return NextResponse.json(
+          { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+          { status: 400 }
+        )
+      }
+    }
+
     const startAt = new Date(startAtStr)
     if (Number.isNaN(startAt.getTime())) {
       return NextResponse.json(
@@ -120,10 +164,36 @@ export async function POST(request: NextRequest) {
 
     const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
 
+    function toDateKey(d: Date): string {
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${y}-${m}-${day}`
+    }
+
+    const firstStart = new Date(startAt)
+    const lastStart = new Date(startAt)
+    lastStart.setDate(lastStart.getDate() + (repeatWeeks - 1) * 7)
+    const startKey = toDateKey(firstStart)
+    const endKey = toDateKey(lastStart)
+
+    const holidayRows = await prisma.holiday.findMany({
+      where: { dateKey: { gte: startKey, lte: endKey } },
+      select: { dateKey: true },
+    })
+    const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
+
+    const existingLessonCount = await prisma.lesson.count({
+      where: { teacherId, enrollmentId },
+    })
+    const isFirstLessonForTeacherAndEnrollment = existingLessonCount === 0
+
     const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
     for (let w = 0; w < repeatWeeks; w++) {
       const lessonStart = new Date(startAt)
       lessonStart.setDate(lessonStart.getDate() + w * 7)
+      const dateKey = toDateKey(lessonStart)
+      if (holidaySet.has(dateKey)) continue
       const lesson = await prisma.lesson.create({
         data: {
           enrollmentId,
@@ -139,6 +209,28 @@ export async function POST(request: NextRequest) {
         },
       })
       lessonsCreated.push(lesson)
+    }
+
+    if (lessonsCreated.length === 0) {
+      return NextResponse.json(
+        { ok: false, message: 'Não é possível adicionar aula em dia de feriado. Remova o feriado ou escolha outra data.' },
+        { status: 400 }
+      )
+    }
+
+    // Notificar o professor: tem um novo aluno (primeira aula com esse aluno) – aparece no Início
+    if (isFirstLessonForTeacherAndEnrollment && prisma.teacherAlert && lessonsCreated.length > 0) {
+      const first = lessonsCreated[0]
+      const nomeAluno = (first.enrollment as { nome?: string })?.nome ?? 'Aluno'
+      await prisma.teacherAlert.create({
+        data: {
+          teacherId,
+          message: `Tem um novo aluno: ${nomeAluno}.`,
+          type: 'NEW_STUDENT',
+          level: 'INFO',
+          createdById: auth.session?.sub ?? null,
+        },
+      })
     }
 
     // E-mail: aula(s) confirmada(s) para aluno e professor

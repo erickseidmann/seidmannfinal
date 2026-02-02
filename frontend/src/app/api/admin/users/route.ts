@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
         role: true,
         status: true,
         funcao: true,
+        emailPessoal: true,
         adminPages: true,
         criadoEm: true,
         atualizadoEm: true,
@@ -68,6 +69,7 @@ export async function GET(request: NextRequest) {
           role: u.role,
           status: u.status,
           funcao: u.funcao,
+          emailPessoal: u.emailPessoal ?? null,
           adminPages: Array.isArray(u.adminPages) ? u.adminPages : (u.adminPages as string[] | null) ?? [],
           criadoEm: u.criadoEm.toISOString(),
           atualizadoEm: u.atualizadoEm.toISOString(),
@@ -94,7 +96,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { nome, email, telefone, funcao, adminPages, senha } = body
+    const { nome, email, telefone, funcao, emailPessoal, adminPages, senha } = body
     const whatsapp = telefone ?? body.whatsapp ?? ''
 
     const normalizedEmail = (email || '').trim().toLowerCase()
@@ -139,6 +141,7 @@ export async function POST(request: NextRequest) {
         role: 'ADMIN',
         status: 'ACTIVE',
         funcao: (funcao || '').trim() || null,
+        emailPessoal: (emailPessoal || '').trim() || null,
         adminPages: pages.length ? pages : null,
       },
       select: {
@@ -149,6 +152,7 @@ export async function POST(request: NextRequest) {
         role: true,
         status: true,
         funcao: true,
+        emailPessoal: true,
         adminPages: true,
         criadoEm: true,
         atualizadoEm: true,

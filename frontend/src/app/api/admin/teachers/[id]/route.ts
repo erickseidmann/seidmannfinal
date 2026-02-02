@@ -41,6 +41,11 @@ export async function PATCH(
       senha,
       periodoPagamentoInicio,
       periodoPagamentoTermino,
+      periodoPagamentoPago,
+      valorPorPeriodo,
+      valorExtra,
+      idiomasFala,
+      idiomasEnsina,
     } = body
 
     // Verificar se o model existe no Prisma Client
@@ -100,6 +105,19 @@ export async function PATCH(
     if (nota !== undefined) updateData.nota = nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null
     if (periodoPagamentoInicio !== undefined) updateData.periodoPagamentoInicio = periodoPagamentoInicio ? new Date(periodoPagamentoInicio) : null
     if (periodoPagamentoTermino !== undefined) updateData.periodoPagamentoTermino = periodoPagamentoTermino ? new Date(periodoPagamentoTermino) : null
+    if (periodoPagamentoPago !== undefined) updateData.periodoPagamentoPago = Boolean(periodoPagamentoPago)
+    if (valorPorPeriodo !== undefined) updateData.valorPorPeriodo = valorPorPeriodo != null && valorPorPeriodo !== '' ? Number(valorPorPeriodo) : null
+    if (valorExtra !== undefined) updateData.valorExtra = valorExtra != null && valorExtra !== '' ? Number(valorExtra) : null
+
+    const IDIOMAS_VALIDOS = ['INGLES', 'ESPANHOL', 'PORTUGUES', 'ITALIANO', 'FRANCES']
+    if (idiomasFala !== undefined) {
+      const arr = Array.isArray(idiomasFala) ? idiomasFala : []
+      updateData.idiomasFala = arr.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase()))
+    }
+    if (idiomasEnsina !== undefined) {
+      const arr = Array.isArray(idiomasEnsina) ? idiomasEnsina : []
+      updateData.idiomasEnsina = arr.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase()))
+    }
 
     const teacher = await prisma.teacher.update({
       where: { id },
@@ -158,6 +176,11 @@ export async function PATCH(
           status: teacher.status,
           periodoPagamentoInicio: teacher.periodoPagamentoInicio?.toISOString().slice(0, 10) ?? null,
           periodoPagamentoTermino: teacher.periodoPagamentoTermino?.toISOString().slice(0, 10) ?? null,
+          periodoPagamentoPago: teacher.periodoPagamentoPago,
+          valorPorPeriodo: teacher.valorPorPeriodo != null ? Number(teacher.valorPorPeriodo) : null,
+          valorExtra: teacher.valorExtra != null ? Number(teacher.valorExtra) : null,
+          idiomasFala: Array.isArray(teacher.idiomasFala) ? teacher.idiomasFala : (teacher.idiomasFala ? [teacher.idiomasFala] : []),
+          idiomasEnsina: Array.isArray(teacher.idiomasEnsina) ? teacher.idiomasEnsina : (teacher.idiomasEnsina ? [teacher.idiomasEnsina] : []),
           criadoEm: teacher.criadoEm.toISOString(),
           atualizadoEm: teacher.atualizadoEm.toISOString(),
         },

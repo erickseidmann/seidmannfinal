@@ -32,11 +32,17 @@ function getTransporter() {
   })
 }
 
+export interface EmailAttachment {
+  filename: string
+  content: Buffer
+}
+
 export async function sendEmail(options: {
   to: string
   subject: string
   text: string
   html?: string
+  attachments?: EmailAttachment[]
 }): Promise<boolean> {
   const transporter = getTransporter()
   if (!transporter) {
@@ -51,6 +57,14 @@ export async function sendEmail(options: {
       subject: options.subject,
       text: options.text,
       html: options.html || options.text.replace(/\n/g, '<br>'),
+      ...(options.attachments?.length
+        ? {
+            attachments: options.attachments.map((a) => ({
+              filename: a.filename,
+              content: a.content,
+            })),
+          }
+        : {}),
     })
     return true
   } catch (err) {

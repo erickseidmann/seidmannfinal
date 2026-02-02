@@ -74,6 +74,8 @@ export async function GET(request: NextRequest) {
           status: t.status,
           userId: t.userId,
           user: t.user,
+          idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : (t.idiomasFala ? [t.idiomasFala] : []),
+          idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : (t.idiomasEnsina ? [t.idiomasEnsina] : []),
           attendancesCount: t._count.attendances,
           alertsCount: t._count.alerts,
           alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
@@ -115,6 +117,8 @@ export async function POST(request: NextRequest) {
       cnpj,
       nota,
       senha,
+      idiomasFala,
+      idiomasEnsina,
     } = body
 
     if (!nome || !email) {
@@ -144,6 +148,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const IDIOMAS_VALIDOS = ['INGLES', 'ESPANHOL', 'PORTUGUES', 'ITALIANO', 'FRANCES']
+    const arrFala = Array.isArray(idiomasFala) ? idiomasFala.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
+    const arrEnsina = Array.isArray(idiomasEnsina) ? idiomasEnsina.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
+
     const teacher = await prisma.teacher.create({
       data: {
         nome: nome.trim(),
@@ -157,6 +165,8 @@ export async function POST(request: NextRequest) {
         infosPagamento: infosPagamento?.trim() || null,
         nota: nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null,
         status: status || 'ACTIVE',
+        idiomasFala: arrFala.length > 0 ? arrFala : null,
+        idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : null,
       },
     })
 

@@ -113,10 +113,56 @@ export async function PATCH(
     const lessonBefore = await prisma.lesson.findUnique({
       where: { id },
       include: {
-        enrollment: { select: { nome: true, email: true } },
+        enrollmentId: true,
+        teacherId: true,
+        enrollment: { select: { nome: true, email: true, curso: true } },
         teacher: { select: { nome: true, email: true } },
       },
     })
+    if (!lessonBefore) {
+      return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
+    }
+
+    const effectiveEnrollmentId = updateData.enrollmentId ?? lessonBefore.enrollmentId
+    const effectiveTeacherId = updateData.teacherId ?? lessonBefore.teacherId
+    if (effectiveEnrollmentId && effectiveTeacherId) {
+      const [enrollment, teacher] = await Promise.all([
+        prisma.enrollment.findUnique({
+          where: { id: effectiveEnrollmentId },
+          select: { curso: true },
+        }),
+        prisma.teacher.findUnique({
+          where: { id: effectiveTeacherId },
+          select: { idiomasEnsina: true },
+        }),
+      ])
+      if (enrollment && teacher) {
+        const curso = (enrollment as { curso?: string | null }).curso
+        const ensina = Array.isArray(teacher.idiomasEnsina)
+          ? (teacher.idiomasEnsina as string[])
+          : teacher.idiomasEnsina
+            ? [String(teacher.idiomasEnsina)]
+            : []
+        if (curso === 'INGLES' && !ensina.includes('INGLES')) {
+          return NextResponse.json(
+            { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+            { status: 400 }
+          )
+        }
+        if (curso === 'ESPANHOL' && !ensina.includes('ESPANHOL')) {
+          return NextResponse.json(
+            { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+            { status: 400 }
+          )
+        }
+        if (curso === 'INGLES_E_ESPANHOL' && (!ensina.includes('INGLES') || !ensina.includes('ESPANHOL'))) {
+          return NextResponse.json(
+            { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
+            { status: 400 }
+          )
+        }
+      }
+    }
 
     const lesson = await prisma.lesson.update({
       where: { id },

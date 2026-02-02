@@ -15,7 +15,15 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2 } from 'lucide-react'
+
+const IDIOMAS_OPCOES = [
+  { value: 'INGLES', label: 'Inglês' },
+  { value: 'ESPANHOL', label: 'Espanhol' },
+  { value: 'PORTUGUES', label: 'Português' },
+  { value: 'ITALIANO', label: 'Italiano' },
+  { value: 'FRANCES', label: 'Francês' },
+] as const
 
 interface Teacher {
   id: string
@@ -35,6 +43,8 @@ interface Teacher {
   attendancesCount: number
   alertsCount: number
   alerts?: { id: string; message: string; level: string | null }[]
+  idiomasFala?: string[] | null
+  idiomasEnsina?: string[] | null
   criadoEm: string
   atualizadoEm: string
 }
@@ -64,6 +74,8 @@ export default function AdminProfessoresPage() {
     nota: '',
     status: 'ACTIVE',
     senha: '',
+    idiomasFala: [] as string[],
+    idiomasEnsina: [] as string[],
   })
   const [criarAcessoTeacher, setCriarAcessoTeacher] = useState<Teacher | null>(null)
   const [criarAcessoSenha, setCriarAcessoSenha] = useState('')
@@ -80,10 +92,53 @@ export default function AdminProfessoresPage() {
     teachers: { id: string; nome: string; email: string }[]
     errors: { row: number; message: string }[]
   } | null>(null)
+  const [availabilityModalTeacher, setAvailabilityModalTeacher] = useState<Teacher | null>(null)
+  const [availabilitySlots, setAvailabilitySlots] = useState<{ id: string; dayOfWeek: number; startMinutes: number; endMinutes: number }[]>([])
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const [newSlotForm, setNewSlotForm] = useState({ dayOfWeek: 1, startTime: '09:00', endTime: '12:00' })
+  const [addingSlot, setAddingSlot] = useState(false)
+  const [alunosModalTeacher, setAlunosModalTeacher] = useState<Teacher | null>(null)
+  const [alunosData, setAlunosData] = useState<{
+    teacher: { id: string; nome: string }
+    alunos: { enrollmentId: string; nome: string; diasHorarios: string; lessons: unknown[] }[]
+  } | null>(null)
+  const [alunosLoading, setAlunosLoading] = useState(false)
 
   useEffect(() => {
     fetchTeachers()
   }, [])
+
+  useEffect(() => {
+    if (!availabilityModalTeacher) {
+      setAvailabilitySlots([])
+      return
+    }
+    setAvailabilityLoading(true)
+    fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/availability`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && j.data?.slots) setAvailabilitySlots(j.data.slots)
+        else setAvailabilitySlots([])
+      })
+      .catch(() => setAvailabilitySlots([]))
+      .finally(() => setAvailabilityLoading(false))
+  }, [availabilityModalTeacher?.id])
+
+  useEffect(() => {
+    if (!alunosModalTeacher) {
+      setAlunosData(null)
+      return
+    }
+    setAlunosLoading(true)
+    fetch(`/api/admin/teachers/${alunosModalTeacher.id}/alunos`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && j.data) setAlunosData(j.data)
+        else setAlunosData(null)
+      })
+      .catch(() => setAlunosData(null))
+      .finally(() => setAlunosLoading(false))
+  }, [alunosModalTeacher?.id])
 
   // Sincroniza o professor do modal de alertas quando a lista é atualizada (ex: após excluir)
   useEffect(() => {
@@ -138,6 +193,8 @@ export default function AdminProfessoresPage() {
       nota: '',
       status: 'ACTIVE',
       senha: '',
+      idiomasFala: [],
+      idiomasEnsina: [],
     })
     setIsModalOpen(true)
   }
@@ -157,6 +214,8 @@ export default function AdminProfessoresPage() {
       nota: teacher.nota != null ? String(teacher.nota) : '',
       status: teacher.status,
       senha: '',
+      idiomasFala: Array.isArray(teacher.idiomasFala) ? [...teacher.idiomasFala] : [],
+      idiomasEnsina: Array.isArray(teacher.idiomasEnsina) ? [...teacher.idiomasEnsina] : [],
     })
     setIsModalOpen(true)
   }
@@ -445,6 +504,92 @@ export default function AdminProfessoresPage() {
     setImportResult(null)
   }
 
+  const DIAS_SEMANA_AVAIL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+
+  const timeToMinutes = (time: string): number => {
+    const [h, m] = time.split(':').map(Number)
+    return (h ?? 0) * 60 + (m ?? 0)
+  }
+
+  const minutesToTime = (minutes: number): string => {
+    const h = Math.floor(minutes / 60)
+    const m = minutes % 60
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+  }
+
+  const handleAddAvailabilitySlot = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!availabilityModalTeacher) return
+    const startMinutes = timeToMinutes(newSlotForm.startTime)
+    const endMinutes = timeToMinutes(newSlotForm.endTime)
+    if (startMinutes >= endMinutes) {
+      setToast({ message: 'Horário de início deve ser anterior ao fim', type: 'error' })
+      return
+    }
+    setAddingSlot(true)
+    setToast(null)
+    try {
+      const res = await fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/availability`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          dayOfWeek: newSlotForm.dayOfWeek,
+          startMinutes,
+          endMinutes,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao adicionar horário', type: 'error' })
+        return
+      }
+      setToast({ message: 'Horário adicionado', type: 'success' })
+      setNewSlotForm({ dayOfWeek: 1, startTime: '09:00', endTime: '12:00' })
+      const listRes = await fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/availability`, { credentials: 'include' })
+      const listJson = await listRes.json()
+      if (listJson.ok && listJson.data?.slots) setAvailabilitySlots(listJson.data.slots)
+    } catch {
+      setToast({ message: 'Erro ao adicionar horário', type: 'error' })
+    } finally {
+      setAddingSlot(false)
+    }
+  }
+
+  const handleDeleteAvailabilitySlot = async (slotId: string) => {
+    if (!availabilityModalTeacher) return
+    try {
+      const res = await fetch(
+        `/api/admin/teachers/${availabilityModalTeacher.id}/availability?slotId=${encodeURIComponent(slotId)}`,
+        { method: 'DELETE', credentials: 'include' }
+      )
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao remover', type: 'error' })
+        return
+      }
+      setAvailabilitySlots((prev) => prev.filter((s) => s.id !== slotId))
+      setToast({ message: 'Horário removido', type: 'success' })
+    } catch {
+      setToast({ message: 'Erro ao remover horário', type: 'error' })
+    }
+  }
+
+  const handleExportAlunos = () => {
+    if (!alunosData) return
+    const headers = ['Aluno', 'Dias e horários']
+    const rows = alunosData.alunos.map((a) => [a.nome, a.diasHorarios])
+    const csv = [headers.join(';'), ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(';'))].join('\r\n')
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `alunos-${alunosData.teacher.nome.replace(/\s+/g, '-')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    setToast({ message: 'Exportado!', type: 'success' })
+  }
+
   const columns = [
     {
       key: 'nome',
@@ -531,6 +676,36 @@ export default function AdminProfessoresPage() {
         ) : (
           <span className="text-gray-400 text-sm">—</span>
         ),
+    },
+    {
+      key: 'horarios',
+      label: 'Horários disponíveis',
+      render: (t: Teacher) => (
+        <button
+          type="button"
+          onClick={() => setAvailabilityModalTeacher(t)}
+          className="text-brand-orange hover:text-orange-700 text-sm font-medium flex items-center gap-1"
+          title="Ver e editar horários disponíveis"
+        >
+          <Clock className="w-4 h-4" />
+          Horários
+        </button>
+      ),
+    },
+    {
+      key: 'alunos',
+      label: 'Alunos',
+      render: (t: Teacher) => (
+        <button
+          type="button"
+          onClick={() => setAlunosModalTeacher(t)}
+          className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center gap-1"
+          title="Ver alunos, dias e horários das aulas"
+        >
+          <Users className="w-4 h-4" />
+          Alunos
+        </button>
+      ),
     },
     {
       key: 'actions',
@@ -982,6 +1157,54 @@ export default function AdminProfessoresPage() {
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Idiomas que o professor fala
+              </label>
+              <div className="flex flex-wrap gap-4">
+                {IDIOMAS_OPCOES.map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.idiomasFala.includes(opt.value)}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...formData.idiomasFala, opt.value]
+                          : formData.idiomasFala.filter((x) => x !== opt.value)
+                        setFormData({ ...formData, idiomasFala: next })
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Idiomas em que o professor se comunica (ex.: para avisos).</p>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Idiomas de aula (que o professor ensina)
+              </label>
+              <div className="flex flex-wrap gap-4">
+                {IDIOMAS_OPCOES.map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.idiomasEnsina.includes(opt.value)}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...formData.idiomasEnsina, opt.value]
+                          : formData.idiomasEnsina.filter((x) => x !== opt.value)
+                        setFormData({ ...formData, idiomasEnsina: next })
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Idiomas em que o professor dá aula (inglês, espanhol, etc.).</p>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Status
               </label>
               <select
@@ -1131,6 +1354,148 @@ export default function AdminProfessoresPage() {
                   autoComplete="new-password"
                 />
               </div>
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Horários disponíveis */}
+        <Modal
+          isOpen={!!availabilityModalTeacher}
+          onClose={() => setAvailabilityModalTeacher(null)}
+          title={`Horários disponíveis – ${availabilityModalTeacher?.nome ?? ''}`}
+          size="md"
+          footer={
+            <Button variant="primary" onClick={() => setAvailabilityModalTeacher(null)}>
+              Fechar
+            </Button>
+          }
+        >
+          {availabilityModalTeacher && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Por padrão o professor está disponível em <strong>todos os horários</strong>. Ao adicionar horários aqui, ele ficará disponível <strong>apenas</strong> nesses períodos (ao agendar aula, quem não estiver disponível no horário aparece como &quot;Indisponível&quot; e não pode ser selecionado).
+              </p>
+              {availabilityLoading ? (
+                <div className="flex items-center gap-2 text-gray-500">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Carregando...
+                </div>
+              ) : (
+                <>
+                  <ul className="space-y-2 max-h-48 overflow-y-auto">
+                    {availabilitySlots.length === 0 ? (
+                      <li className="text-sm text-gray-500">Nenhum horário cadastrado.</li>
+                    ) : (
+                      availabilitySlots.map((s) => (
+                        <li
+                          key={s.id}
+                          className="flex items-center justify-between gap-2 py-2 px-3 bg-gray-50 rounded-lg text-sm"
+                        >
+                          <span>
+                            {DIAS_SEMANA_AVAIL[s.dayOfWeek]} – {minutesToTime(s.startMinutes)} às {minutesToTime(s.endMinutes)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAvailabilitySlot(s.id)}
+                            className="text-red-600 hover:text-red-800 p-1"
+                            title="Remover horário"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                  <form onSubmit={handleAddAvailabilitySlot} className="flex flex-wrap items-end gap-2 pt-2 border-t border-gray-200">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Dia</label>
+                      <select
+                        value={newSlotForm.dayOfWeek}
+                        onChange={(e) => setNewSlotForm({ ...newSlotForm, dayOfWeek: Number(e.target.value) })}
+                        className="input py-2 text-sm"
+                      >
+                        {DIAS_SEMANA_AVAIL.map((d, i) => (
+                          <option key={d} value={i}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Das</label>
+                      <input
+                        type="time"
+                        value={newSlotForm.startTime}
+                        onChange={(e) => setNewSlotForm({ ...newSlotForm, startTime: e.target.value })}
+                        className="input py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Às</label>
+                      <input
+                        type="time"
+                        value={newSlotForm.endTime}
+                        onChange={(e) => setNewSlotForm({ ...newSlotForm, endTime: e.target.value })}
+                        className="input py-2 text-sm"
+                      />
+                    </div>
+                    <Button type="submit" variant="primary" size="sm" disabled={addingSlot}>
+                      {addingSlot ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Adicionar'}
+                    </Button>
+                  </form>
+                </>
+              )}
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Alunos do professor */}
+        <Modal
+          isOpen={!!alunosModalTeacher}
+          onClose={() => setAlunosModalTeacher(null)}
+          title={`Alunos – ${alunosModalTeacher?.nome ?? ''}`}
+          size="lg"
+          footer={
+            <>
+              <Button variant="outline" onClick={handleExportAlunos} disabled={!alunosData?.alunos?.length}>
+                <Download className="w-4 h-4 mr-2" />
+                Exportar CSV
+              </Button>
+              <Button variant="primary" onClick={() => setAlunosModalTeacher(null)}>
+                Fechar
+              </Button>
+            </>
+          }
+        >
+          {alunosModalTeacher && (
+            <div className="space-y-4">
+              {alunosLoading ? (
+                <div className="flex items-center gap-2 text-gray-500">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Carregando...
+                </div>
+              ) : alunosData?.alunos?.length ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-2 px-2 font-semibold text-gray-700">Aluno</th>
+                        <th className="text-left py-2 px-2 font-semibold text-gray-700">Dias e horários</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {alunosData.alunos.map((a) => (
+                        <tr key={a.enrollmentId} className="border-b border-gray-100">
+                          <td className="py-2 px-2">{a.nome}</td>
+                          <td className="py-2 px-2 text-gray-600">{a.diasHorarios || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">Nenhum aluno com aulas agendadas para este professor.</p>
+              )}
             </div>
           )}
         </Modal>

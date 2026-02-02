@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import bcrypt from 'bcryptjs'
+
+const SENHA_PADRAO_ALUNO = '123456'
 
 function getMonday(d: Date): Date {
   const date = new Date(d)
@@ -333,6 +336,36 @@ export async function POST(request: NextRequest) {
         observacoes: observacoes?.trim() || null,
       },
     })
+
+    // Criar ou vincular User para login do aluno (senha padrão 123456, obrigar alteração no 1º login)
+    const normalizedEmail = enrollment.email.trim().toLowerCase()
+    const existingUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, role: true },
+    })
+    if (existingUser && existingUser.role === 'STUDENT') {
+      await prisma.enrollment.update({
+        where: { id: enrollment.id },
+        data: { userId: existingUser.id },
+      })
+    } else if (!existingUser) {
+      const passwordHash = await bcrypt.hash(SENHA_PADRAO_ALUNO, 10)
+      const user = await prisma.user.create({
+        data: {
+          nome: enrollment.nome,
+          email: normalizedEmail,
+          whatsapp: enrollment.whatsapp,
+          senha: passwordHash,
+          role: 'STUDENT',
+          status: 'ACTIVE',
+          mustChangePassword: true,
+        },
+      })
+      await prisma.enrollment.update({
+        where: { id: enrollment.id },
+        data: { userId: user.id },
+      })
+    }
 
     return NextResponse.json(
       {

@@ -13,7 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users } from 'lucide-react'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -25,7 +25,7 @@ interface Lesson {
   startAt: string
   durationMinutes: number
   notes: string | null
-  enrollment: { id: string; nome: string; frequenciaSemanal: number | null }
+  enrollment: { id: string; nome: string; frequenciaSemanal: number | null; curso?: string | null }
   teacher: { id: string; nome: string }
 }
 
@@ -55,6 +55,23 @@ const MESES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ]
+
+const IDIOMA_SHORT: Record<string, string> = {
+  INGLES: 'EN',
+  ESPANHOL: 'ES',
+  PORTUGUES: 'PT',
+  ITALIANO: 'IT',
+  FRANCES: 'FR',
+}
+
+function getTeacherLanguageLabel(idiomasFala: string[], idiomasEnsina: string[]): string {
+  const ensina = idiomasEnsina.map((x) => IDIOMA_SHORT[x] || x).join(', ')
+  const fala = idiomasFala.map((x) => IDIOMA_SHORT[x] || x).join(', ')
+  const parts: string[] = []
+  if (ensina) parts.push(`ensina: ${ensina}`)
+  if (fala) parts.push(`fala: ${fala}`)
+  return parts.length ? ` — ${parts.join('; ')}` : ''
+}
 
 function getStartOfWeek(d: Date): Date {
   const date = new Date(d)
@@ -139,6 +156,13 @@ function toDatetimeLocal(d: Date): string {
   return `${y}-${m}-${day}T${h}:${min}`
 }
 
+function toDateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = (d.getMonth() + 1).toString().padStart(2, '0')
+  const day = d.getDate().toString().padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export default function AdminCalendarioPage() {
   const router = useRouter()
   const [view, setView] = useState<ViewType>('month')
@@ -151,8 +175,15 @@ export default function AdminCalendarioPage() {
     frequenciaSemanal: number | null
     tipoAula: string | null
     nomeGrupo: string | null
+    curso: string | null
   }[]>([])
-  const [teachers, setTeachers] = useState<{ id: string; nome: string }[]>([])
+  const [teachers, setTeachers] = useState<{
+    id: string
+    nome: string
+    status?: string
+    idiomasFala?: string[]
+    idiomasEnsina?: string[]
+  }[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [lessonModalOpen, setLessonModalOpen] = useState(false)
@@ -174,8 +205,23 @@ export default function AdminCalendarioPage() {
     title: string
     type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors'
   } | null>(null)
+  const [holidays, setHolidays] = useState<Set<string>>(new Set())
+  const [holidayLoading, setHolidayLoading] = useState<string | null>(null)
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
+  const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
+  const [teacherAvailabilities, setTeacherAvailabilities] = useState<Record<string, boolean> | null>(null)
+  const [idiomaErrorModalOpen, setIdiomaErrorModalOpen] = useState(false)
+  const [lessonProfessorDropdownOpen, setLessonProfessorDropdownOpen] = useState(false)
 
   const weekStartForStats = useMemo(() => getMonday(currentDate), [currentDate])
+
+  const activeTeachers = useMemo(
+    () => teachers.filter((t) => t.status === 'ACTIVE'),
+    [teachers]
+  )
+  const selectedTeacher = selectedTeacherId
+    ? activeTeachers.find((t) => t.id === selectedTeacherId)
+    : null
 
   // Opções para o select de aluno: grupos (nome do grupo + integrantes) ou aluno individual
   const studentOptions = useMemo(() => {
@@ -226,6 +272,7 @@ export default function AdminCalendarioPage() {
         start: start.toISOString(),
         end: end.toISOString(),
       })
+      if (selectedTeacherId) params.set('teacherId', selectedTeacherId)
       const res = await fetch(`/api/admin/lessons?${params}`, { credentials: 'include' })
       if (res.status === 401 || res.status === 403) {
         router.push('/login?tab=admin')
@@ -237,7 +284,7 @@ export default function AdminCalendarioPage() {
       console.error(e)
       setToast({ message: 'Erro ao carregar aulas', type: 'error' })
     }
-  }, [view, currentDate, router])
+  }, [view, currentDate, selectedTeacherId, router])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -267,29 +314,146 @@ export default function AdminCalendarioPage() {
           frequenciaSemanal?: number | null
           tipoAula?: string | null
           nomeGrupo?: string | null
+          curso?: string | null
         }) => ({
           id: e.id,
           nome: e.nome,
           frequenciaSemanal: e.frequenciaSemanal ?? null,
           tipoAula: e.tipoAula ?? null,
           nomeGrupo: e.nomeGrupo ?? null,
+          curso: e.curso ?? null,
         })))
       }
       if (teaRes.ok) {
         const j = await teaRes.json()
-        setTeachers((j.data?.teachers || []).map((t: { id: string; nome: string }) => ({ id: t.id, nome: t.nome })))
+        setTeachers((j.data?.teachers || []).map((t: {
+          id: string
+          nome: string
+          status?: string
+          idiomasFala?: string[] | unknown
+          idiomasEnsina?: string[] | unknown
+        }) => ({
+          id: t.id,
+          nome: t.nome,
+          status: t.status ?? undefined,
+          idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : [],
+          idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : [],
+        })))
       }
     } catch (e) {
       console.error(e)
     }
   }, [])
 
+  const getHolidaysRange = useCallback(() => {
+    let start: Date
+    let end: Date
+    if (view === 'month') {
+      start = getStartOfMonth(currentDate)
+      const nextMonth = addMonths(currentDate, 1)
+      end = addDays(nextMonth, -1)
+    } else if (view === 'week') {
+      start = getStartOfWeek(currentDate)
+      end = addDays(start, 6)
+    } else {
+      start = new Date(currentDate)
+      start.setHours(0, 0, 0, 0)
+      end = new Date(currentDate)
+      end.setHours(23, 59, 59, 999)
+    }
+    return { start: toDateKey(start), end: toDateKey(end) }
+  }, [view, currentDate])
+
+  const fetchHolidays = useCallback(async () => {
+    const { start, end } = getHolidaysRange()
+    try {
+      const res = await fetch(`/api/admin/holidays?start=${start}&end=${end}`, { credentials: 'include' })
+      if (res.status === 401 || res.status === 403) return
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.holidays)) {
+        setHolidays(new Set(json.data.holidays))
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, [getHolidaysRange])
+
+  const toggleHoliday = useCallback(async (date: Date) => {
+    const key = toDateKey(date)
+    setHolidayLoading(key)
+    try {
+      const isHoliday = holidays.has(key)
+      if (isHoliday) {
+        const res = await fetch(`/api/admin/holidays?date=${key}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao remover feriado', type: 'error' })
+          return
+        }
+        setToast({ message: 'Feriado removido', type: 'success' })
+      } else {
+        const res = await fetch('/api/admin/holidays', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ date: key }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao definir feriado', type: 'error' })
+          return
+        }
+        setToast({ message: 'Feriado definido', type: 'success' })
+      }
+      await fetchHolidays()
+    } catch (e) {
+      setToast({ message: 'Erro ao alterar feriado', type: 'error' })
+    } finally {
+      setHolidayLoading(null)
+    }
+  }, [holidays, fetchHolidays])
+
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchLessons(), fetchStats(), fetchEnrollmentsAndTeachers()]).finally(() =>
+    Promise.all([fetchLessons(), fetchStats(), fetchEnrollmentsAndTeachers(), fetchHolidays()]).finally(() =>
       setLoading(false)
     )
-  }, [fetchLessons, fetchStats, fetchEnrollmentsAndTeachers])
+  }, [fetchLessons, fetchStats, fetchEnrollmentsAndTeachers, fetchHolidays])
+
+  useEffect(() => {
+    if (!lessonModalOpen || !lessonForm.startAt?.trim()) {
+      setTeacherAvailabilities(null)
+      return
+    }
+    const raw = lessonForm.startAt.trim()
+    const iso = raw.length >= 16 ? new Date(raw.length === 16 ? raw + ':00' : raw).toISOString() : null
+    if (!iso || Number.isNaN(new Date(iso).getTime())) {
+      setTeacherAvailabilities(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/admin/teachers/check-availability?datetime=${encodeURIComponent(iso)}`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && j.ok && j.data?.availabilities) setTeacherAvailabilities(j.data.availabilities)
+        else if (!cancelled) setTeacherAvailabilities(null)
+      })
+      .catch(() => {
+        if (!cancelled) setTeacherAvailabilities(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [lessonModalOpen, lessonForm.startAt])
+
+  useEffect(() => {
+    if (teacherAvailabilities != null && lessonForm.teacherId && teacherAvailabilities[lessonForm.teacherId] === false) {
+      setLessonForm((prev) => ({ ...prev, teacherId: '' }))
+    }
+  }, [teacherAvailabilities, lessonForm.teacherId])
 
   const openNewLesson = (date: Date, hour?: number) => {
     const start = new Date(date)
@@ -330,6 +494,23 @@ export default function AdminCalendarioPage() {
     e.preventDefault()
     if (!lessonForm.enrollmentId || !lessonForm.teacherId) {
       setToast({ message: 'Selecione aluno e professor', type: 'error' })
+      return
+    }
+    // Validar idioma: professor deve ensinar o(s) idioma(s) do curso do aluno
+    const enrollment = enrollments.find((e) => e.id === lessonForm.enrollmentId)
+    const teacher = teachers.find((t) => t.id === lessonForm.teacherId)
+    const curso = enrollment?.curso
+    const ensina = teacher?.idiomasEnsina ?? []
+    if (curso === 'INGLES' && !ensina.includes('INGLES')) {
+      setIdiomaErrorModalOpen(true)
+      return
+    }
+    if (curso === 'ESPANHOL' && !ensina.includes('ESPANHOL')) {
+      setIdiomaErrorModalOpen(true)
+      return
+    }
+    if (curso === 'INGLES_E_ESPANHOL' && (!ensina.includes('INGLES') || !ensina.includes('ESPANHOL'))) {
+      setIdiomaErrorModalOpen(true)
       return
     }
     const startAt = new Date(lessonForm.startAt + ':00') // datetime-local não envia segundos
@@ -384,6 +565,7 @@ export default function AdminCalendarioPage() {
         setToast({ message: count > 1 ? `${count} aulas criadas` : 'Aula criada', type: 'success' })
       }
       setLessonModalOpen(false)
+      setLessonProfessorDropdownOpen(false)
       fetchLessons()
       fetchStats()
     } catch (err) {
@@ -414,6 +596,7 @@ export default function AdminCalendarioPage() {
       }
       setDeleteLessonModalOpen(false)
       setLessonModalOpen(false)
+      setLessonProfessorDropdownOpen(false)
       setEditingLesson(null)
       const count = json.data?.count ?? 1
       setToast({ message: count > 1 ? `${count} aulas excluídas` : 'Aula excluída', type: 'success' })
@@ -513,6 +696,54 @@ export default function AdminCalendarioPage() {
             <p className="text-sm text-gray-600">Aulas por mês, semana ou dia (segunda a sábado = frequência)</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setTeacherFilterOpen((v) => !v)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-sm font-medium text-gray-700"
+                title="Filtrar calendário por professor"
+              >
+                <Users className="w-4 h-4 text-gray-500" />
+                {selectedTeacher ? selectedTeacher.nome : 'Todos os professores'}
+              </button>
+              {teacherFilterOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    aria-hidden
+                    onClick={() => setTeacherFilterOpen(false)}
+                  />
+                  <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] py-1 bg-white rounded-lg border border-gray-200 shadow-lg max-h-[280px] overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTeacherId(null)
+                        setTeacherFilterOpen(false)
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm ${!selectedTeacherId ? 'bg-brand-orange/10 text-brand-orange font-medium' : 'text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Todos os professores
+                    </button>
+                    {activeTeachers.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTeacherId(t.id)
+                          setTeacherFilterOpen(false)
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm ${selectedTeacherId === t.id ? 'bg-brand-orange/10 text-brand-orange font-medium' : 'text-gray-700 hover:bg-gray-100'}`}
+                      >
+                        {t.nome}
+                      </button>
+                    ))}
+                    {activeTeachers.length === 0 && (
+                      <p className="px-4 py-2 text-sm text-gray-500">Nenhum professor ativo</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white">
               <button
                 type="button"
@@ -624,6 +855,12 @@ export default function AdminCalendarioPage() {
           </button>
         </div>
 
+        {selectedTeacher && (
+          <p className="mb-2 text-sm text-gray-600">
+            Exibindo apenas aulas de <strong>{selectedTeacher.nome}</strong>. Altere em &quot;Ver por professor&quot; para ver todos.
+          </p>
+        )}
+
         {loading && (
           <div className="mb-4 text-sm text-gray-500">Carregando...</div>
         )}
@@ -647,11 +884,14 @@ export default function AdminCalendarioPage() {
                   const otherMonth = !isSameMonth(day, currentDate)
                   const today = isToday(day)
                   const dayLessons = getLessonsForDay(day)
+                  const isHoliday = holidays.has(toDateKey(day))
+                  const isSunday = day.getDay() === 0
+                  const showDayActions = !otherMonth && !isSunday
                   return (
                     <div
                       key={`${wi}-${di}`}
                       className={`min-h-[100px] sm:min-h-[120px] border-b border-r border-gray-100 p-2 ${
-                        otherMonth ? 'bg-gray-50/50' : di === 0 ? 'bg-red-50' : 'bg-white'
+                        otherMonth ? 'bg-gray-50/50' : isHoliday ? 'bg-amber-50' : di === 0 ? 'bg-red-50' : 'bg-white'
                       } ${di === 6 ? 'border-r-0' : ''}`}
                     >
                       <div className="flex items-center justify-between">
@@ -662,7 +902,7 @@ export default function AdminCalendarioPage() {
                         >
                           {day.getDate()}
                         </span>
-                        {!otherMonth && day.getDay() !== 0 && (
+                        {showDayActions && !isHoliday && (
                           <button
                             type="button"
                             onClick={() => openNewLesson(day)}
@@ -672,6 +912,24 @@ export default function AdminCalendarioPage() {
                           </button>
                         )}
                       </div>
+                      {showDayActions && (
+                        <div className="mt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleHoliday(day)}
+                            disabled={holidayLoading === toDateKey(day)}
+                            className={`text-[10px] flex items-center gap-0.5 ${isHoliday ? 'text-amber-700 hover:underline' : 'text-gray-500 hover:text-amber-600 hover:underline'}`}
+                            title={isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
+                          >
+                            {holidayLoading === toDateKey(day) ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <CalendarOff className="w-3 h-3" />
+                            )}
+                            {isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
+                          </button>
+                        </div>
+                      )}
                       <div className="mt-1 space-y-0.5">
                         {dayLessons.slice(0, 3).map((l) => (
                           <button
@@ -703,13 +961,26 @@ export default function AdminCalendarioPage() {
               <div className="py-2 text-xs font-semibold text-gray-500 border-r border-gray-200 pl-2">Horário</div>
               {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => {
                 const isSunday = d.getDay() === 0
+                const isHoliday = holidays.has(toDateKey(d))
                 return (
                   <div
                     key={d.toISOString()}
-                    className={`py-2 text-center text-xs font-semibold ${isSunday ? 'text-red-700 bg-red-50' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}
+                    className={`py-2 text-center text-xs font-semibold ${isSunday ? 'text-red-700 bg-red-50' : isHoliday ? 'text-amber-700 bg-amber-50' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}
                   >
                     <div>{DIAS_SEMANA[d.getDay()]}</div>
                     <div className="font-normal">{d.getDate()}</div>
+                    {!isSunday && (
+                      <button
+                        type="button"
+                        onClick={() => toggleHoliday(d)}
+                        disabled={holidayLoading === toDateKey(d)}
+                        className="mt-1 text-[10px] text-gray-500 hover:text-amber-600 hover:underline flex items-center justify-center gap-0.5 w-full"
+                        title={isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
+                      >
+                        {holidayLoading === toDateKey(d) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
+                        {isHoliday ? 'Cancelar feriado' : 'Feriado'}
+                      </button>
+                    )}
                   </div>
                 )
               })}
@@ -723,13 +994,14 @@ export default function AdminCalendarioPage() {
                   {Array.from({ length: 7 }, (_, i) => {
                     const d = addDays(weekStart, i)
                     const isSunday = d.getDay() === 0
+                    const isHoliday = holidays.has(toDateKey(d))
                     const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
                     return (
                       <div
                         key={i}
-                        className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 ${isSunday ? 'bg-red-50' : ''}`}
+                        className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 ${isSunday ? 'bg-red-50' : isHoliday ? 'bg-amber-50' : ''}`}
                       >
-                        {!isSunday && (
+                        {!isSunday && !isHoliday && (
                           <button
                             type="button"
                             onClick={() => {
@@ -766,23 +1038,36 @@ export default function AdminCalendarioPage() {
         {view === 'day' && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div
-              className={`border-b border-gray-200 px-4 py-2 text-sm font-semibold ${
-                currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'
+              className={`border-b border-gray-200 px-4 py-2 text-sm font-semibold flex items-center justify-between flex-wrap gap-2 ${
+                currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50 text-amber-800' : 'bg-gray-50 text-gray-700'
               }`}
             >
-              {DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}
+              <span>{DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}</span>
+              {currentDate.getDay() !== 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleHoliday(currentDate)}
+                  disabled={holidayLoading === toDateKey(currentDate)}
+                  className="text-xs font-normal flex items-center gap-1 text-gray-600 hover:text-amber-700 hover:underline"
+                  title={holidays.has(toDateKey(currentDate)) ? 'Cancelar feriado' : 'Definir feriado'}
+                >
+                  {holidayLoading === toDateKey(currentDate) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
+                  {holidays.has(toDateKey(currentDate)) ? 'Cancelar feriado' : 'Definir feriado'}
+                </button>
+              )}
             </div>
-            <div className={`max-h-[70vh] overflow-y-auto ${currentDate.getDay() === 0 ? 'bg-red-50/30' : ''}`}>
+            <div className={`max-h-[70vh] overflow-y-auto ${currentDate.getDay() === 0 ? 'bg-red-50/30' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/30' : ''}`}>
               {timeSlots.map((slot) => {
                 const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
                 const isSunday = currentDate.getDay() === 0
+                const isHoliday = holidays.has(toDateKey(currentDate))
                 return (
                   <div key={`${slot.hour}-${slot.minute}`} className="flex border-b border-gray-100 min-h-[48px]">
                     <div className="w-16 shrink-0 py-1.5 pl-2 text-xs text-gray-500 border-r border-gray-100">
                       {formatSlotLabel(slot)}
                     </div>
                     <div className="flex-1 p-2 flex flex-col gap-1">
-                      {!isSunday && (
+                      {!isSunday && !isHoliday && (
                         <button
                           type="button"
                           onClick={() => {
@@ -816,7 +1101,10 @@ export default function AdminCalendarioPage() {
         {/* Modal Nova/Editar aula */}
         <Modal
           isOpen={lessonModalOpen}
-          onClose={() => setLessonModalOpen(false)}
+          onClose={() => {
+            setLessonModalOpen(false)
+            setLessonProfessorDropdownOpen(false)
+          }}
           title={editingLesson ? 'Editar aula' : 'Nova aula'}
           size="md"
           footer={
@@ -832,7 +1120,14 @@ export default function AdminCalendarioPage() {
                   Excluir aula
                 </Button>
               )}
-              <Button variant="outline" onClick={() => setLessonModalOpen(false)} disabled={savingLesson}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLessonModalOpen(false)
+                  setLessonProfessorDropdownOpen(false)
+                }}
+                disabled={savingLesson}
+              >
                 Cancelar
               </Button>
               <Button variant="primary" onClick={handleSaveLesson} disabled={savingLesson}>
@@ -869,17 +1164,88 @@ export default function AdminCalendarioPage() {
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Professor *</label>
-              <select
-                value={lessonForm.teacherId}
-                onChange={(e) => setLessonForm({ ...lessonForm, teacherId: e.target.value })}
-                className="input w-full"
-                required
-              >
-                <option value="">Selecione o professor</option>
-                {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>{t.nome}</option>
-                ))}
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setLessonProfessorDropdownOpen((v) => !v)}
+                  className="input w-full text-left flex items-center justify-between"
+                >
+                  <span>
+                    {lessonForm.teacherId
+                      ? (() => {
+                          const t = activeTeachers.find((x) => x.id === lessonForm.teacherId)
+                          if (!t) return 'Selecione o professor'
+                          const unav = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
+                          const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
+                          return unav ? `${t.nome}${label} (Indisponível)` : `${t.nome}${label}`
+                        })()
+                      : 'Selecione o professor'}
+                  </span>
+                  <ChevronRight
+                    className={`w-4 h-4 text-gray-400 transition-transform ${lessonProfessorDropdownOpen ? 'rotate-90' : ''}`}
+                  />
+                </button>
+                {lessonProfessorDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      aria-hidden
+                      onClick={() => setLessonProfessorDropdownOpen(false)}
+                    />
+                    <div className="absolute left-0 right-0 top-full mt-1 z-20 py-1 bg-white rounded-lg border border-gray-200 shadow-lg max-h-[240px] overflow-y-auto">
+                      {activeTeachers.map((t) => {
+                        const unavailable = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
+                        const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
+                        const teachesEn = (t.idiomasEnsina ?? []).includes('INGLES')
+                        const teachesEs = (t.idiomasEnsina ?? []).includes('ESPANHOL')
+                        const nameColor =
+                          teachesEn && teachesEs
+                            ? 'text-blue-600'
+                            : teachesEn
+                              ? 'text-blue-600 font-medium'
+                              : teachesEs
+                                ? 'text-amber-600 font-medium'
+                                : 'text-gray-800'
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            disabled={unavailable}
+                            onClick={() => {
+                              setLessonForm({ ...lessonForm, teacherId: t.id })
+                              setLessonProfessorDropdownOpen(false)
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm ${unavailable ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+                          >
+                            <span className={nameColor}>{t.nome}</span>
+                            {label && <span className="text-gray-500 font-normal">{label}</span>}
+                            {unavailable && <span className="text-gray-400"> (Indisponível)</span>}
+                          </button>
+                        )
+                      })}
+                      {activeTeachers.length === 0 && (
+                        <p className="px-3 py-2 text-sm text-gray-500">Nenhum professor ativo.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              {lessonForm.teacherId && (() => {
+                const t = teachers.find((x) => x.id === lessonForm.teacherId)
+                const falaPt = t && (t.idiomasFala ?? []).includes('PORTUGUES')
+                if (!t || falaPt) return null
+                return (
+                  <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm mt-2 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    Atenção: esse professor não fala português.
+                  </p>
+                )
+              })()}
+              {lessonForm.startAt && teacherAvailabilities != null && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Por padrão todos estão disponíveis. Quem tem horários cadastrados só aparece disponível nesses horários.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
@@ -954,6 +1320,19 @@ export default function AdminCalendarioPage() {
               </div>
             )}
           </form>
+        </Modal>
+
+        {/* Modal: professor não ensina o idioma do aluno */}
+        <Modal
+          isOpen={idiomaErrorModalOpen}
+          onClose={() => setIdiomaErrorModalOpen(false)}
+          title="Idioma não compatível"
+          size="sm"
+          footer={<Button variant="primary" onClick={() => setIdiomaErrorModalOpen(false)}>Fechar</Button>}
+        >
+          <p className="text-sm text-gray-700">
+            Isso não pode ser feito porque o professor não ensina esse idioma. Selecione um professor que ensine o idioma do curso do aluno.
+          </p>
         </Modal>
 
         {/* Modal: excluir apenas esta ou esta e todas à frente */}

@@ -81,3 +81,30 @@ export async function requireTeacher(request: NextRequest) {
     session,
   }
 }
+
+/** Sessão do aluno (Dashboard Aluno) – exige role STUDENT */
+export async function requireStudent(request: NextRequest) {
+  const session = await getSession(request)
+
+  if (!session) {
+    return {
+      authorized: false,
+      message: 'Não autenticado',
+      session: null,
+    }
+  }
+
+  if (session.role !== 'STUDENT') {
+    return {
+      authorized: false,
+      message: 'Acesso negado. Apenas alunos podem acessar.',
+      session: null,
+    }
+  }
+
+  return {
+    authorized: true,
+    message: null,
+    session,
+  }
+}

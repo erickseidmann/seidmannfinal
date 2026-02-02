@@ -165,7 +165,8 @@ export async function POST(request: NextRequest) {
     const validLessonType = ['NORMAL', 'CONVERSAÇÃO', 'REVISAO', 'AVALIACAO'].includes(lessonType) ? lessonType : 'NORMAL'
     const validHomeworkDone = ['SIM', 'NAO', 'PARCIAL', 'NAO_APLICA'].includes(homeworkDone) ? homeworkDone : null
     const validCurso = curso != null && ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL'].includes(curso) ? curso : (lesson.enrollment as { curso?: string })?.curso ?? null
-    const tempo = tempoAulaMinutos != null ? Number(tempoAulaMinutos) : (lesson as { durationMinutes?: number }).durationMinutes ?? null
+    // Professor não pode alterar tempo de aula: sempre usar o cadastrado na aula
+    const tempo = (lesson as { durationMinutes?: number }).durationMinutes ?? null
 
     const record = await (prisma as any).lessonRecord.create({
       data: {

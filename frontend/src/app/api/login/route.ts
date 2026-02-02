@@ -217,7 +217,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Login bem-sucedido - User.status = ACTIVE e Enrollment.status = ACTIVE (NUNCA retornar senha)
+    // Login bem-sucedido - Estudante: redirecionar para alterar-senha se obrigatório
+    const mustChangePassword = Boolean((user as { mustChangePassword?: boolean }).mustChangePassword)
     const response = NextResponse.json({
       ok: true,
       data: {
@@ -229,8 +230,9 @@ export async function POST(request: NextRequest) {
           role: user.role,
           status: user.status,
           createdAt: user.criadoEm,
+          mustChangePassword,
         },
-        redirectTo: '/', // Estudante vai para home
+        redirectTo: mustChangePassword ? '/dashboard-aluno/alterar-senha' : '/dashboard-aluno',
       },
     })
 

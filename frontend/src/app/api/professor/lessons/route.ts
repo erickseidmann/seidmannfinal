@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
           },
         },
         teacher: { select: { id: true, nome: true } },
+        record: { select: { id: true } },
       },
       orderBy: { startAt: 'asc' },
     })

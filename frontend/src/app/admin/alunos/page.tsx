@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2 } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus } from 'lucide-react'
 
 interface StudentAlertItem {
   id: string
@@ -60,6 +60,7 @@ interface Student {
   melhoresDiasSemana?: string | null
   nomeVendedor?: string | null
   nomeEmpresaOuIndicador?: string | null
+  user?: { id: string; nome: string; email: string; whatsapp: string | null } | null
 }
 
 const TEMPO_AULA_OPCOES = [
@@ -203,6 +204,9 @@ export default function AdminAlunosPage() {
     validationErrors: { row: number; message: string }[]
     totalValidationErrors: number
   } | null>(null)
+  const [passwordModalStudent, setPasswordModalStudent] = useState<Student | null>(null)
+  const [passwordForm, setPasswordForm] = useState({ novaSenha: '123456', obrigarAlteracao: true })
+  const [passwordLoading, setPasswordLoading] = useState(false)
   const isMinor = isMenorDeIdade(formData.dataNascimento || null)
 
   useEffect(() => {
@@ -391,6 +395,60 @@ export default function AdminAlunosPage() {
     if (hasError) return 'text-red-500 hover:text-red-600'
     if (hasWarn) return 'text-amber-500 hover:text-amber-600'
     return 'text-blue-500 hover:text-blue-600'
+  }
+
+  const handleCriarAcesso = (s: Student) => {
+    setConfirmModal({
+      title: 'Criar acesso',
+      message: `Criar acesso para ${s.nome}? O aluno poderá entrar com o e-mail cadastrado e a senha padrão 123456. Será obrigado a alterar a senha no primeiro login.`,
+      variant: 'danger',
+      confirmLabel: 'Criar acesso',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/enrollments/${s.id}/criar-acesso`, {
+            method: 'POST',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (res.ok && json.ok) {
+            fetchStudents()
+            setToast({ message: json.data?.message || 'Acesso criado.', type: 'success' })
+          } else {
+            setToast({ message: json.message || 'Erro ao criar acesso', type: 'error' })
+          }
+        } catch {
+          setToast({ message: 'Erro ao criar acesso', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleRedefinirSenhaSubmit = async () => {
+    if (!passwordModalStudent) return
+    setPasswordLoading(true)
+    try {
+      const res = await fetch(`/api/admin/enrollments/${passwordModalStudent.id}/alterar-senha`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          novaSenha: passwordForm.novaSenha.trim() || undefined,
+          obrigarAlteracaoProximoLogin: passwordForm.obrigarAlteracao,
+        }),
+      })
+      const json = await res.json()
+      if (res.ok && json.ok) {
+        setToast({ message: json.data?.message || 'Senha redefinida.', type: 'success' })
+        setPasswordModalStudent(null)
+        setPasswordForm({ novaSenha: '123456', obrigarAlteracao: true })
+      } else {
+        setToast({ message: json.message || 'Erro ao redefinir senha', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao redefinir senha', type: 'error' })
+    } finally {
+      setPasswordLoading(false)
+    }
   }
 
   const handleDownloadTemplate = async () => {
@@ -840,6 +898,28 @@ export default function AdminAlunosPage() {
           >
             <Bell className={`w-4 h-4 ${s.alerts?.length ? 'fill-current' : ''}`} />
           </button>
+          {s.user ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPasswordModalStudent(s)
+                setPasswordForm({ novaSenha: '123456', obrigarAlteracao: true })
+              }}
+              className="text-gray-600 hover:text-gray-900 text-sm font-medium"
+              title="Redefinir senha"
+            >
+              <Key className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleCriarAcesso(s)}
+              className="text-green-600 hover:text-green-800 text-sm font-medium"
+              title="Criar acesso (senha padrão 123456)"
+            >
+              <UserPlus className="w-4 h-4" />
+            </button>
+          )}
         </div>
       ),
     },
@@ -966,6 +1046,61 @@ export default function AdminAlunosPage() {
           sortDir={sortDir}
           onSort={handleSort}
         />
+
+        {/* Modal Redefinir senha do aluno */}
+        <Modal
+          isOpen={!!passwordModalStudent}
+          onClose={() => {
+            setPasswordModalStudent(null)
+            setPasswordForm({ novaSenha: '123456', obrigarAlteracao: true })
+          }}
+          title="Redefinir senha do aluno"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPasswordModalStudent(null)
+                  setPasswordForm({ novaSenha: '123456', obrigarAlteracao: true })
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button variant="primary" onClick={handleRedefinirSenhaSubmit} disabled={passwordLoading}>
+                {passwordLoading ? 'Salvando...' : 'Redefinir senha'}
+              </Button>
+            </>
+          }
+        >
+          {passwordModalStudent && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Aluno: <strong>{passwordModalStudent.nome}</strong> ({passwordModalStudent.email})
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Nova senha</label>
+                <input
+                  type="password"
+                  value={passwordForm.novaSenha}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, novaSenha: e.target.value })}
+                  className="input w-full"
+                  placeholder="Deixe em branco para usar 123456"
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-gray-500 mt-1">Mínimo 6 caracteres. Se vazio, será usada a senha padrão 123456.</p>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={passwordForm.obrigarAlteracao}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, obrigarAlteracao: e.target.checked })}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm font-medium text-gray-700">Obrigar alteração da senha no próximo login</span>
+              </label>
+            </div>
+          )}
+        </Modal>
 
         {/* Modal Adicionar/Editar aluno */}
         <Modal

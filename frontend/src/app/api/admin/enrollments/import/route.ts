@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import bcrypt from 'bcryptjs'
+
+const SENHA_PADRAO_ALUNO = '123456'
 
 function generateTrackingCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -286,6 +289,34 @@ export async function POST(request: NextRequest) {
             observacoes: get(row, 'observacoes') || null,
           },
         })
+        const normalizedEmail = email.trim().toLowerCase()
+        const existingUser = await prisma.user.findUnique({
+          where: { email: normalizedEmail },
+          select: { id: true, role: true },
+        })
+        if (existingUser && existingUser.role === 'STUDENT') {
+          await prisma.enrollment.update({
+            where: { id: enrollment.id },
+            data: { userId: existingUser.id },
+          })
+        } else if (!existingUser) {
+          const passwordHash = await bcrypt.hash(SENHA_PADRAO_ALUNO, 10)
+          const user = await prisma.user.create({
+            data: {
+              nome: enrollment.nome,
+              email: normalizedEmail,
+              whatsapp: enrollment.whatsapp,
+              senha: passwordHash,
+              role: 'STUDENT',
+              status: 'ACTIVE',
+              mustChangePassword: true,
+            },
+          })
+          await prisma.enrollment.update({
+            where: { id: enrollment.id },
+            data: { userId: user.id },
+          })
+        }
         created.push({
           id: enrollment.id,
           nome: enrollment.nome,

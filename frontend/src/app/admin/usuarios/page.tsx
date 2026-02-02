@@ -23,6 +23,10 @@ const ADMIN_PAGES = [
   { key: 'alunos', label: 'Alunos' },
   { key: 'livros', label: 'Livros' },
   { key: 'alertas', label: 'Alertas' },
+  { key: 'calendario', label: 'Calendário' },
+  { key: 'registros-aulas', label: 'Registros de aulas' },
+  { key: 'chat', label: 'Chat' },
+  { key: 'financeiro', label: 'Financeiro' },
 ] as const
 
 type AdminPageKey = (typeof ADMIN_PAGES)[number]['key']
@@ -35,6 +39,7 @@ interface User {
   role: string
   status: string
   funcao: string | null
+  emailPessoal: string | null
   adminPages: string[]
   criadoEm: string
   atualizadoEm: string
@@ -59,6 +64,7 @@ export default function AdminUsuariosPage() {
     nome: '',
     email: '',
     telefone: '',
+    emailPessoal: '',
     funcao: '',
     senha: '',
     adminPages: [] as string[],
@@ -116,6 +122,7 @@ export default function AdminUsuariosPage() {
       nome: '',
       email: '',
       telefone: '',
+      emailPessoal: '',
       funcao: '',
       senha: '',
       adminPages: [],
@@ -130,6 +137,7 @@ export default function AdminUsuariosPage() {
       nome: user.nome,
       email: user.email,
       telefone: user.whatsapp,
+      emailPessoal: user.emailPessoal || '',
       funcao: user.funcao || '',
       senha: '',
       adminPages: Array.isArray(user.adminPages) ? [...user.adminPages] : [],
@@ -160,6 +168,7 @@ export default function AdminUsuariosPage() {
           nome: formData.nome,
           email: formData.email,
           telefone: formData.telefone,
+          emailPessoal: formData.emailPessoal || undefined,
           funcao: formData.funcao || undefined,
           adminPages: formData.adminPages,
           status: formData.status,
@@ -186,6 +195,7 @@ export default function AdminUsuariosPage() {
             nome: formData.nome,
             email: formData.email,
             telefone: formData.telefone,
+            emailPessoal: formData.emailPessoal || undefined,
             funcao: formData.funcao || undefined,
             adminPages: formData.adminPages,
             senha: formData.senha,
@@ -417,6 +427,17 @@ export default function AdminUsuariosPage() {
                 className="input w-full"
                 placeholder="11999999999"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Email pessoal</label>
+              <input
+                type="email"
+                value={formData.emailPessoal}
+                onChange={(e) => setFormData({ ...formData, emailPessoal: e.target.value })}
+                className="input w-full"
+                placeholder="exemplo@gmail.com"
+              />
+              <p className="text-xs text-gray-500 mt-0.5">Email pessoal (opcional, qualquer domínio)</p>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Função</label>

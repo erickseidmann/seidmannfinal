@@ -109,6 +109,27 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // Notificar todos os professores: tem um novo anúncio (aparece no Início do professor)
+    if (prisma.teacher && prisma.teacherAlert) {
+      const teachers = await prisma.teacher.findMany({
+        where: { status: 'ACTIVE' },
+        select: { id: true },
+      })
+      await Promise.all(
+        teachers.map((t) =>
+          prisma.teacherAlert.create({
+            data: {
+              teacherId: t.id,
+              message: 'Tem um novo anúncio.',
+              type: 'NEW_ANNOUNCEMENT',
+              level: 'INFO',
+              createdById: auth.session?.sub ?? null,
+            },
+          })
+        )
+      )
+    }
+
     return NextResponse.json({
       ok: true,
       data: {

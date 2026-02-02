@@ -1,17 +1,28 @@
-# Para o erro UNKNOWN ao abrir webpack.js: limpa o cache .next e reinicia
-# Execute com: .\scripts\limpar-next.ps1
-# Ou: pare o "npm run dev", apague a pasta .next e rode "npm run dev" de novo.
+# Para o erro UNKNOWN (errno -4094) ao abrir layout.js: limpa cache .next e dist
+# 1. Pare o "npm run dev" (Ctrl+C no terminal)
+# 2. Execute: .\scripts\limpar-next.ps1
+# 3. Rode "npm run dev" de novo
 
-$nextPath = Join-Path $PSScriptRoot "..\.next"
-if (Test-Path $nextPath) {
-    Write-Host "Removendo pasta .next..."
-    Remove-Item -Recurse -Force $nextPath -ErrorAction SilentlyContinue
-    if (Test-Path $nextPath) {
-        Write-Host "AVISO: Nao foi possivel remover .next (pode estar em uso)."
-        Write-Host "Pare o 'npm run dev' (Ctrl+C), execute este script de novo e depois 'npm run dev'."
-    } else {
-        Write-Host "Pasta .next removida. Agora execute: npm run dev"
+$root = Split-Path $PSScriptRoot ".."
+$removed = $false
+
+foreach ($dir in @(".next", "dist")) {
+    $path = Join-Path $root $dir
+    if (Test-Path $path) {
+        Write-Host "Removendo pasta $dir..."
+        Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+        if (Test-Path $path) {
+            Write-Host "AVISO: Nao foi possivel remover $dir (pode estar em uso)."
+            Write-Host "Pare o 'npm run dev' (Ctrl+C), execute este script de novo e depois 'npm run dev'."
+        } else {
+            Write-Host "Pasta $dir removida."
+            $removed = $true
+        }
     }
-} else {
-    Write-Host "Pasta .next nao encontrada."
+}
+
+if ($removed) {
+    Write-Host "Pronto. Agora execute: npm run dev"
+} elseif (-not (Test-Path (Join-Path $root ".next")) -and -not (Test-Path (Join-Path $root "dist"))) {
+    Write-Host "Nenhuma pasta .next ou dist encontrada."
 }

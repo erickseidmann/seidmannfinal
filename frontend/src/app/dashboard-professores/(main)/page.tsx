@@ -1,12 +1,14 @@
 /**
- * Dashboard Professores – Início (com anúncios)
+ * Dashboard Professores – Início (notificações + anúncios)
+ * Notificações: só pagamento enviado, novo anúncio e novo aluno (exibidas somente aqui).
  */
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Megaphone } from 'lucide-react'
+import { Megaphone, Bell, Loader2, DollarSign, UserPlus } from 'lucide-react'
+import Button from '@/components/ui/Button'
 
 interface Professor {
   nome: string
@@ -22,10 +24,21 @@ interface Announcement {
   criadoEm: string
 }
 
+interface Notificacao {
+  id: string
+  message: string
+  type: string | null
+  readAt: string | null
+  criadoEm: string
+}
+
 export default function DashboardProfessoresInicioPage() {
   const [professor, setProfessor] = useState<Professor | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(true)
+  const [notificacoes, setNotificacoes] = useState<Notificacao[]>([])
+  const [loadingNotif, setLoadingNotif] = useState(true)
+  const [markingId, setMarkingId] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -44,7 +57,45 @@ export default function DashboardProfessoresInicioPage() {
       .finally(() => setLoadingAnnouncements(false))
   }, [])
 
+  const fetchNotificacoes = useCallback(() => {
+    setLoadingNotif(true)
+    fetch('/api/professor/alerts', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.alerts) setNotificacoes(json.data.alerts)
+        else setNotificacoes([])
+      })
+      .catch(() => setNotificacoes([]))
+      .finally(() => setLoadingNotif(false))
+  }, [])
+
+  useEffect(() => {
+    fetchNotificacoes()
+  }, [fetchNotificacoes])
+
+  const handleMarcarLido = (id: string) => {
+    setMarkingId(id)
+    fetch(`/api/professor/alerts/${id}/read`, { method: 'PATCH', credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok) {
+          setNotificacoes((prev) =>
+            prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
+          )
+          window.dispatchEvent(new CustomEvent('professor-alerts-updated'))
+        }
+      })
+      .finally(() => setMarkingId(null))
+  }
+
   const displayName = professor?.nomePreferido || professor?.nome || 'Professor'
+
+  const tipoLabel = (type: string | null) => {
+    if (type === 'PAYMENT_DONE') return { label: 'Pagamento enviado', icon: DollarSign }
+    if (type === 'NEW_ANNOUNCEMENT') return { label: 'Novo anúncio', icon: Megaphone }
+    if (type === 'NEW_STUDENT') return { label: 'Novo aluno', icon: UserPlus }
+    return { label: 'Notificação', icon: Bell }
+  }
 
   return (
     <div>
@@ -67,6 +118,65 @@ export default function DashboardProfessoresInicioPage() {
           <p className="font-semibold text-gray-900">Calendário</p>
           <p className="text-sm text-gray-500 mt-1">Ver suas aulas por mês, semana ou dia</p>
         </Link>
+      </div>
+
+      {/* Notificações: pagamento enviado, novo anúncio, novo aluno (somente no Início) */}
+      <div className="max-w-2xl mb-8">
+        <h2 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+          <Bell className="w-5 h-5 text-brand-orange" />
+          Notificações
+        </h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Pagamento enviado, novo anúncio e novo aluno. Marque como lido quando visualizar.
+        </p>
+        {loadingNotif ? (
+          <p className="text-sm text-gray-500">Carregando notificações...</p>
+        ) : notificacoes.length === 0 ? (
+          <div className="p-4 bg-white rounded-xl border border-gray-200 text-sm text-gray-500">
+            Nenhuma notificação no momento.
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {notificacoes.map((n) => {
+              const { label, icon: Icon } = tipoLabel(n.type)
+              return (
+                <li
+                  key={n.id}
+                  className={`p-4 rounded-xl border shadow-sm flex flex-wrap items-center gap-3 ${!n.readAt ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}
+                >
+                  <Icon className="w-5 h-5 text-brand-orange shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-gray-500 uppercase">{label}</p>
+                    <p className="text-sm text-gray-800 mt-0.5">{n.message}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {new Date(n.criadoEm).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                  {!n.readAt && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleMarcarLido(n.id)}
+                      disabled={!!markingId}
+                      className="shrink-0 text-xs py-1.5 px-2"
+                    >
+                      {markingId === n.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        'Marcar como lido'
+                      )}
+                    </Button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </div>
 
       {/* Anúncios (criados no admin – Alertas) */}

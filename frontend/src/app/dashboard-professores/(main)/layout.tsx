@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import ProfessorHeader from '@/components/professor/ProfessorHeader'
@@ -15,15 +15,17 @@ import {
   Calendar,
   Wallet,
   BookOpen,
+  MessageCircle,
   LogOut,
 } from 'lucide-react'
 
 const NAV = [
-  { href: '/dashboard-professores', label: 'Início', icon: LayoutDashboard },
+  { href: '/dashboard-professores', label: 'Início', icon: LayoutDashboard, showUnreadDot: true },
   { href: '/dashboard-professores/dados-pessoais', label: 'Dados pessoais', icon: User },
   { href: '/dashboard-professores/calendario', label: 'Calendário', icon: Calendar },
   { href: '/dashboard-professores/financeiro', label: 'Financeiro', icon: Wallet },
   { href: '/dashboard-professores/livros', label: 'Livros', icon: BookOpen },
+  { href: '/dashboard-professores/chat', label: 'Chat', icon: MessageCircle, showChatDot: true },
 ] as const
 
 export default function DashboardProfessoresMainLayout({
@@ -34,6 +36,8 @@ export default function DashboardProfessoresMainLayout({
   const pathname = usePathname()
   const [professor, setProfessor] = useState<{ nome: string; nomePreferido: string | null } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -50,6 +54,48 @@ export default function DashboardProfessoresMainLayout({
       })
       .finally(() => setLoading(false))
   }, [])
+
+  const fetchUnreadCount = useCallback(() => {
+    fetch('/api/professor/alerts/unread-count', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.unreadCount != null) {
+          setUnreadAlertsCount(json.data.unreadCount)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchUnreadCount()
+  }, [pathname, fetchUnreadCount])
+
+  useEffect(() => {
+    const onAlertsUpdated = () => fetchUnreadCount()
+    window.addEventListener('professor-alerts-updated', onAlertsUpdated)
+    return () => window.removeEventListener('professor-alerts-updated', onAlertsUpdated)
+  }, [fetchUnreadCount])
+
+  const fetchChatUnreadCount = useCallback(() => {
+    fetch('/api/professor/chat/unread-count', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.unreadCount != null) {
+          setUnreadChatCount(json.data.unreadCount)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchChatUnreadCount()
+  }, [pathname, fetchChatUnreadCount])
+
+  useEffect(() => {
+    const onChatUpdated = () => fetchChatUnreadCount()
+    window.addEventListener('professor-chat-updated', onChatUpdated)
+    return () => window.removeEventListener('professor-chat-updated', onChatUpdated)
+  }, [fetchChatUnreadCount])
 
   const handleLogout = () => {
     fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => {
@@ -78,8 +124,9 @@ export default function DashboardProfessoresMainLayout({
           <p className="text-sm text-gray-500 mt-0.5">{displayName}</p>
         </div>
         <nav className="p-2 space-y-0.5">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {NAV.map(({ href, label, icon: Icon, showUnreadDot, showChatDot }) => {
             const isActive = href === '/dashboard-professores' ? pathname === href : pathname.startsWith(href)
+            const showDot = (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
             return (
               <Link
                 key={href}
@@ -92,6 +139,13 @@ export default function DashboardProfessoresMainLayout({
               >
                 <Icon className="w-5 h-5 shrink-0" />
                 {label}
+                {showDot && (
+                  <span
+                    className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
+                    title={showChatDot ? (unreadChatCount > 0 ? `${unreadChatCount} mensagem(ns) não lida(s)` : 'Chat') : (unreadAlertsCount > 0 ? `${unreadAlertsCount} notificação(ões) não lida(s)` : label)}
+                    aria-label={`${unreadAlertsCount} não lidas`}
+                  />
+                )}
               </Link>
             )
           })}

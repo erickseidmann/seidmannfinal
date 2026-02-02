@@ -25,7 +25,7 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { nome, email, whatsapp, telefone, funcao, adminPages, status, senha } = body
+    const { nome, email, whatsapp, telefone, funcao, emailPessoal, adminPages, status, senha } = body
 
     const existing = await prisma.user.findUnique({
       where: { id },
@@ -50,6 +50,7 @@ export async function PATCH(
       whatsapp?: string
       status?: string
       funcao?: string | null
+      emailPessoal?: string | null
       adminPages?: string[] | null
       senha?: string
     } = {}
@@ -77,6 +78,7 @@ export async function PATCH(
     if (tel !== undefined) updateData.whatsapp = String(tel).trim()
     if (status != null) updateData.status = status
     if (funcao !== undefined) updateData.funcao = (funcao || '').trim() || null
+    if (emailPessoal !== undefined) updateData.emailPessoal = (emailPessoal || '').trim() || null
     if (adminPages !== undefined) {
       updateData.adminPages = Array.isArray(adminPages) ? adminPages : null
     }
@@ -95,6 +97,7 @@ export async function PATCH(
         role: true,
         status: true,
         funcao: true,
+        emailPessoal: true,
         adminPages: true,
         criadoEm: true,
         atualizadoEm: true,

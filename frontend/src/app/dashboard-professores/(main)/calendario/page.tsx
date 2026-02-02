@@ -29,6 +29,7 @@ interface Lesson {
     groupMemberNames?: string[]
   }
   teacher: { id: string; nome: string }
+  record?: { id: string } | null
 }
 
 interface UltimaRecord {
@@ -263,13 +264,6 @@ export default function CalendarioProfessorPage() {
       .finally(() => setLoadingGroup(false))
   }, [modalStep, selectedLesson?.enrollment?.nomeGrupo, isGroupLesson])
 
-  useEffect(() => {
-    if (modalStep !== 'registrar' || !selectedLesson) return
-    setForm((prev) => ({
-      ...prev,
-      tempoAulaMinutos: selectedLesson.durationMinutes ?? prev.tempoAulaMinutos,
-    }))
-  }, [modalStep, selectedLesson?.id, selectedLesson?.durationMinutes])
 
   const handleVerUltima = () => setModalStep('ver-ultima')
   const handleRegistrar = () => {
@@ -322,7 +316,7 @@ export default function CalendarioProfessorPage() {
         ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
         lessonType: form.lessonType,
         curso: form.curso || null,
-        tempoAulaMinutos: form.tempoAulaMinutos !== '' ? Number(form.tempoAulaMinutos) : null,
+        tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
         book: form.book || null,
         lastPage: form.lastPage || null,
         assignedHomework: form.assignedHomework || null,
@@ -625,10 +619,12 @@ export default function CalendarioProfessorPage() {
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                 Ver informações da última aula
               </Button>
-              <Button variant="primary" onClick={handleRegistrar} className="flex-1">
-                <ClipboardList className="w-4 h-4 mr-2" />
-                Registrar aula
-              </Button>
+              {!selectedLesson?.record && (
+                <Button variant="primary" onClick={handleRegistrar} className="flex-1">
+                  <ClipboardList className="w-4 h-4 mr-2" />
+                  Registrar aula
+                </Button>
+              )}
             </div>
           ) : modalStep === 'ver-ultima' ? (
             <Button variant="outline" onClick={() => setModalStep('choose')}>
@@ -664,6 +660,11 @@ export default function CalendarioProfessorPage() {
             <p className="text-sm">
               Status: <span className={statusColor(selectedLesson.status)}>{statusLabel(selectedLesson.status)}</span>
             </p>
+            {selectedLesson.record && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                Esta aula já possui registro. Para alterar, use o painel admin.
+              </div>
+            )}
           </div>
         )}
 
@@ -784,7 +785,16 @@ export default function CalendarioProfessorPage() {
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Tempo de aula (min)</label>
-                <input type="number" min={1} max={240} value={form.tempoAulaMinutos === '' ? '' : form.tempoAulaMinutos} onChange={(e) => setForm({ ...form, tempoAulaMinutos: e.target.value === '' ? '' : Number(e.target.value) })} className="input w-full" placeholder="Preenchido pela aula" />
+                <input
+                  type="number"
+                  min={1}
+                  max={240}
+                  value={selectedLesson?.durationMinutes ?? ''}
+                  readOnly
+                  disabled
+                  className="input w-full bg-gray-100 cursor-not-allowed"
+                  title="O tempo de aula é definido no cadastro da aula. Alterações apenas no painel admin."
+                />
               </div>
             </div>
 

@@ -125,6 +125,22 @@ export async function PATCH(request: NextRequest) {
       },
     })
 
+    // Notificar admins: professor alterou dados
+    if (prisma.adminNotification) {
+      const admins = await prisma.user.findMany({
+        where: { role: 'ADMIN' },
+        select: { id: true },
+      })
+      const message = `${updated.nome} atualizou seus dados (nome, whatsapp, etc.).`
+      await Promise.all(
+        admins.map((admin) =>
+          prisma.adminNotification.create({
+            data: { userId: admin.id, message },
+          })
+        )
+      )
+    }
+
     const valorPorHora = updated.valorPorHora != null ? String(updated.valorPorHora) : null
 
     return NextResponse.json({
