@@ -71,6 +71,21 @@ export async function GET(request: NextRequest) {
       ...searchFilter,
     }
 
+    // Verificar e atualizar automaticamente alunos pausados cuja data de ativação chegou
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    await prisma.enrollment.updateMany({
+      where: {
+        status: 'PAUSED',
+        activationDate: { lte: hoje },
+      },
+      data: {
+        status: 'ACTIVE',
+        pausedAt: null,
+        activationDate: null,
+      },
+    })
+
     // Buscar enrollments
     const enrollments = await prisma.enrollment.findMany({
       where: whereClause,
@@ -188,7 +203,10 @@ export async function GET(request: NextRequest) {
             melhoresDiasSemana: (e as any).melhoresDiasSemana ?? null,
             nomeVendedor: (e as any).nomeVendedor ?? null,
             nomeEmpresaOuIndicador: (e as any).nomeEmpresaOuIndicador ?? null,
+            escolaMatricula: (e as any).escolaMatricula ?? null,
+            escolaMatriculaOutro: (e as any).escolaMatriculaOutro ?? null,
             observacoes: (e as any).observacoes ?? null,
+            activationDate: (e as any).activationDate?.toISOString?.() ?? null,
             alertsCount: (e as any)._count?.alerts ?? 0,
             alerts: Array.isArray((e as any).alerts) ? (e as any).alerts.map((a: { id: string; message: string; level: string | null }) => ({ id: a.id, message: a.message, level: a.level })) : [],
             paymentInfo: e.paymentInfo ? {
@@ -268,6 +286,8 @@ export async function POST(request: NextRequest) {
       melhoresDiasSemana,
       nomeVendedor,
       nomeEmpresaOuIndicador,
+      escolaMatricula,
+      escolaMatriculaOutro,
       observacoes,
       status,
     } = body
@@ -333,6 +353,11 @@ export async function POST(request: NextRequest) {
         melhoresDiasSemana: melhoresDiasSemana?.trim() || null,
         nomeVendedor: nomeVendedor?.trim() || null,
         nomeEmpresaOuIndicador: nomeEmpresaOuIndicador?.trim() || null,
+        escolaMatricula:
+          escolaMatricula === 'SEIDMANN' || escolaMatricula === 'YOUBECOME' || escolaMatricula === 'HIGHWAY' || escolaMatricula === 'OUTRO'
+            ? escolaMatricula
+            : null,
+        escolaMatriculaOutro: escolaMatricula === 'OUTRO' ? (escolaMatriculaOutro?.trim() || null) : null,
         observacoes: observacoes?.trim() || null,
       },
     })

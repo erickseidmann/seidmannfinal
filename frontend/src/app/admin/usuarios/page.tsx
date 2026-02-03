@@ -26,7 +26,12 @@ const ADMIN_PAGES = [
   { key: 'calendario', label: 'Calendário' },
   { key: 'registros-aulas', label: 'Registros de aulas' },
   { key: 'chat', label: 'Chat' },
-  { key: 'financeiro', label: 'Financeiro' },
+  { key: 'financeiro', label: 'Financeiro (todas)' },
+  { key: 'financeiro-geral', label: 'Financeiro – Geral' },
+  { key: 'financeiro-alunos', label: 'Financeiro – Alunos' },
+  { key: 'financeiro-professores', label: 'Financeiro – Professores' },
+  { key: 'financeiro-administracao', label: 'Financeiro – Administração' },
+  { key: 'financeiro-relatorios', label: 'Financeiro – Relatórios' },
 ] as const
 
 type AdminPageKey = (typeof ADMIN_PAGES)[number]['key']

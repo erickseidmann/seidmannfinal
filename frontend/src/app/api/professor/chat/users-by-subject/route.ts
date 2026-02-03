@@ -39,6 +39,15 @@ export async function GET(request: NextRequest) {
       STUDENT: 'Aluno',
     }
 
+    // Para ADMIN na lista "Por assunto", exibir o setor (ex: Financeiro) em vez de "Funcionário"
+    const subjectLabel: Record<string, string> = {
+      aula: 'Aula',
+      financeiro: 'Financeiro',
+      'gestao-aulas': 'Gestão de aulas',
+      material: 'Material',
+    }
+    const sectorLabel = subjectLabel[subject] ?? roleLabel.ADMIN
+
     if (subject === 'aula') {
       const users = await prisma.user.findMany({
         where: {
@@ -80,7 +89,7 @@ export async function GET(request: NextRequest) {
           nome: u.nome,
           email: u.email,
           role: u.role,
-          roleLabel: roleLabel[u.role] ?? u.role,
+          roleLabel: sectorLabel,
         })),
       })
     }
@@ -103,7 +112,7 @@ export async function GET(request: NextRequest) {
           nome: u.nome,
           email: u.email,
           role: u.role,
-          roleLabel: roleLabel[u.role] ?? u.role,
+          roleLabel: sectorLabel,
         })),
       })
     }
@@ -126,7 +135,7 @@ export async function GET(request: NextRequest) {
           nome: u.nome,
           email: u.email,
           role: u.role,
-          roleLabel: roleLabel[u.role] ?? u.role,
+          roleLabel: sectorLabel,
         })),
       })
     }

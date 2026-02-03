@@ -2,7 +2,8 @@
  * GET /api/admin/financeiro/geral?year=YYYY
  * Retorna entradas e saídas reais por mês para o ano (Financeiro – Geral).
  * Entradas = soma das mensalidades (valorMensalidade) dos alunos com EnrollmentPaymentMonth PAGO no mês.
- * Saídas = soma do valor a pagar aos professores com TeacherPaymentMonth PAGO no mês (horas × valor/hora + período + extras).
+ * Saídas = soma do valor a pagar aos professores com TeacherPaymentMonth PAGO no mês.
+ * Regra: horas usadas no cálculo são sempre as REGISTRADAS (LessonRecord), nunca as estimadas (Lesson).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -141,12 +142,20 @@ export async function GET(request: NextRequest) {
         continue
       }
 
+      // Aulas canceladas não entram no cálculo de saídas (apenas CONFIRMED)
+      // Também não contam aulas de alunos PAUSED a partir da data em que foram pausados
       const recordsInRange = await lessonRecord.findMany({
         where: {
           lesson: {
             teacherId: { in: Array.from(teacherIdsPagos) },
             startAt: { gte: periodStart, lte: periodEnd },
             status: 'CONFIRMED',
+            enrollment: {
+              OR: [
+                { status: { not: 'PAUSED' } },
+                { pausedAt: null },
+              ],
+            },
           },
           status: 'CONFIRMED',
         },
@@ -157,9 +166,28 @@ export async function GET(request: NextRequest) {
               teacherId: true,
               startAt: true,
               durationMinutes: true,
+              enrollment: {
+                select: {
+                  status: true,
+                  pausedAt: true,
+                },
+              },
             },
           },
         },
+      })
+
+      // Filtrar manualmente aulas de alunos pausados (a partir da data pausedAt)
+      const filteredRecords = recordsInRange.filter((r: { lesson: { startAt: Date; enrollment: { status: string; pausedAt: Date | null } } }) => {
+        const enrollment = r.lesson.enrollment
+        if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+          const pausedAt = new Date(enrollment.pausedAt)
+          pausedAt.setHours(0, 0, 0, 0)
+          const lessonDate = new Date(r.lesson.startAt)
+          lessonDate.setHours(0, 0, 0, 0)
+          return lessonDate < pausedAt
+        }
+        return true
       })
 
       let totalSaidasMes = 0
@@ -170,14 +198,14 @@ export async function GET(request: NextRequest) {
         const valorExtra = pm.valorExtra != null ? Number(pm.valorExtra) : (t?.valorExtra != null ? Number(t.valorExtra) : 0)
 
         let totalMinutos = 0
-        for (const r of recordsInRange) {
+        for (const r of filteredRecords) {
           const lesson = r.lesson as { teacherId: string; startAt: Date; durationMinutes: number }
           if (lesson.teacherId !== pm.teacherId) continue
           if (holidaySet.has(toDateKey(new Date(lesson.startAt)))) continue
           const mins = (r as { tempoAulaMinutos: number | null }).tempoAulaMinutos ?? lesson.durationMinutes ?? 60
           totalMinutos += mins
         }
-        const totalHoras = totalMinutos / 60
+        const totalHoras = totalMinutos / 60 // horas registradas (LessonRecord)
         const valorHoras = totalHoras * valorPorHora
         const valorAPagar = Math.round((valorHoras + valorPorPeriodo + valorExtra) * 100) / 100
         totalSaidasMes += valorAPagar

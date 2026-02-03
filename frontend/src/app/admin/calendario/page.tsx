@@ -25,7 +25,15 @@ interface Lesson {
   startAt: string
   durationMinutes: number
   notes: string | null
-  enrollment: { id: string; nome: string; frequenciaSemanal: number | null; curso?: string | null }
+  enrollment: {
+    id: string
+    nome: string
+    frequenciaSemanal: number | null
+    curso?: string | null
+    status?: string
+    pausedAt?: string | null
+    activationDate?: string | null
+  }
   teacher: { id: string; nome: string }
 }
 
@@ -680,12 +688,31 @@ export default function AdminCalendarioPage() {
   const statusLabel = (s: string) =>
     s === 'CONFIRMED' ? 'Confirmada' : s === 'CANCELLED' ? 'Cancelada' : 'Reposição'
 
-  const statusColor = (s: string) =>
-    s === 'CONFIRMED'
+  const isPaused = (lesson: Lesson): boolean => {
+    if (lesson.enrollment.status !== 'PAUSED' || !lesson.enrollment.pausedAt) return false
+    const pausedAt = new Date(lesson.enrollment.pausedAt)
+    pausedAt.setHours(0, 0, 0, 0)
+    const lessonDate = new Date(lesson.startAt)
+    lessonDate.setHours(0, 0, 0, 0)
+    const activationDate = lesson.enrollment.activationDate ? new Date(lesson.enrollment.activationDate) : null
+    if (activationDate) {
+      activationDate.setHours(0, 0, 0, 0)
+    }
+    // Está pausado se a aula está entre pausedAt e activationDate (ou sem activationDate)
+    return lessonDate >= pausedAt && (!activationDate || lessonDate < activationDate)
+  }
+
+  const statusColor = (s: string, lesson?: Lesson) => {
+    // Se o aluno está pausado, usar cor diferente (azul/roxo claro)
+    if (lesson && isPaused(lesson)) {
+      return 'bg-blue-100 text-blue-800 border-blue-200'
+    }
+    return s === 'CONFIRMED'
       ? 'bg-green-100 text-green-800 border-green-200'
       : s === 'CANCELLED'
         ? 'bg-red-100 text-red-800 border-red-200'
         : 'bg-amber-100 text-amber-800 border-amber-200'
+  }
 
   return (
     <AdminLayout>
@@ -936,10 +963,11 @@ export default function AdminCalendarioPage() {
                             key={l.id}
                             type="button"
                             onClick={() => openEditLesson(l)}
-                            className={`block w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 ${statusColor(l.status)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}`}
+                            className={`block w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 ${statusColor(l.status, l)}`}
+                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                           >
                             {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome} {formatTime(l.startAt)}
+                            {isPaused(l) && <span className="ml-1 text-[10px]">⏸️</span>}
                           </button>
                         ))}
                         {dayLessons.length > 3 && (
@@ -1019,10 +1047,11 @@ export default function AdminCalendarioPage() {
                             key={l.id}
                             type="button"
                             onClick={() => openEditLesson(l)}
-                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 ${statusColor(l.status)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}`}
+                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 ${statusColor(l.status, l)}`}
+                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                           >
                             {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome}
+                            {isPaused(l) && <span className="ml-1 text-[9px]">⏸️</span>}
                           </button>
                         ))}
                       </div>
@@ -1085,9 +1114,11 @@ export default function AdminCalendarioPage() {
                           key={l.id}
                           type="button"
                           onClick={() => openEditLesson(l)}
-                          className={`text-sm text-left px-2 py-1 rounded border w-fit max-w-full break-words line-clamp-2 ${statusColor(l.status)}`}
+                          className={`text-sm text-left px-2 py-1 rounded border w-fit max-w-full break-words line-clamp-2 ${statusColor(l.status, l)}`}
+                          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                         >
                           {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome} – {statusLabel(l.status)} ({formatTime(l.startAt)})
+                          {isPaused(l) && <span className="ml-1">⏸️</span>}
                         </button>
                       ))}
                     </div>

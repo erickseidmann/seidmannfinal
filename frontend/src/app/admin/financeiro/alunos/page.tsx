@@ -5,17 +5,19 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2 } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
   nome: string
+  cpf: string | null
+  endereco: string | null
   tipoAula: string | null
   nomeGrupo: string | null
   nomeResponsavel: string | null
@@ -75,6 +77,41 @@ function formatDate(iso: string | null): string {
 function formatMoney(n: number | null): string {
   if (n == null) return '—'
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
+}
+
+function CellWithCopy({
+  value,
+  onCopy,
+  className = '',
+  truncate = false,
+}: {
+  value: string
+  onCopy: () => void
+  className?: string
+  truncate?: boolean
+}) {
+  const text = value || '—'
+  return (
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      <span className={truncate ? 'max-w-[200px] truncate block' : ''} title={text}>
+        {text}
+      </span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          if (text !== '—') {
+            navigator.clipboard.writeText(text).then(() => onCopy())
+          }
+        }}
+        className="p-0.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 flex-shrink-0"
+        title="Copiar"
+        aria-label="Copiar"
+      >
+        <Copy className="w-4 h-4" />
+      </button>
+    </span>
+  )
 }
 
 const MESES_LABELS: Record<number, string> = {
@@ -230,6 +267,47 @@ export default function FinanceiroAlunosPage() {
   const [cubeModal, setCubeModal] = useState<'atrasado' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
   const [filterProximos5Dias, setFilterProximos5Dias] = useState(false)
+
+  const FINANCE_COLUMNS = [
+    { key: 'aluno', label: 'Aluno', fixed: true },
+    { key: 'cpf', label: 'CPF', fixed: false },
+    { key: 'endereco', label: 'Endereço', fixed: false },
+    { key: 'tipoAula', label: 'Tipo aula', fixed: false },
+    { key: 'nomeGrupo', label: 'Nome grupo', fixed: false },
+    { key: 'responsavel', label: 'Responsável', fixed: false },
+    { key: 'quemPaga', label: 'Quem paga', fixed: false },
+    { key: 'valorMensal', label: 'Valor mensal', fixed: false },
+    { key: 'valorHora', label: 'Valor hora', fixed: false },
+    { key: 'status', label: 'Status', fixed: false },
+    { key: 'metodoPagamento', label: 'Método pag.', fixed: false },
+    { key: 'banco', label: 'Banco', fixed: false },
+    { key: 'periodo', label: 'Período', fixed: false },
+    { key: 'ultimoPag', label: 'Último pag.', fixed: false },
+    { key: 'proxPag', label: 'Próx. pag.', fixed: false },
+    { key: 'nfEmitida', label: 'NF emitida?', fixed: false },
+    { key: 'acoes', label: 'Ações', fixed: true },
+  ] as const
+  const defaultVisibleKeys = FINANCE_COLUMNS.map((c) => c.key)
+  const [visibleFinanceKeys, setVisibleFinanceKeys] = useState<string[]>(() => defaultVisibleKeys)
+  const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
+  const columnsDropdownRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (columnsDropdownRef.current && !columnsDropdownRef.current.contains(e.target as Node)) setColumnsDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+  const visibleSet = new Set(visibleFinanceKeys)
+  const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
+  const toggleFinanceColumn = (key: string) => {
+    const fixed = FINANCE_COLUMNS.filter((c) => c.fixed).map((c) => c.key)
+    if (fixed.includes(key)) return
+    setVisibleFinanceKeys((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      return [...fixed, ...next.filter((k) => !fixed.includes(k))]
+    })
+  }
   const [sendingCobrancaTodos, setSendingCobrancaTodos] = useState(false)
   const [cobrancaTodosModalOpen, setCobrancaTodosModalOpen] = useState(false)
   const [cobrancaTodosSubject, setCobrancaTodosSubject] = useState(COBRANCA_TODOS_DEFAULT_SUBJECT)
@@ -263,6 +341,10 @@ export default function FinanceiroAlunosPage() {
   }, [alunosNoMes, filterBusca, filterProximos5Dias])
 
   const selected = editId ? alunos.find((a) => a.id === editId) : null
+
+  const handleCopy = useCallback(() => {
+    setToast({ message: 'Copiado para a área de transferência', type: 'success' })
+  }, [])
 
   const patchCell = useCallback(
     async (id: string, field: string, value: string | number | boolean | null) => {
@@ -699,25 +781,92 @@ export default function FinanceiroAlunosPage() {
             <p className="mt-2 text-xs text-gray-500">
               As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única informação que acompanha é <strong>Último pag.</strong> Os cubos e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos. Clique duas vezes em uma célula para editar (Quem paga, Valor mensal, Status, Método pag., Banco, Período, datas, NF).
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="relative" ref={columnsDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setColumnsDropdownOpen((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  <Columns className="w-4 h-4" />
+                  Colunas
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+                {columnsDropdownOpen && (
+                  <div className="absolute left-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-lg">
+                    <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
+                    {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
+                      <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                        <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
+                        <span className="text-sm text-gray-800">{col.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const headers = displayColumns.map((c) => c.label).join(';')
+                  const rows = filteredAlunos.map((a) =>
+                    displayColumns
+                      .map((col) => {
+                        if (col.key === 'aluno') return (a.nome ?? '').replace(/;/g, ',')
+                        if (col.key === 'cpf') return (a.cpf ?? '').replace(/;/g, ',')
+                        if (col.key === 'endereco') return (a.endereco ?? '').replace(/;|\n/g, ' ').replace(/"/g, '""')
+                        if (col.key === 'tipoAula') return a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? ''
+                        if (col.key === 'nomeGrupo') return (a.nomeGrupo ?? '').replace(/;/g, ',')
+                        if (col.key === 'responsavel') return (a.nomeResponsavel ?? '').replace(/;/g, ',')
+                        if (col.key === 'quemPaga') return (a.quemPaga ?? '').replace(/;/g, ',')
+                        if (col.key === 'valorMensal') return a.valorMensal != null ? String(a.valorMensal).replace('.', ',') : ''
+                        if (col.key === 'valorHora') return a.valorHora != null ? String(a.valorHora).replace('.', ',') : ''
+                        if (col.key === 'status') return a.status ?? ''
+                        if (col.key === 'metodoPagamento') return (a.metodoPagamento ?? '').replace(/;/g, ',')
+                        if (col.key === 'banco') return (a.banco ?? '').replace(/;/g, ',')
+                        if (col.key === 'periodo') return a.periodoPagamento ?? ''
+                        if (col.key === 'ultimoPag') return formatDate(a.dataUltimoPagamento)
+                        if (col.key === 'proxPag') return formatDate(a.dataProximoPagamento)
+                        if (col.key === 'nfEmitida') return a.notaFiscalEmitida === true ? 'Emitida' : 'Em aberto'
+                        if (col.key === 'acoes') return ''
+                        return ''
+                      })
+                      .map((v) => (v.includes(';') ? `"${v}"` : v))
+                      .join(';')
+                  )
+                  const csv = '\uFEFF' + [headers, ...rows].join('\r\n')
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `financeiro-alunos-${selectedAno}-${String(selectedMes).padStart(2, '0')}.csv`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                  setToast({ message: 'Planilha exportada. Abra o arquivo no Excel.', type: 'success' })
+                }}
+                disabled={filteredAlunos.length === 0}
+              >
+                <FileDown className="w-4 h-4 mr-2" />
+                Exportar Excel
+              </Button>
+            </div>
             <div className="mt-4 overflow-x-auto bg-white rounded-xl border border-gray-200 shadow-sm">
             <table className="w-full min-w-[1400px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Aluno</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tipo aula</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nome grupo</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Responsável</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Quem paga</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Valor mensal</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Valor hora</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Método pag.</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Banco</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Período</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Último pag.</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Próx. pag.</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase">NF emitida?</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Ações</th>
+                  {displayColumns.map((col) => (
+                    <th
+                      key={col.key}
+                      className={
+                        col.key === 'valorMensal' || col.key === 'valorHora' ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase' :
+                        col.key === 'nfEmitida' ? 'px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase' :
+                        col.key === 'acoes' ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase' :
+                        'px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase'
+                      }
+                    >
+                      {col.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -733,13 +882,16 @@ export default function FinanceiroAlunosPage() {
                       {isEditing(a.id, field) && inputNode ? inputNode : children}
                     </td>
                   )
+                  const baseTd = `px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`
                   return (
                     <tr key={a.id} className={isAtrasado ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}>
-                      <td className="px-3 py-2 text-sm text-gray-900 whitespace-nowrap">{a.nome}</td>
-                      <td className="px-3 py-2 text-sm text-gray-600">{a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? '—'}</td>
-                      <td className="px-3 py-2 text-sm text-gray-600">{a.nomeGrupo ?? '—'}</td>
-                      <td className="px-3 py-2 text-sm text-gray-600">{a.nomeResponsavel ?? '—'}</td>
-                      {EdCell(
+                      {displayColumns.some((c) => c.key === 'aluno') && <td className={`px-3 py-2 text-sm ${baseTd}`}><CellWithCopy value={a.nome ?? ''} onCopy={handleCopy} /></td>}
+                      {displayColumns.some((c) => c.key === 'cpf') && <td className={`px-3 py-2 text-sm max-w-[140px] ${baseTd}`}><CellWithCopy value={a.cpf ?? ''} onCopy={handleCopy} truncate /></td>}
+                      {displayColumns.some((c) => c.key === 'endereco') && <td className={`px-3 py-2 text-sm max-w-[220px] ${baseTd}`}><CellWithCopy value={a.endereco ?? ''} onCopy={handleCopy} truncate /></td>}
+                      {displayColumns.some((c) => c.key === 'tipoAula') && <td className="px-3 py-2 text-sm text-gray-600">{a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? '—'}</td>}
+                      {displayColumns.some((c) => c.key === 'nomeGrupo') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeGrupo ?? '—'}</td>}
+                      {displayColumns.some((c) => c.key === 'responsavel') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeResponsavel ?? '—'}</td>}
+                      {displayColumns.some((c) => c.key === 'quemPaga') && EdCell(
                         'quemPaga',
                         a.quemPaga ?? '—',
                         <input
@@ -752,9 +904,9 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       )}
-                      {EdCell(
+                      {displayColumns.some((c) => c.key === 'valorMensal') && EdCell(
                         'valorMensal',
-                        formatMoney(a.valorMensal),
+                        <CellWithCopy value={formatMoney(a.valorMensal)} onCopy={handleCopy} className="text-right" />,
                         <input
                           type="number"
                           step="0.01"
@@ -767,9 +919,12 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       )}
-                      <td className="px-3 py-1 text-sm text-right text-gray-700" title="Calculado: valor mensal ÷ (frequência semanal × duração da aula × 4 semanas)">
-                        {formatMoney(a.valorHora)}
-                      </td>
+                      {displayColumns.some((c) => c.key === 'valorHora') && (
+                        <td className="px-3 py-1 text-sm text-right text-gray-700" title="Calculado: valor mensal ÷ (frequência semanal × duração da aula × 4 semanas)">
+                          {formatMoney(a.valorHora)}
+                        </td>
+                      )}
+                      {displayColumns.some((c) => c.key === 'status') && (
                       <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
                         <div className="flex flex-wrap items-center gap-3">
                           <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
@@ -795,7 +950,8 @@ export default function FinanceiroAlunosPage() {
                           </label>
                         </div>
                       </td>
-                      {EdCell(
+                      )}
+                      {displayColumns.some((c) => c.key === 'metodoPagamento') && EdCell(
                         'metodoPagamento',
                         a.metodoPagamento ?? '—',
                         <input
@@ -808,7 +964,7 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       )}
-                      {EdCell(
+                      {displayColumns.some((c) => c.key === 'banco') && EdCell(
                         'banco',
                         a.banco ?? '—',
                         <input
@@ -821,6 +977,7 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       )}
+                      {displayColumns.some((c) => c.key === 'periodo') && (
                       <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
                         <div className="flex flex-col gap-1">
                           {(['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'] as const).map((per) => (
@@ -837,7 +994,8 @@ export default function FinanceiroAlunosPage() {
                           ))}
                         </div>
                       </td>
-                      {EdCell('dataUltimoPagamento', formatDate(a.dataUltimoPagamento), (
+                      )}
+                      {displayColumns.some((c) => c.key === 'ultimoPag') && EdCell('dataUltimoPagamento', formatDate(a.dataUltimoPagamento), (
                         <input
                           type="date"
                           className="input w-full py-1 text-sm"
@@ -848,7 +1006,7 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       ))}
-                      {EdCell('dataProximoPagamento', formatDate(a.dataProximoPagamento), (
+                      {displayColumns.some((c) => c.key === 'proxPag') && EdCell('dataProximoPagamento', formatDate(a.dataProximoPagamento), (
                         <input
                           type="date"
                           className="input w-full py-1 text-sm"
@@ -859,6 +1017,7 @@ export default function FinanceiroAlunosPage() {
                           autoFocus
                         />
                       ))}
+                      {displayColumns.some((c) => c.key === 'nfEmitida') && (
                       <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50' : 'text-gray-900'}`}>
                         <div className="flex flex-col gap-1.5">
                           <label className="flex items-center gap-2 cursor-pointer">
@@ -883,6 +1042,8 @@ export default function FinanceiroAlunosPage() {
                           </label>
                         </div>
                       </td>
+                      )}
+                      {displayColumns.some((c) => c.key === 'acoes') && (
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         <button type="button" onClick={() => openEdit(a)} className="text-gray-600 hover:text-brand-orange p-1" title="Editar (modal)">
                           <Pencil className="w-4 h-4" />
@@ -897,6 +1058,7 @@ export default function FinanceiroAlunosPage() {
                           {loadingCobrancaForId === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         </button>
                       </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -1006,6 +1168,50 @@ export default function FinanceiroAlunosPage() {
                         : 'Lista'
           }
           size="md"
+          footer={
+            (() => {
+              const list =
+                cubeModal === 'atrasado'
+                  ? alunosAtrasado
+                  : cubeModal === 'pago'
+                    ? alunosPago
+                    : cubeModal === 'aReceber'
+                      ? alunosAReceber
+                      : cubeModal === 'alunos'
+                        ? alunosNoMes
+                        : cubeModal === 'nfEmAberto'
+                          ? alunosNFEmAberto
+                          : cubeModal === 'nfEmitida'
+                            ? alunosNFEmitida
+                            : []
+              if (list.length === 0) return null
+              const showVencimento = cubeModal === 'atrasado' || cubeModal === 'aReceber'
+              const showUltimoPag = cubeModal === 'pago'
+              const copyText =
+                (showVencimento
+                  ? 'Aluno\tVencimento\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataProximoPagamento)}`).join('\n')
+                  : showUltimoPag
+                    ? 'Aluno\tÚltimo pag.\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataUltimoPagamento)}`).join('\n')
+                    : 'Aluno\n' + list.map((a) => a.nome).join('\n'))
+              return (
+                <div className="flex justify-end w-full">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(copyText).then(
+                        () => setToast({ message: 'Lista copiada para a área de transferência', type: 'success' }),
+                        () => setToast({ message: 'Não foi possível copiar', type: 'error' })
+                      )
+                    }}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copiar lista completa
+                  </Button>
+                </div>
+              )
+            })()
+          }
         >
           {(() => {
             const list =
@@ -1016,7 +1222,7 @@ export default function FinanceiroAlunosPage() {
                   : cubeModal === 'aReceber'
                     ? alunosAReceber
                     : cubeModal === 'alunos'
-                      ? alunos
+                      ? alunosNoMes
                       : cubeModal === 'nfEmAberto'
                         ? alunosNFEmAberto
                         : cubeModal === 'nfEmitida'
@@ -1025,14 +1231,28 @@ export default function FinanceiroAlunosPage() {
             if (list.length === 0) {
               return <p className="text-gray-500 text-sm">Nenhum aluno nesta lista.</p>
             }
+            const showVencimento = cubeModal === 'atrasado' || cubeModal === 'aReceber'
+            const showUltimoPag = cubeModal === 'pago'
             return (
-              <ul className="space-y-2 max-h-80 overflow-y-auto">
-                {list.map((a) => (
-                  <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800">
-                    {a.nome}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="space-y-2 max-h-80 overflow-y-auto">
+                  {list.map((a) => (
+                    <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800 flex flex-wrap items-baseline justify-between gap-x-2">
+                      <span>{a.nome}</span>
+                      {(showVencimento || showUltimoPag) && (
+                        <span className="text-sm text-gray-600 shrink-0">
+                          {showVencimento && (
+                            <>Venc.: {formatDate(a.dataProximoPagamento)}</>
+                          )}
+                          {showUltimoPag && !showVencimento && (
+                            <>Últ. pag.: {formatDate(a.dataUltimoPagamento)}</>
+                          )}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
             )
           })()}
         </Modal>

@@ -125,6 +125,32 @@ export async function PATCH(
 
     const effectiveEnrollmentId = updateData.enrollmentId ?? lessonBefore.enrollmentId
     const effectiveTeacherId = updateData.teacherId ?? lessonBefore.teacherId
+    const effectiveStartAt = updateData.startAt ?? lessonBefore.startAt
+
+    // Verificar se aluno está pausado e tentando atribuir professor durante período pausado
+    if (effectiveEnrollmentId && effectiveTeacherId && updateData.teacherId) {
+      const enrollment = await prisma.enrollment.findUnique({
+        where: { id: effectiveEnrollmentId },
+        select: { status: true, pausedAt: true, activationDate: true },
+      })
+      if (enrollment && enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+        const pausedAt = new Date(enrollment.pausedAt)
+        pausedAt.setHours(0, 0, 0, 0)
+        const lessonDate = new Date(effectiveStartAt)
+        lessonDate.setHours(0, 0, 0, 0)
+        const activationDate = enrollment.activationDate ? new Date(enrollment.activationDate) : null
+        if (activationDate) {
+          activationDate.setHours(0, 0, 0, 0)
+        }
+        if (lessonDate >= pausedAt && (!activationDate || lessonDate < activationDate)) {
+          return NextResponse.json(
+            { ok: false, message: 'Não é possível atribuir professor para aulas de alunos pausados durante o período de pausa. Defina uma data de ativação.' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     if (effectiveEnrollmentId && effectiveTeacherId) {
       const [enrollment, teacher] = await Promise.all([
         prisma.enrollment.findUnique({

@@ -7,6 +7,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 
+/** Para ADMIN: retorna setor (Financeiro, Gestão de aulas, Material) a partir de adminPages */
+function getSectorLabelFromPages(adminPages: unknown): string | null {
+  const pages = Array.isArray(adminPages) ? adminPages as string[] : []
+  if (pages.includes('financeiro')) return 'Financeiro'
+  if (pages.some((p) => p === 'calendario' || p === 'registros-aulas')) return 'Gestão de aulas'
+  if (pages.includes('livros')) return 'Material'
+  return null
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireTeacher(request)
@@ -26,7 +35,7 @@ export async function GET(request: NextRequest) {
           include: {
             participants: {
               include: {
-                user: { select: { id: true, nome: true, email: true, role: true } },
+                user: { select: { id: true, nome: true, email: true, role: true, adminPages: true } },
               },
             },
             messages: {
@@ -51,13 +60,18 @@ export async function GET(request: NextRequest) {
         const conv = p.conversation
         const others = conv.participants
           .filter((x) => x.userId !== currentUserId)
-          .map((x) => ({
-            id: x.user.id,
-            nome: x.user.nome,
-            email: x.user.email,
-            role: x.user.role,
-            roleLabel: roleLabel[x.user.role] ?? x.user.role,
-          }))
+          .map((x) => {
+            const user = x.user as { id: string; nome: string; email: string; role: string; adminPages?: unknown }
+            const sector = user.role === 'ADMIN' ? getSectorLabelFromPages(user.adminPages) : null
+            const displayLabel = sector ?? (roleLabel[user.role] ?? user.role)
+            return {
+              id: user.id,
+              nome: user.nome,
+              email: user.email,
+              role: user.role,
+              roleLabel: displayLabel,
+            }
+          })
         const lastMsg = conv.messages[0]
         const since = p.lastReadAt ?? new Date(0)
         const unreadCount = await prisma.chatMessage.count({
@@ -161,7 +175,7 @@ export async function POST(request: NextRequest) {
       const directConvs = await prisma.conversation.findMany({
         where: { id: { in: convIds }, type: 'DIRECT' },
         include: {
-          participants: { include: { user: { select: { id: true, nome: true, email: true, role: true } } } },
+          participants: { include: { user: { select: { id: true, nome: true, email: true, role: true, adminPages: true } } } },
         },
       })
       for (const conv of directConvs) {
@@ -171,7 +185,7 @@ export async function POST(request: NextRequest) {
           participantIdsInConv.includes(currentUserId) &&
           participantIdsInConv.includes(ids[0])
         ) {
-          const roleLabel: Record<string, string> = {
+          const roleLabelMap: Record<string, string> = {
             ADMIN: 'Funcionário',
             TEACHER: 'Professor',
             STUDENT: 'Aluno',
@@ -186,13 +200,17 @@ export async function POST(request: NextRequest) {
                 criadoEm: conv.criadoEm.toISOString(),
                 participants: conv.participants
                   .filter((x) => x.userId !== currentUserId)
-                  .map((x) => ({
-                    id: x.user.id,
-                    nome: x.user.nome,
-                    email: x.user.email,
-                    role: x.user.role,
-                    roleLabel: roleLabel[x.user.role] ?? x.user.role,
-                  })),
+                  .map((x) => {
+                    const u = x.user as { id: string; nome: string; email: string; role: string; adminPages?: unknown }
+                    const sector = u.role === 'ADMIN' ? getSectorLabelFromPages(u.adminPages) : null
+                    return {
+                      id: u.id,
+                      nome: u.nome,
+                      email: u.email,
+                      role: u.role,
+                      roleLabel: sector ?? roleLabelMap[u.role] ?? u.role,
+                    }
+                  }),
                 lastMessage: null,
               },
             },
@@ -212,12 +230,12 @@ export async function POST(request: NextRequest) {
       },
       include: {
         participants: {
-          include: { user: { select: { id: true, nome: true, email: true, role: true } } },
+          include: { user: { select: { id: true, nome: true, email: true, role: true, adminPages: true } } },
         },
       },
     })
 
-    const roleLabel: Record<string, string> = {
+    const roleLabelMap: Record<string, string> = {
       ADMIN: 'Funcionário',
       TEACHER: 'Professor',
       STUDENT: 'Aluno',
@@ -233,13 +251,17 @@ export async function POST(request: NextRequest) {
           criadoEm: conversation.criadoEm.toISOString(),
           participants: conversation.participants
             .filter((x) => x.userId !== currentUserId)
-            .map((x) => ({
-              id: x.user.id,
-              nome: x.user.nome,
-              email: x.user.email,
-              role: x.user.role,
-              roleLabel: roleLabel[x.user.role] ?? x.user.role,
-            })),
+            .map((x) => {
+              const u = x.user as { id: string; nome: string; email: string; role: string; adminPages?: unknown }
+              const sector = u.role === 'ADMIN' ? getSectorLabelFromPages(u.adminPages) : null
+              return {
+                id: u.id,
+                nome: u.nome,
+                email: u.email,
+                role: u.role,
+                roleLabel: sector ?? roleLabelMap[u.role] ?? u.role,
+              }
+            }),
           lastMessage: null,
         },
       },

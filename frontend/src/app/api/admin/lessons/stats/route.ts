@@ -225,6 +225,35 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Para wrongFrequencyList: adicionar horários de aula da semana e último livro (para exibir no dashboard)
+    const wrongFrequencyEnrollmentIds = wrongFrequencyList.map((x) => x.enrollmentId)
+    const lastBookByEnrollment: Record<string, string | null> = {}
+    if (wrongFrequencyEnrollmentIds.length > 0) {
+      const records = await prisma.lessonRecord.findMany({
+        where: { lesson: { enrollmentId: { in: wrongFrequencyEnrollmentIds } } },
+        select: { book: true, lesson: { select: { enrollmentId: true, startAt: true } } },
+      })
+      const sorted = records
+        .filter((r) => r.lesson?.enrollmentId)
+        .sort((a, b) => new Date(b.lesson!.startAt).getTime() - new Date(a.lesson!.startAt).getTime())
+      for (const r of sorted) {
+        const eid = r.lesson!.enrollmentId
+        if (lastBookByEnrollment[eid] === undefined) {
+          lastBookByEnrollment[eid] = r.book ?? null
+        }
+      }
+    }
+    const wrongFrequencyListWithDetails = wrongFrequencyList.map((item) => {
+      const lessonTimesThisWeek = lessons
+        .filter((l) => l.enrollmentId === item.enrollmentId)
+        .map((l) => l.startAt.toISOString())
+      return {
+        ...item,
+        lessonTimesThisWeek,
+        lastBook: lastBookByEnrollment[item.enrollmentId] ?? null,
+      }
+    })
+
     // Erros professores: (1) professor com mais de um aluno no mesmo horário/dia; (2) professor inativo com aula.
     type LessonWithMeta = (typeof lessons)[0]
     const getEndAt = (l: LessonWithMeta) => {
@@ -314,12 +343,12 @@ export async function GET(request: NextRequest) {
         confirmed: confirmedList.length,
         cancelled: cancelledList.length,
         reposicao: reposicaoList.length,
-        wrongFrequencyCount: wrongFrequencyList.length,
+        wrongFrequencyCount: wrongFrequencyListWithDetails.length,
         teacherErrorsCount,
         confirmedList,
         cancelledList,
         reposicaoList,
-        wrongFrequencyList,
+        wrongFrequencyList: wrongFrequencyListWithDetails,
         doubleBookingList,
         inactiveTeacherList,
       },

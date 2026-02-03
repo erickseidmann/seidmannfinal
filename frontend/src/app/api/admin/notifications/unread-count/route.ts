@@ -22,8 +22,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: { unreadCount: 0 } })
     }
 
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
     const unreadCount = await prisma.adminNotification.count({
-      where: { userId, readAt: null },
+      where: { userId, readAt: null, criadoEm: { gte: cutoff } },
     })
 
     return NextResponse.json({ ok: true, data: { unreadCount } })

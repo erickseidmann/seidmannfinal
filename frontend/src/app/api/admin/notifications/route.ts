@@ -25,8 +25,11 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
     const notifications = await prisma.adminNotification.findMany({
-      where: { userId },
+      where: { userId, criadoEm: { gte: cutoff } },
       orderBy: { criadoEm: 'desc' },
       take: 50,
     })

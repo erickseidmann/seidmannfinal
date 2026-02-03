@@ -14,7 +14,8 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown } from 'lucide-react'
+import StatCard from '@/components/admin/StatCard'
 
 interface StudentAlertItem {
   id: string
@@ -60,6 +61,9 @@ interface Student {
   melhoresDiasSemana?: string | null
   nomeVendedor?: string | null
   nomeEmpresaOuIndicador?: string | null
+  escolaMatricula?: string | null
+  escolaMatriculaOutro?: string | null
+  activationDate?: string | null
   user?: { id: string; nome: string; email: string; whatsapp: string | null } | null
 }
 
@@ -130,6 +134,53 @@ const STATUS_LABELS: Record<string, string> = {
   COMPLETED: 'Concluído',
 }
 
+const MESES = [
+  { value: '', label: 'Todos' },
+  { value: '1', label: 'Janeiro' },
+  { value: '2', label: 'Fevereiro' },
+  { value: '3', label: 'Março' },
+  { value: '4', label: 'Abril' },
+  { value: '5', label: 'Maio' },
+  { value: '6', label: 'Junho' },
+  { value: '7', label: 'Julho' },
+  { value: '8', label: 'Agosto' },
+  { value: '9', label: 'Setembro' },
+  { value: '10', label: 'Outubro' },
+  { value: '11', label: 'Novembro' },
+  { value: '12', label: 'Dezembro' },
+]
+
+function formatEndereco(s: Student): string {
+  if ((s as { moraNoExterior?: boolean }).moraNoExterior && (s as { enderecoExterior?: string | null }).enderecoExterior) {
+    return (s as { enderecoExterior: string }).enderecoExterior
+  }
+  const parts = [
+    (s as { rua?: string | null }).rua,
+    (s as { numero?: string | null }).numero,
+    (s as { complemento?: string | null }).complemento,
+    (s as { cep?: string | null }).cep,
+    (s as { cidade?: string | null }).cidade,
+    (s as { estado?: string | null }).estado,
+  ].filter(Boolean)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => string }[] = [
+  { key: 'nome', label: 'Nome', getValue: (s) => (s.nome ?? '').replace(/;/g, ',') },
+  { key: 'idade', label: 'Idade', getValue: (s) => (calcularIdade(s.dataNascimento) ?? '—').toString() },
+  { key: 'email', label: 'Email', getValue: (s) => (s.email ?? '').replace(/;/g, ',') },
+  { key: 'whatsapp', label: 'WhatsApp', getValue: (s) => (s.whatsapp ?? '').replace(/;/g, ',') },
+  { key: 'cpf', label: 'CPF', getValue: (s) => (s.cpf ?? '').replace(/;/g, ',') },
+  { key: 'endereco', label: 'Endereço', getValue: (s) => formatEndereco(s).replace(/;/g, ',').replace(/\n/g, ' ') },
+  { key: 'valorMensalidade', label: 'Valor', getValue: (s) => (s.valorMensalidade != null ? String(s.valorMensalidade).replace('.', ',') : '—') },
+  { key: 'tipoAula', label: 'Tipo', getValue: (s) => (s.tipoAula === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : s.tipoAula ?? '—') },
+  { key: 'teacherNameForWeek', label: 'Professor (semana)', getValue: (s) => (s.teacherNameForWeek ?? 's/ professor').replace(/;/g, ',') },
+  { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
+  { key: 'trackingCode', label: 'Código', getValue: (s) => (s.trackingCode ?? '').replace(/;/g, ',') },
+  { key: 'criadoEm', label: 'Criado em', getValue: (s) => s.criadoEm ? new Date(s.criadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' },
+  { key: 'escolaMatricula', label: 'Escola de matrícula', getValue: (s) => (s.escolaMatricula === 'SEIDMANN' ? 'Seidmann' : s.escolaMatricula === 'YOUBECOME' ? 'Youbecome' : s.escolaMatricula === 'HIGHWAY' ? 'Highway' : s.escolaMatricula === 'OUTRO' ? (s.escolaMatriculaOutro || 'Outro') : '—') },
+]
+
 const initialForm = {
   nome: '',
   email: '',
@@ -158,8 +209,11 @@ const initialForm = {
   melhoresDiasSemana: '',
   nomeVendedor: '',
   nomeEmpresaOuIndicador: '',
+  escolaMatricula: '',
+  escolaMatriculaOutro: '',
   observacoes: '',
-  status: 'LEAD',
+  status: 'ACTIVE',
+  activationDate: '',
 }
 
 export default function AdminAlunosPage() {
@@ -167,7 +221,7 @@ export default function AdminAlunosPage() {
   const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState({ status: '', search: '', tipo: '', professor: '' })
+  const [filters, setFilters] = useState({ status: '', search: '', tipo: '', professor: '', escola: '' })
   const [sortKey, setSortKey] = useState<string>('criadoEm')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -207,11 +261,106 @@ export default function AdminAlunosPage() {
   const [passwordModalStudent, setPasswordModalStudent] = useState<Student | null>(null)
   const [passwordForm, setPasswordForm] = useState({ novaSenha: '123456', obrigarAlteracao: true })
   const [passwordLoading, setPasswordLoading] = useState(false)
+  const [stats, setStats] = useState<{
+    porEscola: { seidmann: number; youbecome: number; highway: number; outros: number }
+    porStatus: { ativos: number; inativos: number; pausados: number }
+    semProfessor: number
+  } | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [listModal, setListModal] = useState<{ title: string; type: string } | null>(null)
+  const [listData, setListData] = useState<
+    | { id: string; nome: string; escola?: string }[]
+    | {
+        id: string
+        nome: string
+        suggestions: { lessonId: string; startAt: string; teachers: { id: string; nome: string }[] }[]
+        lessonTimes?: { startAt: string }[]
+      }[]
+  >([])
+  const [listLoading, setListLoading] = useState(false)
+  const [wrongFrequencyStats, setWrongFrequencyStats] = useState<{
+    count: number
+    list: { enrollmentId: string; studentName: string; expected: number; actual: number }[]
+  }>({ count: 0, list: [] })
+  const defaultVisibleColumnKeys = ['nome', 'idade', 'email', 'whatsapp', 'cpf', 'endereco', 'valorMensalidade', 'tipoAula', 'teacherNameForWeek', 'status', 'trackingCode', 'criadoEm', 'actions']
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
+  const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [reportColumnKeys, setReportColumnKeys] = useState<string[]>(() => REPORT_COLUMNS.map((c) => c.key))
+  const [reportFilters, setReportFilters] = useState({ escola: '', status: '', tipo: '', mes: '', ano: '' })
   const isMinor = isMenorDeIdade(formData.dataNascimento || null)
 
   useEffect(() => {
     fetchStudents()
+    fetchStats()
+    fetchWrongFrequencyStats()
   }, [filters])
+
+  const fetchStats = useCallback(async () => {
+    setStatsLoading(true)
+    try {
+      const monday = getMonday(new Date())
+      const res = await fetch(`/api/admin/enrollments/stats?weekStart=${monday.toISOString()}`, {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && json.data) setStats(json.data)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setStatsLoading(false)
+    }
+  }, [])
+
+  const fetchWrongFrequencyStats = useCallback(async () => {
+    try {
+      const monday = getMonday(new Date())
+      const res = await fetch(`/api/admin/lessons/stats?weekStart=${monday.toISOString()}`, {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && json.data?.wrongFrequencyList) {
+          setWrongFrequencyStats({
+            count: json.data.wrongFrequencyCount ?? 0,
+            list: json.data.wrongFrequencyList,
+          })
+        } else {
+          setWrongFrequencyStats({ count: 0, list: [] })
+        }
+      }
+    } catch (e) {
+      console.error(e)
+      setWrongFrequencyStats({ count: 0, list: [] })
+    }
+  }, [])
+
+  const openListModal = useCallback(
+    async (type: string, title: string) => {
+      setListModal({ title, type })
+      setListData([])
+      setListLoading(true)
+      try {
+        const monday = getMonday(new Date())
+        const url = type === 'studentsWithoutTeacherWeek'
+          ? `/api/admin/dashboard-lists?type=${type}&weekStart=${monday.toISOString()}`
+          : `/api/admin/dashboard-lists?type=${type}`
+        const res = await fetch(url, { credentials: 'include' })
+        const json = await res.json()
+        if (res.ok && json.ok && Array.isArray(json.data)) {
+          setListData(json.data)
+        } else {
+          setListData([])
+        }
+      } catch {
+        setListData([])
+      } finally {
+        setListLoading(false)
+      }
+    },
+    []
+  )
 
   const fetchStudents = async () => {
     setLoading(true)
@@ -283,8 +432,11 @@ export default function AdminAlunosPage() {
       melhoresDiasSemana: s.melhoresDiasSemana ?? '',
       nomeVendedor: s.nomeVendedor ?? '',
       nomeEmpresaOuIndicador: s.nomeEmpresaOuIndicador ?? '',
+      escolaMatricula: s.escolaMatricula ?? '',
+      escolaMatriculaOutro: s.escolaMatriculaOutro ?? '',
       observacoes: s.observacoes ?? '',
-      status: s.status || 'LEAD',
+      status: s.status || 'ACTIVE',
+      activationDate: s.activationDate ? new Date(s.activationDate).toISOString().slice(0, 10) : '',
     })
     setIsModalOpen(true)
   }, [])
@@ -565,11 +717,11 @@ export default function AdminAlunosPage() {
     })
   }
 
-  const handleDeleteLast30Min = () => {
+  const handleDeleteLast10Min = () => {
     setConfirmModal({
-      title: 'Excluir alunos dos últimos 30 minutos',
+      title: 'Excluir alunos dos últimos 10 minutos',
       message:
-        'Serão excluídos todos os alunos (matrículas) criados nos últimos 30 minutos. Esta ação não pode ser desfeita. Deseja continuar?',
+        'Serão excluídos todos os alunos (matrículas) criados nos últimos 10 minutos. Esta ação não pode ser desfeita. Deseja continuar?',
       variant: 'danger',
       confirmLabel: 'Excluir',
       onConfirm: async () => {
@@ -578,7 +730,7 @@ export default function AdminAlunosPage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ minutes: 30 }),
+            body: JSON.stringify({ minutes: 10 }),
           })
           const json = await res.json()
           if (res.ok && json.ok) {
@@ -588,7 +740,7 @@ export default function AdminAlunosPage() {
             } catch {}
             fetchStudents()
             setToast({
-              message: `${json.data?.deleted ?? 0} aluno(s) criado(s) nos últimos 30 min foram excluídos.`,
+              message: `${json.data?.deleted ?? 0} aluno(s) criado(s) nos últimos 10 min foram excluídos.`,
               type: 'success',
             })
           } else {
@@ -624,6 +776,24 @@ export default function AdminAlunosPage() {
     e.preventDefault()
     setSubmitLoading(true)
     try {
+      // Validar se status PAUSED tem activationDate
+      if (formData.status === 'PAUSED' && !formData.activationDate) {
+        setToast({
+          message: 'Data de ativação é obrigatória para alunos pausados',
+          type: 'error',
+        })
+        return
+      }
+
+      // Validar se escolaMatricula OUTRO tem escolaMatriculaOutro
+      if (formData.escolaMatricula === 'OUTRO' && !formData.escolaMatriculaOutro.trim()) {
+        setToast({
+          message: 'É necessário especificar o nome da escola quando selecionar "Outro"',
+          type: 'error',
+        })
+        return
+      }
+
       const payload = {
         nome: formData.nome.trim(),
         email: formData.email.trim(),
@@ -652,8 +822,11 @@ export default function AdminAlunosPage() {
         melhoresDiasSemana: formData.melhoresDiasSemana.trim() || null,
         nomeVendedor: formData.nomeVendedor.trim() || null,
         nomeEmpresaOuIndicador: formData.nomeEmpresaOuIndicador.trim() || null,
+        escolaMatricula: formData.escolaMatricula || null,
+        escolaMatriculaOutro: formData.escolaMatricula === 'OUTRO' ? (formData.escolaMatriculaOutro.trim() || null) : null,
         observacoes: formData.observacoes.trim() || null,
-        status: formData.status || 'LEAD',
+        status: formData.status || 'ACTIVE',
+        activationDate: formData.status === 'PAUSED' && formData.activationDate ? formData.activationDate : null,
       }
       if (editingStudent) {
         const res = await fetch(`/api/admin/enrollments/${editingStudent.id}`, {
@@ -725,6 +898,12 @@ export default function AdminAlunosPage() {
         return (s.email ?? '').toLowerCase()
       case 'whatsapp':
         return s.whatsapp ?? ''
+      case 'cpf':
+        return (s.cpf ?? '').toLowerCase()
+      case 'endereco':
+        return formatEndereco(s).toLowerCase()
+      case 'valorMensalidade':
+        return typeof s.valorMensalidade === 'number' ? s.valorMensalidade : parseFloat(String(s.valorMensalidade ?? '')) || -1
       case 'tipoAula':
         return ((s.tipoAula ?? '') + (s.nomeGrupo ?? '')).toLowerCase()
       case 'teacherNameForWeek':
@@ -742,6 +921,13 @@ export default function AdminAlunosPage() {
 
   const filteredAndSortedStudents = useMemo(() => {
     let list = [...students]
+    if (filters.escola) {
+      if (filters.escola === 'OUTROS') {
+        list = list.filter((s) => !s.escolaMatricula || s.escolaMatricula === 'OUTRO')
+      } else {
+        list = list.filter((s) => s.escolaMatricula === filters.escola)
+      }
+    }
     if (filters.tipo) {
       if (filters.tipo === 'GRUPO') {
         list = list.filter((s) => s.tipoAula === 'GRUPO')
@@ -761,7 +947,7 @@ export default function AdminAlunosPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [students, filters.tipo, filters.professor, sortKey, sortDir])
+  }, [students, filters.escola, filters.tipo, filters.professor, sortKey, sortDir])
 
   const handleSort = useCallback((key: string) => {
     setSortKey((prev) => {
@@ -778,6 +964,7 @@ export default function AdminAlunosPage() {
     {
       key: 'nome',
       label: 'Nome',
+      fixed: true,
       sortable: true,
       sortValue: (s: Student) => (s.nome ?? '').toLowerCase(),
       render: (s: Student) => (
@@ -808,6 +995,27 @@ export default function AdminAlunosPage() {
     },
     { key: 'email', label: 'Email', sortable: true, sortValue: (s: Student) => (s.email ?? '').toLowerCase() },
     { key: 'whatsapp', label: 'WhatsApp', sortable: true, sortValue: (s: Student) => s.whatsapp ?? '', render: (s: Student) => s.whatsapp || '—' },
+    { key: 'cpf', label: 'CPF', sortable: true, sortValue: (s: Student) => (s.cpf ?? '').toLowerCase(), render: (s: Student) => s.cpf || '—' },
+    {
+      key: 'endereco',
+      label: 'Endereço',
+      sortable: true,
+      sortValue: (s: Student) => formatEndereco(s).toLowerCase(),
+      render: (s: Student) => {
+        const end = formatEndereco(s)
+        return <span title={end} className="max-w-[180px] truncate block">{end}</span>
+      },
+    },
+    {
+      key: 'valorMensalidade',
+      label: 'Valor',
+      sortable: true,
+      sortValue: (s: Student) => (typeof s.valorMensalidade === 'number' ? s.valorMensalidade : parseFloat(String(s.valorMensalidade ?? '')) || -1),
+      render: (s: Student) =>
+        s.valorMensalidade != null
+          ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(s.valorMensalidade))
+          : '—',
+    },
     {
       key: 'tipoAula',
       label: 'Tipo',
@@ -839,18 +1047,41 @@ export default function AdminAlunosPage() {
       render: (s: Student) => (
         <select
           value={s.status}
-          onChange={(e) => handleStatusChange(s, e.target.value)}
+          onChange={(e) => {
+            const newStatus = e.target.value
+            if (newStatus === 'PAUSED') {
+              // PAUSED só pode ser definido pelo formulário de edição (onde tem campo de data de ativação)
+              setToast({
+                message: 'Para pausar um aluno, use o botão "Editar" e defina uma data de ativação.',
+                type: 'error',
+              })
+              // Reverter para o status anterior
+              e.target.value = s.status
+              return
+            }
+            if (newStatus === 'INACTIVE' && s.status !== 'INACTIVE') {
+              const hoje = new Date()
+              const dataFormatada = hoje.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+              setConfirmModal({
+                title: 'Confirmar status Inativo',
+                message: `Tem certeza que quer selecionar "Inativo" para ${s.nome}? Essa ação vai cancelar todas as aulas para frente do dia ${dataFormatada}.`,
+                onConfirm: () => {
+                  handleStatusChange(s, newStatus)
+                  setConfirmModal(null)
+                },
+                variant: 'danger',
+                confirmLabel: 'Sim, marcar como Inativo',
+              })
+            } else {
+              handleStatusChange(s, newStatus)
+            }
+          }}
           className={`text-xs font-semibold rounded-full px-2 py-1 border-0 cursor-pointer ${statusColors[s.status] ?? 'bg-gray-100 text-gray-800'}`}
           title="Alterar status"
         >
           <option value="ACTIVE">Ativo</option>
           <option value="INACTIVE">Inativo</option>
           <option value="PAUSED">Pausado</option>
-          <option value="LEAD">Lead</option>
-          <option value="REGISTERED">Matriculado</option>
-          <option value="PAYMENT_PENDING">Pagamento pendente</option>
-          <option value="BLOCKED">Bloqueado</option>
-          <option value="COMPLETED">Concluído</option>
         </select>
       ),
     },
@@ -880,6 +1111,7 @@ export default function AdminAlunosPage() {
     {
       key: 'actions',
       label: 'Ações',
+      fixed: true,
       render: (s: Student) => (
         <div className="flex gap-2">
           <button
@@ -935,29 +1167,14 @@ export default function AdminAlunosPage() {
           </div>
           <div className="flex gap-2">
             <Button
-              onClick={handleUndoLastImport}
-              variant="outline"
-              size="md"
-              disabled={lastImportedIds.length === 0}
-              className="flex items-center gap-2 border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              title={
-                lastImportedIds.length > 0
-                  ? `Excluir os ${lastImportedIds.length} aluno(s) da última importação (somente admin)`
-                  : 'Disponível após importar uma lista por CSV'
-              }
-            >
-              <Undo2 className="w-4 h-4" />
-              Excluir última lista adicionada
-            </Button>
-            <Button
-              onClick={handleDeleteLast30Min}
+              onClick={handleDeleteLast10Min}
               variant="outline"
               size="md"
               className="flex items-center gap-2 border-red-300 text-red-700 hover:bg-red-50"
-              title="Excluir todos os alunos criados nos últimos 30 minutos (somente admin)"
+              title="Excluir todos os alunos criados nos últimos 10 minutos (somente admin)"
             >
               <Trash2 className="w-4 h-4" />
-              Excluir alunos dos últimos 30 min
+              Excluir alunos dos últimos 10 min
             </Button>
             <Button
               onClick={() => setImportModalOpen(true)}
@@ -975,7 +1192,117 @@ export default function AdminAlunosPage() {
           </div>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Cubos de Estatísticas */}
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Por Status - Mais importantes */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('enrollmentsActive', 'Alunos Ativos')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsActive', 'Alunos Ativos')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Alunos Ativos"
+              value={statsLoading ? '...' : (stats?.porStatus.ativos ?? 0)}
+              icon={<UserCheck className="w-6 h-6" />}
+              color="green"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('enrollmentsInactive', 'Alunos Inativos')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsInactive', 'Alunos Inativos')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Alunos Inativos"
+              value={statsLoading ? '...' : (stats?.porStatus.inativos ?? 0)}
+              icon={<UserX className="w-6 h-6" />}
+              color="red"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('enrollmentsPaused', 'Alunos Pausados')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsPaused', 'Alunos Pausados')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Alunos Pausados"
+              value={statsLoading ? '...' : (stats?.porStatus.pausados ?? 0)}
+              icon={<Users className="w-6 h-6" />}
+              color="orange"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Sem Professor (semana)"
+              value={statsLoading ? '...' : (stats?.semProfessor ?? 0)}
+              icon={<AlertTriangle className="w-6 h-6" />}
+              color="orange"
+              subtitle="Ativos/Pausados sem aula esta semana"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListModal({ title: 'Frequência incorreta', type: 'wrongFrequency' })
+              setListData([])
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListModal({ title: 'Frequência incorreta', type: 'wrongFrequency' })
+                setListData([])
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Frequência incorreta"
+              value={wrongFrequencyStats.count}
+              icon={<AlertTriangle className="w-6 h-6" />}
+              color="orange"
+              subtitle="Ação necessária esta semana"
+            />
+          </div>
+          {/* Total por escola */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              // Criar modal customizado com todas as escolas
+              const totalEscolas = (stats?.porEscola.seidmann ?? 0) + (stats?.porEscola.youbecome ?? 0) + (stats?.porEscola.highway ?? 0) + (stats?.porEscola.outros ?? 0)
+              setListModal({ title: 'Alunos por Escola', type: 'studentsBySchool' })
+              setListData([
+                { id: 'seidmann', nome: 'Seidmann', count: stats?.porEscola.seidmann ?? 0 },
+                { id: 'youbecome', nome: 'Youbecome', count: stats?.porEscola.youbecome ?? 0 },
+                { id: 'highway', nome: 'Highway', count: stats?.porEscola.highway ?? 0 },
+                { id: 'outros', nome: 'Outros', count: stats?.porEscola.outros ?? 0 },
+              ] as any)
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && {}}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+          >
+            <StatCard
+              title="Total por Escola"
+              value={statsLoading ? '...' : ((stats?.porEscola.seidmann ?? 0) + (stats?.porEscola.youbecome ?? 0) + (stats?.porEscola.highway ?? 0) + (stats?.porEscola.outros ?? 0))}
+              icon={<GraduationCap className="w-6 h-6" />}
+              color="blue"
+            />
+          </div>
+        </div>
+
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
             <select
@@ -993,6 +1320,20 @@ export default function AdminAlunosPage() {
               <option value="PAYMENT_PENDING">Pagamento pendente</option>
               <option value="BLOCKED">Bloqueado</option>
               <option value="COMPLETED">Concluído</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Escola de matrícula</label>
+            <select
+              value={filters.escola}
+              onChange={(e) => setFilters({ ...filters, escola: e.target.value })}
+              className="input w-full"
+            >
+              <option value="">Todas</option>
+              <option value="SEIDMANN">Seidmann</option>
+              <option value="YOUBECOME">Youbecome</option>
+              <option value="HIGHWAY">Highway</option>
+              <option value="OUTROS">Outros</option>
             </select>
           </div>
           <div>
@@ -1029,6 +1370,18 @@ export default function AdminAlunosPage() {
               placeholder="Nome, email, WhatsApp..."
             />
           </div>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="md"
+              onClick={() => setReportModalOpen(true)}
+              className="flex items-center gap-2 w-full justify-center"
+            >
+              <FileDown className="w-4 h-4" />
+              Relatório personalizado
+            </Button>
+          </div>
         </div>
 
         {error && (
@@ -1045,6 +1398,8 @@ export default function AdminAlunosPage() {
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={handleSort}
+          visibleColumnKeys={visibleColumnKeys}
+          onVisibleColumnsChange={setVisibleColumnKeys}
         />
 
         {/* Modal Redefinir senha do aluno */}
@@ -1191,19 +1546,87 @@ export default function AdminAlunosPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Status do aluno</label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                    onChange={(e) => {
+                      const newStatus = e.target.value
+                      if ((newStatus === 'INACTIVE' || newStatus === 'PAUSED') && formData.status !== newStatus) {
+                        const hoje = new Date()
+                        const dataFormatada = hoje.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                        const statusLabel = newStatus === 'INACTIVE' ? 'Inativo' : 'Pausado'
+                        const mensagem = newStatus === 'INACTIVE'
+                          ? `Tem certeza que quer selecionar "Inativo"? Essa ação vai cancelar todas as aulas para frente do dia ${dataFormatada}.`
+                          : `Tem certeza que quer selecionar "Pausado"? As aulas permanecerão no calendário, mas não será possível selecionar professor ou fazer registro até a data de ativação. Aulas não contarão para pagamento a partir do dia ${dataFormatada}.`
+                        setConfirmModal({
+                          title: `Confirmar status ${statusLabel}`,
+                          message: mensagem,
+                          onConfirm: () => {
+                            setFormData({ ...formData, status: newStatus })
+                            setConfirmModal(null)
+                          },
+                          variant: 'danger',
+                          confirmLabel: `Sim, marcar como ${statusLabel}`,
+                        })
+                      } else {
+                        setFormData({ ...formData, status: newStatus })
+                      }
+                    }}
                     className="input w-full"
                   >
-                    <option value="LEAD">Lead</option>
                     <option value="ACTIVE">Ativo</option>
                     <option value="INACTIVE">Inativo</option>
                     <option value="PAUSED">Pausado</option>
-                    <option value="REGISTERED">Matriculado</option>
-                    <option value="PAYMENT_PENDING">Pagamento pendente</option>
-                    <option value="BLOCKED">Bloqueado</option>
-                    <option value="COMPLETED">Concluído</option>
                   </select>
                 </div>
+                {formData.status === 'PAUSED' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Data de ativação <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.activationDate}
+                      onChange={(e) => setFormData({ ...formData, activationDate: e.target.value })}
+                      className="input w-full"
+                      min={new Date().toISOString().slice(0, 10)}
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">A partir desta data, o aluno voltará automaticamente para "Ativo"</p>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Escola de matrícula</label>
+                  <select
+                    value={formData.escolaMatricula}
+                    onChange={(e) => {
+                      setFormData({
+                        ...formData,
+                        escolaMatricula: e.target.value,
+                        escolaMatriculaOutro: e.target.value !== 'OUTRO' ? '' : formData.escolaMatriculaOutro,
+                      })
+                    }}
+                    className="input w-full"
+                  >
+                    <option value="">Selecione</option>
+                    <option value="SEIDMANN">Seidmann</option>
+                    <option value="YOUBECOME">Youbecome</option>
+                    <option value="HIGHWAY">Highway</option>
+                    <option value="OUTRO">Outro</option>
+                  </select>
+                </div>
+                {formData.escolaMatricula === 'OUTRO' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Especifique a escola <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.escolaMatriculaOutro}
+                      onChange={(e) => setFormData({ ...formData, escolaMatriculaOutro: e.target.value })}
+                      className="input w-full"
+                      placeholder="Digite o nome da escola"
+                      required
+                    />
+                  </div>
+                )}
               </div>
               {isMinor && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
@@ -1784,6 +2207,357 @@ export default function AdminAlunosPage() {
             variant={confirmModal.variant ?? 'default'}
           />
         )}
+
+        {/* Modal de lista ao clicar no cubo */}
+        <Modal
+          isOpen={listModal !== null}
+          onClose={() => setListModal(null)}
+          title={listModal?.title || ''}
+          size="xl"
+        >
+          {listLoading ? (
+            <p className="text-gray-500">Carregando...</p>
+          ) : listModal?.type === 'wrongFrequency' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                    <th className="py-2 font-semibold text-gray-700">Ação Necessária</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wrongFrequencyStats.list.length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="py-4 text-center text-gray-500">Nenhum aluno com frequência incorreta esta semana.</td>
+                    </tr>
+                  ) : (
+                    wrongFrequencyStats.list.map((item) => {
+                      const diff = item.expected - item.actual
+                      const acaoNecessaria = diff > 0
+                        ? `Adicionar ${diff} aula${diff > 1 ? 's' : ''}`
+                        : diff < 0
+                          ? `Remover ${Math.abs(diff)} aula${Math.abs(diff) > 1 ? 's' : ''}`
+                          : '—'
+                      return (
+                        <tr key={item.enrollmentId} className="border-b border-gray-100">
+                          <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
+                          <td className="py-3">
+                            <span className="inline-flex items-center px-2 py-1 rounded-md bg-orange-100 text-orange-800 text-xs font-medium">
+                              {acaoNecessaria}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : listData.length === 0 ? (
+            <p className="text-gray-500">Nenhum registro.</p>
+          ) : listModal?.type === 'studentsOutros' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                    <th className="py-2 font-semibold text-gray-700">Escola</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listData.map((item) => (
+                    <tr key={item.id} className="border-b border-gray-100">
+                      <td className="py-2 pr-4">{item.nome}</td>
+                      <td className="py-2">{(item as { escola?: string }).escola || 'Não especificado'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : listModal?.type === 'studentsBySchool' ? (
+            <div className="space-y-3">
+              {(listData as { id: string; nome: string; count: number }[]).map((item) => (
+                <div
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    const typeMap: Record<string, string> = {
+                      seidmann: 'studentsSeidmann',
+                      youbecome: 'studentsYoubecome',
+                      highway: 'studentsHighway',
+                      outros: 'studentsOutros',
+                    }
+                    openListModal(typeMap[item.id] || 'studentsOutros', `Alunos ${item.nome}`)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const typeMap: Record<string, string> = {
+                        seidmann: 'studentsSeidmann',
+                        youbecome: 'studentsYoubecome',
+                        highway: 'studentsHighway',
+                        outros: 'studentsOutros',
+                      }
+                      openListModal(typeMap[item.id] || 'studentsOutros', `Alunos ${item.nome}`)
+                    }
+                  }}
+                  className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange"
+                >
+                  <span className="font-medium text-gray-900">{item.nome}</span>
+                  <span className="text-lg font-bold text-gray-700">{item.count}</span>
+                </div>
+              ))}
+            </div>
+          ) : listModal?.type === 'studentsWithoutTeacherWeek' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Sugestões de Professores</th>
+                    <th className="py-2 font-semibold text-gray-700">Dias e horários de aulas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listData.map((item) => {
+                    const student = item as {
+                      id: string
+                      nome: string
+                      suggestions: { lessonId: string; startAt: string; teachers: { id: string; nome: string }[] }[]
+                      lessonTimes?: { startAt: string }[]
+                    }
+                    const hasSuggestions = student.suggestions && student.suggestions.length > 0
+                    const allTeachers: { id: string; nome: string }[] = []
+                    if (hasSuggestions) {
+                      student.suggestions.forEach((s) => {
+                        s.teachers.forEach((t) => {
+                          if (!allTeachers.find((at) => at.id === t.id)) {
+                            allTeachers.push(t)
+                          }
+                        })
+                      })
+                    }
+                    const times = student.lessonTimes ?? []
+                    const diasHorarios = times.map((t) => {
+                      const d = new Date(t.startAt)
+                      return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) + ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    }).join(' · ')
+                    return (
+                      <tr key={student.id} className="border-b border-gray-100">
+                        <td className="py-3 pr-4 font-medium text-gray-900">{student.nome}</td>
+                        <td className="py-3 pr-4">
+                          {hasSuggestions && allTeachers.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {allTeachers.map((teacher) => (
+                                <span
+                                  key={teacher.id}
+                                  className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+                                >
+                                  {teacher.nome}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-500 italic">Sem professor disponível</span>
+                          )}
+                        </td>
+                        <td className="py-3 text-sm text-gray-700">
+                          {diasHorarios || '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <ul className="space-y-1 max-h-96 overflow-y-auto">
+              {listData.map((item) => (
+                <li key={item.id} className="py-1">
+                  {item.nome}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+
+        {/* Modal Relatório personalizado */}
+        <Modal
+          isOpen={reportModalOpen}
+          onClose={() => setReportModalOpen(false)}
+          title="Relatório personalizado"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setReportModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  let list = [...students]
+                  if (reportFilters.escola) {
+                    if (reportFilters.escola === 'OUTROS') {
+                      list = list.filter((s) => !s.escolaMatricula || s.escolaMatricula === 'OUTRO')
+                    } else {
+                      list = list.filter((s) => s.escolaMatricula === reportFilters.escola)
+                    }
+                  }
+                  if (reportFilters.status) {
+                    list = list.filter((s) => s.status === reportFilters.status)
+                  }
+                  if (reportFilters.tipo) {
+                    list = list.filter((s) => s.tipoAula === reportFilters.tipo)
+                  }
+                  if (reportFilters.mes) {
+                    const mes = parseInt(reportFilters.mes, 10)
+                    list = list.filter((s) => {
+                      if (!s.criadoEm) return false
+                      return new Date(s.criadoEm).getMonth() + 1 === mes
+                    })
+                  }
+                  if (reportFilters.ano) {
+                    const ano = parseInt(reportFilters.ano, 10)
+                    list = list.filter((s) => {
+                      if (!s.criadoEm) return false
+                      return new Date(s.criadoEm).getFullYear() === ano
+                    })
+                  }
+                  const cols = REPORT_COLUMNS.filter((c) => reportColumnKeys.includes(c.key))
+                  if (cols.length === 0) {
+                    setToast({ message: 'Selecione pelo menos uma coluna.', type: 'error' })
+                    return
+                  }
+                  const headers = cols.map((c) => c.label).join(';')
+                  const rows = list.map((s) =>
+                    cols
+                      .map((c) => {
+                        const v = c.getValue(s)
+                        return v.includes(';') ? `"${v.replace(/"/g, '""')}"` : v
+                      })
+                      .join(';')
+                  )
+                  const csv = '\uFEFF' + [headers, ...rows].join('\r\n')
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  const mesAno = reportFilters.mes && reportFilters.ano ? `-${reportFilters.ano}-${reportFilters.mes.padStart(2, '0')}` : reportFilters.mes ? `-mes-${reportFilters.mes}` : reportFilters.ano ? `-${reportFilters.ano}` : ''
+                  a.download = `alunos-relatorio${mesAno}.csv`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                  setReportModalOpen(false)
+                  setToast({ message: `Relatório exportado: ${list.length} aluno(s).`, type: 'success' })
+                }}
+              >
+                <FileDown className="w-4 h-4 mr-2" />
+                Baixar CSV
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-6">
+            <p className="text-sm text-gray-600">
+              Escolha as colunas e os filtros. Os dados respeitam também os filtros atuais da tabela (Status e Busca).
+            </p>
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Colunas do relatório</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {REPORT_COLUMNS.map((col) => (
+                  <label key={col.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reportColumnKeys.includes(col.key)}
+                      onChange={() => {
+                        setReportColumnKeys((prev) =>
+                          prev.includes(col.key) ? prev.filter((k) => k !== col.key) : [...prev, col.key]
+                        )
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm text-gray-800">{col.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Escola de matrícula</label>
+                <select
+                  value={reportFilters.escola}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, escola: e.target.value }))}
+                  className="input w-full"
+                >
+                  <option value="">Todas</option>
+                  <option value="SEIDMANN">Seidmann</option>
+                  <option value="YOUBECOME">Youbecome</option>
+                  <option value="HIGHWAY">Highway</option>
+                  <option value="OUTROS">Outros</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
+                <select
+                  value={reportFilters.status}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, status: e.target.value }))}
+                  className="input w-full"
+                >
+                  <option value="">Todos</option>
+                  <option value="ACTIVE">Ativo</option>
+                  <option value="INACTIVE">Inativo</option>
+                  <option value="PAUSED">Pausado</option>
+                  <option value="LEAD">Lead</option>
+                  <option value="REGISTERED">Matriculado</option>
+                  <option value="CONTRACT_ACCEPTED">Contrato aceito</option>
+                  <option value="PAYMENT_PENDING">Pagamento pendente</option>
+                  <option value="BLOCKED">Bloqueado</option>
+                  <option value="COMPLETED">Concluído</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Tipo</label>
+                <select
+                  value={reportFilters.tipo}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, tipo: e.target.value }))}
+                  className="input w-full"
+                >
+                  <option value="">Todos</option>
+                  <option value="PARTICULAR">Particular</option>
+                  <option value="GRUPO">Grupo</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Criado no mês</label>
+                <select
+                  value={reportFilters.mes}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, mes: e.target.value }))}
+                  className="input w-full"
+                >
+                  {MESES.map((m) => (
+                    <option key={m.value || 'all'} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Criado no ano</label>
+                <select
+                  value={reportFilters.ano}
+                  onChange={(e) => setReportFilters((f) => ({ ...f, ano: e.target.value }))}
+                  className="input w-full"
+                >
+                  <option value="">Todos</option>
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+                    <option key={y} value={String(y)}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        </Modal>
 
         {toast && (
           <Toast

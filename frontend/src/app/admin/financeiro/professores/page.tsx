@@ -12,7 +12,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -49,6 +49,26 @@ function formatDate(iso: string): string {
 
 function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
+}
+
+/** Vencimento (data término) está nos próximos 7 dias (hoje inclusive). */
+function isProximoPagamento(dataTerminoISO: string): boolean {
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const termino = new Date(dataTerminoISO + 'T12:00:00')
+  termino.setHours(0, 0, 0, 0)
+  const em7Dias = new Date(hoje)
+  em7Dias.setDate(em7Dias.getDate() + 7)
+  return termino.getTime() >= hoje.getTime() && termino.getTime() <= em7Dias.getTime()
+}
+
+/** Vencimento (data término) já passou. */
+function isAtrasado(dataTerminoISO: string): boolean {
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const termino = new Date(dataTerminoISO + 'T12:00:00')
+  termino.setHours(0, 0, 0, 0)
+  return termino.getTime() < hoje.getTime()
 }
 
 function CellWithCopy({
@@ -103,6 +123,13 @@ export default function FinanceiroProfessoresPage() {
   const [infosPagamento, setInfosPagamento] = useState('')
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [filterAlerta, setFilterAlerta] = useState<'todos' | 'proximo' | 'atrasados'>('todos')
+  const COLUMN_KEYS_FINANCEIRO_PROF = [
+    'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
+    'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
+    'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
+  ] as const
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => [...COLUMN_KEYS_FINANCEIRO_PROF])
 
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -122,6 +149,7 @@ export default function FinanceiroProfessoresPage() {
   }, [])
 
   useEffect(() => {
+    setFilterAlerta('todos')
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
 
@@ -137,6 +165,19 @@ export default function FinanceiroProfessoresPage() {
       totalProfessoresAtivos,
     }
   }, [professores])
+
+  const { proximoPagamento, atrasados } = useMemo(() => {
+    const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
+    const proximo = emAberto.filter((p) => isProximoPagamento(p.dataTermino))
+    const atrasadosList = emAberto.filter((p) => isAtrasado(p.dataTermino))
+    return { proximoPagamento: proximo, atrasados: atrasadosList }
+  }, [professores])
+
+  const tabelaData = useMemo(() => {
+    if (filterAlerta === 'proximo') return proximoPagamento
+    if (filterAlerta === 'atrasados') return atrasados
+    return professores
+  }, [professores, filterAlerta, proximoPagamento, atrasados])
 
   const openEditPeriodo = (row: ProfessorFinanceiro) => {
     setEditPeriodo(row)
@@ -225,6 +266,7 @@ export default function FinanceiroProfessoresPage() {
     {
       key: 'nome',
       label: 'Professor',
+      fixed: true,
       render: (row) => <CellWithCopy value={row.nome} onCopy={handleCopy} />,
     },
     {
@@ -293,13 +335,15 @@ export default function FinanceiroProfessoresPage() {
     {
       key: 'valorAPagar',
       label: 'Valor a pagar',
+      fixed: true,
       render: (row) => (
         <CellWithCopy value={formatMoney(row.valorAPagar)} onCopy={handleCopy} />
       ),
     },
     {
       key: 'pagamentoProntoParaFazer',
-      label: '',
+      label: 'Pronto p/ pagar',
+      fixed: true,
       render: (row) =>
         row.pagamentoProntoParaFazer ? (
           <span
@@ -360,9 +404,9 @@ export default function FinanceiroProfessoresPage() {
 
   return (
     <AdminLayout>
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Financeiro – Professores</h1>
-        <p className="text-gray-600 mt-1">
+      <div className="min-w-0 w-full">
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Financeiro – Professores</h1>
+        <p className="text-gray-600 mt-1 text-sm sm:text-base">
           Gestão financeira relacionada aos professores (pagamento de aulas, etc.). Selecione ano e mês; status e valores são independentes por mês (como no financeiro dos alunos).
         </p>
 
@@ -412,7 +456,7 @@ export default function FinanceiroProfessoresPage() {
           Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mt-6">
           <StatCard
             title="Total a pagar (estimado)"
             value={loading ? '—' : formatMoney(cubos.totalAPagar)}
@@ -431,9 +475,49 @@ export default function FinanceiroProfessoresPage() {
             icon={<Users className="w-6 h-6" />}
             color="blue"
           />
+          <button
+            type="button"
+            onClick={() => proximoPagamento.length > 0 && setFilterAlerta(filterAlerta === 'proximo' ? 'todos' : 'proximo')}
+            disabled={loading || proximoPagamento.length === 0}
+            className={`text-left rounded-xl border-2 transition-colors ${
+              filterAlerta === 'proximo'
+                ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-300'
+                : proximoPagamento.length > 0
+                  ? 'border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50/50'
+                  : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+            }`}
+          >
+            <StatCard
+              title="Próximo do pagamento"
+              value={loading ? '—' : proximoPagamento.length}
+              icon={<Clock className="w-6 h-6" />}
+              color="orange"
+              subtitle="Venc. próximos 7 dias • clique para filtrar"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={() => atrasados.length > 0 && setFilterAlerta(filterAlerta === 'atrasados' ? 'todos' : 'atrasados')}
+            disabled={loading || atrasados.length === 0}
+            className={`text-left rounded-xl border-2 transition-colors ${
+              filterAlerta === 'atrasados'
+                ? 'border-red-500 bg-red-50 ring-2 ring-red-300'
+                : atrasados.length > 0
+                  ? 'border-red-200 bg-white hover:border-red-400 hover:bg-red-50/50'
+                  : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+            }`}
+          >
+            <StatCard
+              title="Atrasados"
+              value={loading ? '—' : atrasados.length}
+              icon={<AlertTriangle className="w-6 h-6" />}
+              color="red"
+              subtitle="Venc. já passou • clique para filtrar"
+            />
+          </button>
         </div>
 
-        <div className="mt-6 flex items-center gap-2">
+        <div className="mt-6 flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => fetchData(selectedAno, selectedMes)}
@@ -441,14 +525,31 @@ export default function FinanceiroProfessoresPage() {
           >
             Atualizar lista
           </button>
+          {filterAlerta !== 'todos' && (
+            <button
+              type="button"
+              onClick={() => setFilterAlerta('todos')}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Limpar filtro • Ver todos
+            </button>
+          )}
         </div>
 
-        <div className="mt-6">
+        <div className="mt-6 w-full max-w-full overflow-hidden">
           <Table<ProfessorFinanceiro>
             columns={columns}
-            data={professores}
+            data={tabelaData}
             loading={loading}
-            emptyMessage="Nenhum professor ativo."
+            visibleColumnKeys={visibleColumnKeys}
+            onVisibleColumnsChange={setVisibleColumnKeys}
+            emptyMessage={
+              filterAlerta === 'proximo'
+                ? 'Nenhum professor com vencimento nos próximos 7 dias (não pagos).'
+                : filterAlerta === 'atrasados'
+                  ? 'Nenhum professor atrasado (não pago com vencimento já passado).'
+                  : 'Nenhum professor ativo.'
+            }
           />
         </div>
 

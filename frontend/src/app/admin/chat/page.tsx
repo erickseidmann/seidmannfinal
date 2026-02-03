@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
-import { MessageCircle, Plus, Send, Users } from 'lucide-react'
+import { MessageCircle, Plus, Send, Users, ArrowLeft } from 'lucide-react'
 
 interface ChatUser {
   id: string
@@ -221,21 +221,21 @@ export default function AdminChatPage() {
 
   return (
     <AdminLayout>
-      <div className="flex flex-col h-[calc(100vh-5rem)]">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
-          <Button variant="primary" onClick={openNewChatModal} className="inline-flex items-center gap-2">
+      <div className="flex flex-col min-h-0 h-[calc(100vh-5rem)]">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3 sm:mb-4 shrink-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Chat</h1>
+          <Button variant="primary" onClick={openNewChatModal} className="inline-flex items-center gap-2 w-fit">
             <Plus className="w-4 h-4" />
             Nova conversa
           </Button>
         </div>
-        <p className="text-sm text-gray-600 mb-4">
+        <p className="text-sm text-gray-600 mb-3 sm:mb-4 shrink-0">
           Conversas internas entre funcionários, professores e alunos. Inicie uma conversa direta ou crie um grupo.
         </p>
 
-        <div className="flex-1 flex min-h-0 rounded-xl border border-gray-200 bg-white overflow-hidden">
-          <div className="w-80 border-r border-gray-200 flex flex-col">
-            <label className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50">
+        <div className="flex-1 flex min-h-0 rounded-xl border border-gray-200 bg-white overflow-hidden flex-col md:flex-row">
+          <div className={`flex flex-col border-r border-gray-200 md:w-80 w-full min-h-0 ${selectedId ? 'hidden md:flex' : 'flex'}`}>
+            <label className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 shrink-0">
               <input
                 type="checkbox"
                 checked={viewAllConversations}
@@ -255,7 +255,7 @@ export default function AdminChatPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedId(conv.id)}
-                      className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5 relative ${
+                      className={`w-full text-left px-4 py-3 min-h-[56px] sm:min-h-0 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5 relative touch-manipulation ${
                         selectedId === conv.id ? 'bg-orange-50 border-l-4 border-l-orange-500' : ''
                       }`}
                     >
@@ -278,33 +278,41 @@ export default function AdminChatPage() {
             )}
           </div>
 
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className={`flex-1 flex flex-col min-w-0 min-h-0 ${selectedId ? 'flex' : 'hidden md:flex'}`}>
             {!selectedConv ? (
-              <div className="flex-1 flex items-center justify-center text-gray-500">
+              <div className="flex-1 flex items-center justify-center text-gray-500 p-4">
                 <div className="text-center">
                   <MessageCircle className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                  <p>Selecione uma conversa ou inicie uma nova.</p>
+                  <p className="text-sm">Selecione uma conversa ou inicie uma nova.</p>
                 </div>
               </div>
             ) : (
               <>
-                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-col gap-1">
+                <div className="px-3 sm:px-4 py-3 border-b border-gray-200 bg-gray-50 flex flex-col gap-1 shrink-0 min-h-[52px]">
                   <div className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-gray-500 shrink-0" />
-                    <span className="font-medium text-gray-900">{conversationTitle(selectedConv)}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(null)}
+                      className="md:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-200 touch-manipulation flex items-center justify-center"
+                      aria-label="Voltar às conversas"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+                    <Users className="w-5 h-5 text-gray-500 shrink-0 hidden md:block" />
+                    <span className="font-medium text-gray-900 truncate flex-1 min-w-0">{conversationTitle(selectedConv)}</span>
                   </div>
                   {!isParticipantInSelected && (
                     <p className="text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded">Visualização somente (você não participa desta conversa)</p>
                   )}
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3">
                   {messages.map((msg) => (
                     <div
                       key={msg.id}
                       className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-[75%] rounded-lg px-3 py-2 ${
+                        className={`max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 break-words ${
                           msg.isOwn
                             ? 'bg-orange-600 text-white'
                             : 'bg-gray-100 text-gray-900'
@@ -325,16 +333,16 @@ export default function AdminChatPage() {
                   <div ref={messagesEndRef} />
                 </div>
                 {isParticipantInSelected && (
-                  <div className="p-4 border-t border-gray-200 flex gap-2">
+                  <div className="p-3 sm:p-4 border-t border-gray-200 flex gap-2 shrink-0 min-h-[56px]">
                     <input
                       type="text"
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                       placeholder="Digite sua mensagem..."
-                      className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      className="flex-1 min-w-0 rounded-lg border border-gray-300 px-3 sm:px-4 py-2.5 sm:py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                     />
-                    <Button variant="primary" onClick={sendMessage} disabled={sending || !inputText.trim()}>
+                    <Button variant="primary" onClick={sendMessage} disabled={sending || !inputText.trim()} className="shrink-0 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center">
                       <Send className="w-4 h-4" />
                     </Button>
                   </div>

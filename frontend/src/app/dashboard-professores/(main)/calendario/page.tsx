@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, C
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { useLanguage } from '@/contexts/LanguageContext'
 
 type ViewType = 'month' | 'week' | 'day'
 type ModalStep = 'choose' | 'ver-ultima' | 'registrar'
@@ -60,16 +61,7 @@ interface GroupMember {
   nome: string
 }
 
-const STATUS_LABELS: Record<string, string> = { CONFIRMED: 'Confirmada', CANCELLED: 'Cancelada', REPOSICAO: 'Reposição' }
-const PRESENCE_LABELS: Record<string, string> = { PRESENTE: 'Presente', NAO_COMPARECEU: 'Não compareceu', ATRASADO: 'Atrasado' }
-const LESSON_TYPE_LABELS: Record<string, string> = { NORMAL: 'Normal', CONVERSAÇÃO: 'Só conversação', REVISAO: 'Revisão', AVALIACAO: 'Avaliação' }
-const CURSO_LABELS: Record<string, string> = { INGLES: 'Inglês', ESPANHOL: 'Espanhol', INGLES_E_ESPANHOL: 'Inglês e Espanhol' }
-
-const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
-const MESES = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
-]
+const DATE_LOCALE_MAP = { 'pt-BR': 'pt-BR', en: 'en-US', es: 'es' } as const
 
 function getStartOfWeek(d: Date): Date {
   const date = new Date(d)
@@ -114,9 +106,9 @@ function formatTime(iso: string): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
-function formatDateTime(iso: string): string {
+function formatDateTime(iso: string, dateLocale: string): string {
   const d = new Date(iso)
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 function getLessonStudentLabel(l: Lesson): string {
@@ -129,11 +121,28 @@ function getLessonStudentLabel(l: Lesson): string {
   return l.enrollment.nome
 }
 
-const statusLabel = (s: string) => (s === 'CONFIRMED' ? 'Confirmada' : s === 'CANCELLED' ? 'Cancelada' : 'Reposição')
 const statusColor = (s: string) =>
   s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : s === 'CANCELLED' ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'
 
 export default function CalendarioProfessorPage() {
+  const { locale, t } = useLanguage()
+  const dateLocale = DATE_LOCALE_MAP[locale] ?? 'pt-BR'
+  const DIAS_SEMANA = useMemo(
+    () => [0, 1, 2, 3, 4, 5, 6].map((d) => new Date(2024, 0, d).toLocaleDateString(dateLocale, { weekday: 'short' })),
+    [dateLocale]
+  )
+  const MESES = useMemo(
+    () => [...Array(12)].map((_, i) => new Date(2024, i, 1).toLocaleDateString(dateLocale, { month: 'long' })),
+    [dateLocale]
+  )
+  const statusLabel = (s: string) =>
+    s === 'CONFIRMED' ? t('professor.calendar.statusConfirmed') : s === 'CANCELLED' ? t('professor.calendar.statusCancelled') : t('professor.calendar.statusReposicao')
+  const getPresenceLabel = (p: string) =>
+    p === 'PRESENTE' ? t('professor.calendar.presencePresent') : p === 'NAO_COMPARECEU' ? t('professor.calendar.presenceAbsent') : t('professor.calendar.presenceLate')
+  const getLessonTypeLabel = (type: string) =>
+    type === 'NORMAL' ? t('professor.calendar.lessonTypeNormal') : type === 'CONVERSAÇÃO' ? t('professor.calendar.lessonTypeConversation') : type === 'REVISAO' ? t('professor.calendar.lessonTypeRevisao') : t('professor.calendar.lessonTypeAvaliacao')
+  const getCursoLabel = (c: string) =>
+    c === 'INGLES' ? t('professor.calendar.courseEnglish') : c === 'ESPANHOL' ? t('professor.calendar.courseSpanish') : t('professor.calendar.courseBoth')
   const [view, setView] = useState<ViewType>('month')
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [lessons, setLessons] = useState<Lesson[]>([])
@@ -184,7 +193,7 @@ export default function CalendarioProfessorPage() {
 
   const openLesson = useCallback((lesson: Lesson) => {
     setSelectedLesson(lesson)
-    setModalStep('choose')
+    setModalStep(lesson.status === 'CANCELLED' ? 'ver-ultima' : 'choose')
     setUltimaRecord(null)
   }, [])
 
@@ -213,13 +222,13 @@ export default function CalendarioProfessorPage() {
       const res = await fetch(`/api/professor/lessons?${params}`, { credentials: 'include' })
       const json = await res.json()
       if (res.ok && json.ok) setLessons(json.data.lessons || [])
-      else setError(json.message || 'Erro ao carregar aulas')
+      else setError(json.message || t('professor.calendar.errorLoad'))
     } catch (e) {
-      setError('Erro ao carregar aulas')
+      setError(t('professor.calendar.errorLoad'))
     } finally {
       setLoading(false)
     }
-  }, [view, currentDate])
+  }, [view, currentDate, t])
 
   useEffect(() => {
     fetchLessons()
@@ -421,77 +430,75 @@ export default function CalendarioProfessorPage() {
     `${slot.hour.toString().padStart(2, '0')}:${slot.minute.toString().padStart(2, '0')}`
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">Calendário</h1>
-      <p className="text-gray-600 mb-4">Suas aulas. Apenas visualização.</p>
+    <div className="min-w-0">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-2">{t('professor.calendar.title')}</h1>
+      <p className="text-sm sm:text-base text-gray-600 mb-3 sm:mb-4">{t('professor.calendar.subtitle')}</p>
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 mb-3 sm:mb-4">
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
           <button
             type="button"
             onClick={() => setView('month')}
-            className={`px-4 py-2 text-sm font-medium ${view === 'month' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`px-3 py-2 sm:px-4 text-xs sm:text-sm font-medium min-w-0 ${view === 'month' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
           >
-            Mês
+            {t('professor.calendar.viewMonth')}
           </button>
           <button
             type="button"
             onClick={() => setView('week')}
-            className={`px-4 py-2 text-sm font-medium ${view === 'week' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`px-3 py-2 sm:px-4 text-xs sm:text-sm font-medium min-w-0 ${view === 'week' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
           >
-            Semana
+            {t('professor.calendar.viewWeek')}
           </button>
           <button
             type="button"
             onClick={() => setView('day')}
-            className={`px-4 py-2 text-sm font-medium ${view === 'day' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`px-3 py-2 sm:px-4 text-xs sm:text-sm font-medium min-w-0 ${view === 'day' ? 'bg-brand-orange text-white' : 'text-gray-600 hover:bg-gray-100'}`}
           >
-            Dia
+            {t('professor.calendar.viewDay')}
           </button>
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={goPrev} className="p-2 rounded border border-gray-200 hover:bg-gray-50" title="Anterior">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button type="button" onClick={goPrev} className="p-2 rounded border border-gray-200 hover:bg-gray-50 touch-manipulation min-h-[44px] min-w-[44px]" title={t('professor.calendar.prev')} aria-label={t('professor.calendar.prev')}>
             <ChevronLeft className="w-5 h-5" />
           </button>
-          <button type="button" onClick={goToday} className="px-4 py-2 text-sm border border-gray-200 rounded hover:bg-gray-50">
-            Hoje
+          <button type="button" onClick={goToday} className="px-3 py-2 sm:px-4 text-sm border border-gray-200 rounded hover:bg-gray-50 touch-manipulation min-h-[44px]">
+            {t('professor.calendar.today')}
           </button>
-          <button type="button" onClick={goNext} className="p-2 rounded border border-gray-200 hover:bg-gray-50" title="Próximo">
+          <button type="button" onClick={goNext} className="p-2 rounded border border-gray-200 hover:bg-gray-50 touch-manipulation min-h-[44px] min-w-[44px]" title={t('professor.calendar.next')} aria-label={t('professor.calendar.next')}>
             <ChevronRight className="w-5 h-5" />
           </button>
+          <h2 className="text-base sm:text-lg font-semibold text-gray-800 w-full sm:w-auto order-first sm:order-none">{titleLabel}</h2>
         </div>
-        <h2 className="text-lg font-semibold text-gray-800">{titleLabel}</h2>
       </div>
 
       {/* Resumo do período */}
-      <div className="mb-4 grid grid-cols-3 gap-3 max-w-md">
-        <div className="flex items-center gap-2 p-3 bg-white rounded-lg border border-gray-200">
-          <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
-          <span className="text-sm font-medium text-gray-700">{stats.confirmed} confirmadas</span>
+      <div className="mb-3 sm:mb-4 grid grid-cols-3 gap-2 sm:gap-3 max-w-md">
+        <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 bg-white rounded-lg border border-gray-200 min-w-0">
+          <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 shrink-0" />
+          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate">{stats.confirmed} {t('professor.calendar.confirmed')}</span>
         </div>
-        <div className="flex items-center gap-2 p-3 bg-white rounded-lg border border-gray-200">
-          <XCircle className="w-5 h-5 text-red-600 shrink-0" />
-          <span className="text-sm font-medium text-gray-700">{stats.cancelled} canceladas</span>
+        <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 bg-white rounded-lg border border-gray-200 min-w-0">
+          <XCircle className="w-4 h-4 sm:w-5 sm:h-5 text-red-600 shrink-0" />
+          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate">{stats.cancelled} {t('professor.calendar.cancelled')}</span>
         </div>
-        <div className="flex items-center gap-2 p-3 bg-white rounded-lg border border-gray-200">
-          <RotateCcw className="w-5 h-5 text-amber-600 shrink-0" />
-          <span className="text-sm font-medium text-gray-700">{stats.reposicao} reposições</span>
+        <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 bg-white rounded-lg border border-gray-200 min-w-0">
+          <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 shrink-0" />
+          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate">{stats.reposicao} {t('professor.calendar.reposicoes')}</span>
         </div>
       </div>
 
       {error && <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg text-sm">{error}</div>}
-      {loading && <div className="mb-4 text-sm text-gray-500">Carregando...</div>}
+      {loading && <div className="mb-4 text-sm text-gray-500">{t('professor.calendar.loading')}</div>}
 
       {view === 'month' && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto min-w-0">
+          <div className="grid grid-cols-7 min-w-[280px]">
             {DIAS_SEMANA.map((dia, idx) => (
-              <div key={dia} className={`py-2 text-center text-xs font-semibold uppercase ${idx === 0 ? 'text-red-700 bg-red-50' : 'text-gray-600'}`}>
+              <div key={dia} className={`py-1.5 sm:py-2 text-center text-[10px] sm:text-xs font-semibold uppercase ${idx === 0 ? 'text-red-700 bg-red-50' : 'text-gray-600'}`}>
                 {dia}
               </div>
             ))}
-          </div>
-          <div className="grid grid-cols-7">
             {monthGrid.map((week, wi) =>
               week.map((day, di) => {
                 const otherMonth = !isSameMonth(day, currentDate)
@@ -499,30 +506,30 @@ export default function CalendarioProfessorPage() {
                 return (
                   <div
                     key={`${wi}-${di}`}
-                    className={`min-h-[100px] sm:min-h-[120px] border-b border-r border-gray-100 p-2 ${
+                    className={`min-h-[72px] sm:min-h-[100px] md:min-h-[120px] border-b border-r border-gray-100 p-1 sm:p-2 ${
                       otherMonth ? 'bg-gray-50/50' : di === 0 ? 'bg-red-50' : 'bg-white'
                     } ${di === 6 ? 'border-r-0' : ''}`}
                   >
                     <span
-                      className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-sm ${
+                      className={`inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm ${
                         isToday(day) ? 'bg-brand-orange text-white font-semibold' : otherMonth ? 'text-gray-400' : di === 0 ? 'text-red-700' : 'text-gray-800'
                       }`}
                     >
                       {day.getDate()}
                     </span>
-                    <div className="mt-1 space-y-0.5">
+                    <div className="mt-0.5 sm:mt-1 space-y-0.5">
                       {dayLessons.slice(0, 3).map((l) => (
                         <button
                           key={l.id}
                           type="button"
                           onClick={() => openLesson(l)}
-                          className={`w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status)}`}
-                          title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} (clique para ver opções)`}
+                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status)}`}
+                          title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${t('professor.calendar.clickToView')}`}
                         >
                           {getLessonStudentLabel(l)} {formatTime(l.startAt)}
                         </button>
                       ))}
-                      {dayLessons.length > 3 && <span className="text-xs text-gray-400">+{dayLessons.length - 3}</span>}
+                      {dayLessons.length > 3 && <span className="text-[10px] sm:text-xs text-gray-400">+{dayLessons.length - 3}</span>}
                     </div>
                   </div>
                 )
@@ -533,62 +540,64 @@ export default function CalendarioProfessorPage() {
       )}
 
       {view === 'week' && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="grid grid-cols-8 border-b border-gray-200 bg-gray-50">
-            <div className="py-2 text-xs font-semibold text-gray-500 border-r border-gray-200 pl-2">Horário</div>
-            {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => (
-              <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold ${d.getDay() === 0 ? 'text-red-700 bg-red-50' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
-                <div>{DIAS_SEMANA[d.getDay()]}</div>
-                <div className="font-normal">{d.getDate()}</div>
-              </div>
-            ))}
-          </div>
-          <div className="max-h-[70vh] overflow-y-auto">
-            {timeSlots.map((slot) => (
-              <div key={`${slot.hour}-${slot.minute}`} className="grid grid-cols-8 border-b border-gray-100 min-h-[40px]">
-                <div className="py-1 pl-2 text-xs text-gray-500 border-r border-gray-100">{formatSlotLabel(slot)}</div>
-                {Array.from({ length: 7 }, (_, i) => {
-                  const d = addDays(weekStart, i)
-                  const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
-                  return (
-                    <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 ${d.getDay() === 0 ? 'bg-red-50' : ''}`}>
-                      {slotLessons.map((l) => (
-                        <button
-                          key={l.id}
-                          type="button"
-                          onClick={() => openLesson(l)}
-                          className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status)}`}
-                        >
-                          {getLessonStudentLabel(l)}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto min-w-0">
+          <div className="min-w-[600px] sm:min-w-0">
+            <div className="grid grid-cols-8 border-b border-gray-200 bg-gray-50">
+              <div className="py-2 text-xs font-semibold text-gray-500 border-r border-gray-200 pl-2 w-12 sm:w-14 shrink-0">{t('professor.calendar.time')}</div>
+              {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => (
+                <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold min-w-0 ${d.getDay() === 0 ? 'text-red-700 bg-red-50' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
+                  <div className="truncate">{DIAS_SEMANA[d.getDay()]}</div>
+                  <div className="font-normal">{d.getDate()}</div>
+                </div>
+              ))}
+            </div>
+            <div className="max-h-[60vh] sm:max-h-[70vh] overflow-y-auto overflow-x-auto">
+              {timeSlots.map((slot) => (
+                <div key={`${slot.hour}-${slot.minute}`} className="grid grid-cols-8 border-b border-gray-100 min-h-[40px]">
+                  <div className="py-1 pl-2 text-xs text-gray-500 border-r border-gray-100 w-12 sm:w-14 shrink-0">{formatSlotLabel(slot)}</div>
+                  {Array.from({ length: 7 }, (_, i) => {
+                    const d = addDays(weekStart, i)
+                    const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
+                    return (
+                      <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${d.getDay() === 0 ? 'bg-red-50' : ''}`}>
+                        {slotLessons.map((l) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => openLesson(l)}
+                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status)}`}
+                          >
+                            {getLessonStudentLabel(l)}
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
       {view === 'day' && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className={`border-b border-gray-200 px-4 py-2 text-sm font-semibold ${currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'}`}>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-w-0">
+          <div className={`border-b border-gray-200 px-3 sm:px-4 py-2 text-sm font-semibold ${currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'}`}>
             {DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}
           </div>
-          <div className={`max-h-[70vh] overflow-y-auto ${currentDate.getDay() === 0 ? 'bg-red-50/30' : ''}`}>
+          <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${currentDate.getDay() === 0 ? 'bg-red-50/30' : ''}`}>
             {timeSlots.map((slot) => {
               const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
               return (
-                <div key={`${slot.hour}-${slot.minute}`} className="flex border-b border-gray-100 min-h-[48px]">
-                  <div className="w-16 shrink-0 py-1.5 pl-2 text-xs text-gray-500 border-r border-gray-100">{formatSlotLabel(slot)}</div>
-                  <div className="flex-1 p-2 flex flex-col gap-1">
+                <div key={`${slot.hour}-${slot.minute}`} className="flex border-b border-gray-100 min-h-[52px] sm:min-h-[48px]">
+                  <div className="w-14 sm:w-16 shrink-0 py-2 sm:py-1.5 pl-2 text-xs text-gray-500 border-r border-gray-100">{formatSlotLabel(slot)}</div>
+                  <div className="flex-1 min-w-0 p-2 flex flex-col gap-1">
                     {slotLessons.map((l) => (
                       <button
                         key={l.id}
                         type="button"
                         onClick={() => openLesson(l)}
-                        className={`text-sm text-left px-2 py-1 rounded border w-fit max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status)}`}
+                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status)}`}
                       >
                         {getLessonStudentLabel(l)} – {statusLabel(l.status)} ({formatTime(l.startAt)})
                       </button>
@@ -606,10 +615,10 @@ export default function CalendarioProfessorPage() {
         onClose={closeModal}
         title={
           modalStep === 'choose'
-            ? 'Aula'
+            ? t('professor.calendar.modalClass')
             : modalStep === 'ver-ultima'
-              ? 'Informações da última aula'
-              : 'Registrar aula'
+              ? t('professor.calendar.modalLastClass')
+              : t('professor.calendar.modalRegister')
         }
         size={modalStep === 'registrar' ? 'xl' : 'md'}
         footer={
@@ -617,33 +626,33 @@ export default function CalendarioProfessorPage() {
             <div className="flex flex-col sm:flex-row gap-2 w-full">
               <Button variant="outline" onClick={handleVerUltima} className="flex-1" disabled={ultimaLoading}>
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
-                Ver informações da última aula
+                {t('professor.calendar.viewLastClass')}
               </Button>
-              {!selectedLesson?.record && (
+              {!selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
                 <Button variant="primary" onClick={handleRegistrar} className="flex-1">
                   <ClipboardList className="w-4 h-4 mr-2" />
-                  Registrar aula
+                  {t('professor.calendar.registerClass')}
                 </Button>
               )}
             </div>
           ) : modalStep === 'ver-ultima' ? (
             <Button variant="outline" onClick={() => setModalStep('choose')}>
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Voltar
+              {t('professor.calendar.back')}
             </Button>
           ) : (
             <>
               <Button variant="outline" onClick={() => setModalStep('choose')} disabled={saving}>
-                Cancelar
+                {t('common.cancel')}
               </Button>
               {ultimaRecord && (
                 <Button variant="outline" onClick={handlePreencherUltima} disabled={saving}>
-                  Preencher com dados da última aula
+                  {t('professor.calendar.fillFromLast')}
                 </Button>
               )}
               <Button variant="primary" onClick={handleSubmit} disabled={saving}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                {saving ? 'Salvando...' : 'Criar registro'}
+                {saving ? t('professor.calendar.saving') : t('professor.calendar.createRecord')}
               </Button>
             </>
           )
@@ -655,14 +664,14 @@ export default function CalendarioProfessorPage() {
               <strong>{getLessonStudentLabel(selectedLesson)}</strong>
             </p>
             <p className="text-sm text-gray-600">
-              {formatDateTime(selectedLesson.startAt)} — {selectedLesson.durationMinutes} min
+              {formatDateTime(selectedLesson.startAt, dateLocale)} — {selectedLesson.durationMinutes} min
             </p>
             <p className="text-sm">
-              Status: <span className={statusColor(selectedLesson.status)}>{statusLabel(selectedLesson.status)}</span>
+              {t('professor.calendar.status')}: <span className={statusColor(selectedLesson.status)}>{statusLabel(selectedLesson.status)}</span>
             </p>
             {selectedLesson.record && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                Esta aula já possui registro. Para alterar, use o painel admin.
+                {t('professor.calendar.hasRecordNotice')}
               </div>
             )}
           </div>
@@ -673,28 +682,28 @@ export default function CalendarioProfessorPage() {
             {ultimaLoading ? (
               <div className="flex items-center gap-2 text-gray-500">
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Carregando última aula...
+                {t('professor.calendar.loadingLastClass')}
               </div>
             ) : ultimaRecord ? (
               <div className="space-y-3 text-sm">
                 <p className="text-gray-600">
-                  Aula de <strong>{formatDateTime(ultimaRecord.lesson.startAt)}</strong> — {ultimaRecord.lesson.enrollment?.nome ?? ultimaRecord.lesson.enrollment?.nomeGrupo ?? '—'}
+                  {t('professor.calendar.classOf')} <strong>{formatDateTime(ultimaRecord.lesson.startAt, dateLocale)}</strong> — {ultimaRecord.lesson.enrollment?.nome ?? ultimaRecord.lesson.enrollment?.nomeGrupo ?? '—'}
                 </p>
-                <p><strong>Status:</strong> {STATUS_LABELS[ultimaRecord.status] ?? ultimaRecord.status}</p>
-                <p><strong>Presença:</strong> {PRESENCE_LABELS[ultimaRecord.presence] ?? ultimaRecord.presence}</p>
-                <p><strong>Tipo:</strong> {LESSON_TYPE_LABELS[ultimaRecord.lessonType] ?? ultimaRecord.lessonType}</p>
-                {ultimaRecord.curso && <p><strong>Curso:</strong> {CURSO_LABELS[ultimaRecord.curso] ?? ultimaRecord.curso}</p>}
-                {ultimaRecord.tempoAulaMinutos != null && <p><strong>Tempo (min):</strong> {ultimaRecord.tempoAulaMinutos}</p>}
-                {ultimaRecord.book && <p><strong>Livro:</strong> {ultimaRecord.book}</p>}
-                {ultimaRecord.lastPage && <p><strong>Última página:</strong> {ultimaRecord.lastPage}</p>}
-                {ultimaRecord.assignedHomework && <p><strong>Tarefa:</strong> {ultimaRecord.assignedHomework}</p>}
-                {ultimaRecord.notes && <p><strong>Obs:</strong> {ultimaRecord.notes}</p>}
+                <p><strong>{t('professor.calendar.status')}:</strong> {statusLabel(ultimaRecord.status)}</p>
+                <p><strong>{t('professor.calendar.presence')}:</strong> {getPresenceLabel(ultimaRecord.presence)}</p>
+                <p><strong>{t('professor.calendar.type')}:</strong> {getLessonTypeLabel(ultimaRecord.lessonType)}</p>
+                {ultimaRecord.curso && <p><strong>{t('professor.calendar.course')}:</strong> {getCursoLabel(ultimaRecord.curso)}</p>}
+                {ultimaRecord.tempoAulaMinutos != null && <p><strong>{t('professor.calendar.timeMin')}:</strong> {ultimaRecord.tempoAulaMinutos}</p>}
+                {ultimaRecord.book && <p><strong>{t('professor.calendar.book')}:</strong> {ultimaRecord.book}</p>}
+                {ultimaRecord.lastPage && <p><strong>{t('professor.calendar.lastPage')}:</strong> {ultimaRecord.lastPage}</p>}
+                {ultimaRecord.assignedHomework && <p><strong>{t('professor.calendar.task')}:</strong> {ultimaRecord.assignedHomework}</p>}
+                {ultimaRecord.notes && <p><strong>{t('professor.calendar.obs')}:</strong> {ultimaRecord.notes}</p>}
                 {ultimaRecord.studentPresences?.length ? (
-                  <p><strong>Presença por aluno:</strong> {ultimaRecord.studentPresences.map((s) => `${s.enrollment?.nome ?? s.enrollmentId}: ${PRESENCE_LABELS[s.presence] ?? s.presence}`).join('; ')}</p>
+                  <p><strong>{t('professor.calendar.presenceByStudent')}:</strong> {ultimaRecord.studentPresences.map((s) => `${s.enrollment?.nome ?? s.enrollmentId}: ${getPresenceLabel(s.presence)}`).join('; ')}</p>
                 ) : null}
               </div>
             ) : (
-              <p className="text-gray-500">Nenhum registro de aula anterior para este aluno/grupo.</p>
+              <p className="text-gray-500">{t('professor.calendar.noPreviousRecord')}</p>
             )}
           </div>
         )}
@@ -702,37 +711,37 @@ export default function CalendarioProfessorPage() {
         {modalStep === 'registrar' && selectedLesson && (
           <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
             <p className="text-sm text-gray-600">
-              Aula: <strong>{formatDateTime(selectedLesson.startAt)}</strong> — {getLessonStudentLabel(selectedLesson)}
+              {t('professor.calendar.modalClass')}: <strong>{formatDateTime(selectedLesson.startAt, dateLocale)}</strong> — {getLessonStudentLabel(selectedLesson)}
             </p>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Status da aula</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.classStatus')}</label>
               <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as typeof form.status })} className="input w-full">
-                <option value="CONFIRMED">Confirmada</option>
-                <option value="CANCELLED">Cancelada</option>
-                <option value="REPOSICAO">Reposição</option>
+                <option value="CONFIRMED">{t('professor.calendar.statusConfirmed')}</option>
+                <option value="CANCELLED">{t('professor.calendar.statusCancelled')}</option>
+                <option value="REPOSICAO">{t('professor.calendar.statusReposicao')}</option>
               </select>
             </div>
 
             {!isGroupLesson && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Presença do aluno</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')}</label>
                 <select value={form.presence} onChange={(e) => setForm({ ...form, presence: e.target.value as typeof form.presence })} className="input w-full">
-                  <option value="PRESENTE">Presente</option>
-                  <option value="NAO_COMPARECEU">Não compareceu</option>
-                  <option value="ATRASADO">Atrasado</option>
+                  <option value="PRESENTE">{t('professor.calendar.presencePresent')}</option>
+                  <option value="NAO_COMPARECEU">{t('professor.calendar.presenceAbsent')}</option>
+                  <option value="ATRASADO">{t('professor.calendar.presenceLate')}</option>
                 </select>
               </div>
             )}
 
             {isGroupLesson && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
-                <p className="text-sm font-semibold text-amber-800">Aula em grupo: {selectedLesson.enrollment?.nomeGrupo?.trim()}</p>
+                <p className="text-sm font-semibold text-amber-800">{t('professor.calendar.groupClass')}: {selectedLesson.enrollment?.nomeGrupo?.trim()}</p>
                 {loadingGroup && groupMembers.length === 0 ? (
-                  <p className="text-sm text-amber-700">Carregando alunos do grupo...</p>
+                  <p className="text-sm text-amber-700">{t('professor.calendar.loadingGroup')}</p>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-xs text-amber-700 mb-2">Presença de cada aluno:</p>
+                    <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')}:</p>
                     {(groupMembers.length > 0 ? groupMembers : studentsPresence.map((s) => ({ id: s.enrollmentId, nome: s.enrollmentId }))).map((member) => {
                       const current = studentsPresence.find((s) => s.enrollmentId === member.id)
                       const value = current?.presence ?? 'PRESENTE'
@@ -751,9 +760,9 @@ export default function CalendarioProfessorPage() {
                             }}
                             className="input flex-1 max-w-[180px]"
                           >
-                            <option value="PRESENTE">Presente</option>
-                            <option value="NAO_COMPARECEU">Não compareceu</option>
-                            <option value="ATRASADO">Atrasado</option>
+                            <option value="PRESENTE">{t('professor.calendar.presencePresent')}</option>
+                            <option value="NAO_COMPARECEU">{t('professor.calendar.presenceAbsent')}</option>
+                            <option value="ATRASADO">{t('professor.calendar.presenceLate')}</option>
                           </select>
                         </div>
                       )
@@ -764,12 +773,12 @@ export default function CalendarioProfessorPage() {
             )}
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Tipo de aula</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.lessonType')}</label>
               <select value={form.lessonType} onChange={(e) => setForm({ ...form, lessonType: e.target.value as typeof form.lessonType })} className="input w-full">
-                <option value="NORMAL">Normal</option>
-                <option value="CONVERSAÇÃO">Só conversação</option>
-                <option value="REVISAO">Revisão</option>
-                <option value="AVALIACAO">Avaliação</option>
+                <option value="NORMAL">{t('professor.calendar.lessonTypeNormal')}</option>
+                <option value="CONVERSAÇÃO">{t('professor.calendar.lessonTypeConversation')}</option>
+                <option value="REVISAO">{t('professor.calendar.lessonTypeRevisao')}</option>
+                <option value="AVALIACAO">{t('professor.calendar.lessonTypeAvaliacao')}</option>
               </select>
             </div>
 

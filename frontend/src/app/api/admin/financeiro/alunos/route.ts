@@ -74,9 +74,16 @@ export async function GET(request: NextRequest) {
         const ref = pi?.paidAt ?? today
         dataProximoPagamento = nextDueDateFromDay(diaPagamento, ref).toISOString()
       }
+      const enr = e as { moraNoExterior?: boolean; enderecoExterior?: string | null; rua?: string | null; numero?: string | null; complemento?: string | null; cidade?: string | null; estado?: string | null; cep?: string | null }
+      const enderecoCompleto =
+        enr.moraNoExterior && enr.enderecoExterior
+          ? enr.enderecoExterior.trim()
+          : [enr.rua, enr.numero, enr.complemento, enr.cidade, enr.estado, enr.cep].filter(Boolean).join(', ') || null
       return {
         id: e.id,
         nome: e.nome,
+        cpf: (e as { cpf?: string | null }).cpf ?? null,
+        endereco: enderecoCompleto,
         tipoAula: e.tipoAula ?? null,
         nomeGrupo: e.nomeGrupo ?? null,
         nomeResponsavel: e.nomeResponsavel ?? null,

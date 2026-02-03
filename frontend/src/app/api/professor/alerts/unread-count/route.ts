@@ -32,13 +32,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: { unreadCount: 0 } })
     }
 
-    // Só contar notificações exibidas no Início: pagamento enviado, novo anúncio, novo aluno
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
+    // Só contar notificações exibidas no Início (apenas últimos 15 dias)
     const unreadCount = await prisma.teacherAlert.count({
       where: {
         teacherId: teacher.id,
         isActive: true,
         readAt: null,
         type: { in: ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT'] },
+        criadoEm: { gte: cutoff },
       },
     })
 

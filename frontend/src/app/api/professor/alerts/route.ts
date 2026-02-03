@@ -35,13 +35,17 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Só exibir no Início: pagamento enviado, novo anúncio, novo aluno
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
+    // Só exibir no Início: pagamento enviado, novo anúncio, novo aluno (apenas últimos 15 dias)
     const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT'] as const
     const alerts = await prisma.teacherAlert.findMany({
       where: {
         teacherId: teacher.id,
         isActive: true,
         type: { in: [...TIPOS_NOTIFICACAO] },
+        criadoEm: { gte: cutoff },
       },
       orderBy: { criadoEm: 'desc' },
       take: 50,

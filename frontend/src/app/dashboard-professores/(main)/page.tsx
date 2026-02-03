@@ -7,8 +7,35 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Megaphone, Bell, Loader2, DollarSign, UserPlus } from 'lucide-react'
+import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays } from 'lucide-react'
 import Button from '@/components/ui/Button'
+import { useTranslation } from '@/contexts/LanguageContext'
+
+function getStartOfDay(d: Date): Date {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
+function getEndOfDay(d: Date): Date {
+  const x = new Date(d)
+  x.setHours(23, 59, 59, 999)
+  return x
+}
+
+function getStartOfWeek(d: Date): Date {
+  const date = new Date(d)
+  const day = date.getDay()
+  date.setDate(date.getDate() - day)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function addDays(d: Date, n: number): Date {
+  const r = new Date(d)
+  r.setDate(r.getDate() + n)
+  return r
+}
 
 interface Professor {
   nome: string
@@ -32,13 +59,30 @@ interface Notificacao {
   criadoEm: string
 }
 
+interface LessonItem {
+  id: string
+  startAt: string
+  durationMinutes?: number | null
+  enrollment: {
+    nome: string
+    tipoAula: string | null
+    nomeGrupo: string | null
+    groupMemberNames?: string[]
+  }
+}
+
 export default function DashboardProfessoresInicioPage() {
+  const { t } = useTranslation()
   const [professor, setProfessor] = useState<Professor | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(true)
   const [notificacoes, setNotificacoes] = useState<Notificacao[]>([])
   const [loadingNotif, setLoadingNotif] = useState(true)
   const [markingId, setMarkingId] = useState<string | null>(null)
+  const [aulasHoje, setAulasHoje] = useState<LessonItem[]>([])
+  const [aulasSemana, setAulasSemana] = useState<LessonItem[]>([])
+  const [loadingAulasHoje, setLoadingAulasHoje] = useState(true)
+  const [loadingAulasSemana, setLoadingAulasSemana] = useState(true)
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -73,6 +117,44 @@ export default function DashboardProfessoresInicioPage() {
     fetchNotificacoes()
   }, [fetchNotificacoes])
 
+  const fetchAulasHoje = useCallback(() => {
+    setLoadingAulasHoje(true)
+    const hoje = new Date()
+    const start = getStartOfDay(hoje)
+    const end = getEndOfDay(hoje)
+    const params = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })
+    fetch(`/api/professor/lessons?${params}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.lessons) setAulasHoje(json.data.lessons as LessonItem[])
+        else setAulasHoje([])
+      })
+      .catch(() => setAulasHoje([]))
+      .finally(() => setLoadingAulasHoje(false))
+  }, [])
+
+  const fetchAulasSemana = useCallback(() => {
+    setLoadingAulasSemana(true)
+    const hoje = new Date()
+    const start = getStartOfWeek(hoje)
+    const end = addDays(start, 6)
+    end.setHours(23, 59, 59, 999)
+    const params = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })
+    fetch(`/api/professor/lessons?${params}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.lessons) setAulasSemana(json.data.lessons as LessonItem[])
+        else setAulasSemana([])
+      })
+      .catch(() => setAulasSemana([]))
+      .finally(() => setLoadingAulasSemana(false))
+  }, [])
+
+  useEffect(() => {
+    fetchAulasHoje()
+    fetchAulasSemana()
+  }, [fetchAulasHoje, fetchAulasSemana])
+
   const handleMarcarLido = (id: string) => {
     setMarkingId(id)
     fetch(`/api/professor/alerts/${id}/read`, { method: 'PATCH', credentials: 'include' })
@@ -90,50 +172,68 @@ export default function DashboardProfessoresInicioPage() {
 
   const displayName = professor?.nomePreferido || professor?.nome || 'Professor'
 
+  const formatLessonTime = (startAt: string, durationMinutes?: number | null) => {
+    const d = new Date(startAt)
+    const h = d.getHours()
+    const m = d.getMinutes()
+    const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+    const dur = durationMinutes ?? 60
+    return `${time} (${dur} min)`
+  }
+
+  const lessonDisplayName = (l: LessonItem) => {
+    const enr = l.enrollment
+    if (enr?.tipoAula === 'GRUPO' && enr?.groupMemberNames?.length) {
+      return enr.groupMemberNames.slice(0, 3).join(', ') + (enr.groupMemberNames.length > 3 ? '…' : '')
+    }
+    return enr?.nome ?? '—'
+  }
+
   const tipoLabel = (type: string | null) => {
-    if (type === 'PAYMENT_DONE') return { label: 'Pagamento enviado', icon: DollarSign }
-    if (type === 'NEW_ANNOUNCEMENT') return { label: 'Novo anúncio', icon: Megaphone }
-    if (type === 'NEW_STUDENT') return { label: 'Novo aluno', icon: UserPlus }
-    return { label: 'Notificação', icon: Bell }
+    if (type === 'PAYMENT_DONE') return { label: t('professor.home.notifPayment'), icon: DollarSign }
+    if (type === 'NEW_ANNOUNCEMENT') return { label: t('professor.home.notifAnnouncement'), icon: Megaphone }
+    if (type === 'NEW_STUDENT') return { label: t('professor.home.notifNewStudent'), icon: UserPlus }
+    return { label: t('professor.home.notifGeneric'), icon: Bell }
   }
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">Olá, {displayName}!</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">{t('professor.home.welcome').replace('{name}', displayName)}</h1>
       <p className="text-gray-600 mb-6">
-        Bem-vindo ao seu painel. Use o menu ao lado para acessar seus dados pessoais, calendário de aulas e outras seções.
+        {t('professor.home.subtitle')}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mb-8">
         <Link
           href="/dashboard-professores/dados-pessoais"
           className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow text-left"
         >
-          <p className="font-semibold text-gray-900">Dados pessoais</p>
-          <p className="text-sm text-gray-500 mt-1">Editar nome, nome preferido e WhatsApp</p>
+          <p className="font-semibold text-gray-900">{t('professor.home.personalData')}</p>
+          <p className="text-sm text-gray-500 mt-1">{t('professor.home.personalDataDesc')}</p>
         </Link>
         <Link
           href="/dashboard-professores/calendario"
           className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow text-left"
         >
-          <p className="font-semibold text-gray-900">Calendário</p>
-          <p className="text-sm text-gray-500 mt-1">Ver suas aulas por mês, semana ou dia</p>
+          <p className="font-semibold text-gray-900">{t('professor.home.calendar')}</p>
+          <p className="text-sm text-gray-500 mt-1">{t('professor.home.calendarDesc')}</p>
         </Link>
       </div>
 
-      {/* Notificações: pagamento enviado, novo anúncio, novo aluno (somente no Início) */}
-      <div className="max-w-2xl mb-8">
-        <h2 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
-          <Bell className="w-5 h-5 text-brand-orange" />
-          Notificações
-        </h2>
-        <p className="text-sm text-gray-600 mb-4">
-          Pagamento enviado, novo anúncio e novo aluno. Marque como lido quando visualizar.
-        </p>
+      {/* Notificações e Anúncios – lado a lado, acima das aulas */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+            <Bell className="w-5 h-5 text-brand-orange" />
+            {t('professor.home.notifications')}
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            {t('professor.home.notificationsDesc')}
+          </p>
         {loadingNotif ? (
-          <p className="text-sm text-gray-500">Carregando notificações...</p>
+          <p className="text-sm text-gray-500">{t('professor.home.loadingNotifications')}</p>
         ) : notificacoes.length === 0 ? (
           <div className="p-4 bg-white rounded-xl border border-gray-200 text-sm text-gray-500">
-            Nenhuma notificação no momento.
+            {t('professor.home.noNotifications')}
           </div>
         ) : (
           <ul className="space-y-3">
@@ -168,7 +268,7 @@ export default function DashboardProfessoresInicioPage() {
                       {markingId === n.id ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
-                        'Marcar como lido'
+                        t('professor.home.markRead')
                       )}
                     </Button>
                   )}
@@ -177,22 +277,20 @@ export default function DashboardProfessoresInicioPage() {
             })}
           </ul>
         )}
-      </div>
-
-      {/* Anúncios (criados no admin – Alertas) */}
-      <div className="max-w-2xl">
-        <h2 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
-          <Megaphone className="w-5 h-5 text-brand-orange" />
-          Anúncios
-        </h2>
-        <p className="text-sm text-gray-600 mb-4">
-          Comunicados enviados pela administração. Novos anúncios criados no painel admin também são enviados por e-mail aos professores.
-        </p>
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+            <Megaphone className="w-5 h-5 text-brand-orange" />
+            {t('professor.home.announcements')}
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            {t('professor.home.announcementsDesc')}
+          </p>
         {loadingAnnouncements ? (
-          <p className="text-sm text-gray-500">Carregando anúncios...</p>
+          <p className="text-sm text-gray-500">{t('professor.home.loadingAnnouncements')}</p>
         ) : announcements.length === 0 ? (
           <div className="p-4 bg-white rounded-xl border border-gray-200 text-sm text-gray-500">
-            Nenhum anúncio no momento.
+            {t('professor.home.noAnnouncements')}
           </div>
         ) : (
           <ul className="space-y-3">
@@ -204,8 +302,8 @@ export default function DashboardProfessoresInicioPage() {
                     <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{a.message}</p>
                     <p className="text-xs text-gray-400 mt-2">
                       {a.sentAt
-                        ? `Enviado em ${new Date(a.sentAt).toLocaleString('pt-BR')}`
-                        : `Criado em ${new Date(a.criadoEm).toLocaleString('pt-BR')}`}
+                        ? `${t('professor.home.sentAt')} ${new Date(a.sentAt).toLocaleString()}` 
+                        : `${t('professor.home.createdAt')} ${new Date(a.criadoEm).toLocaleString()}`}
                       {a.status === 'PENDING' && (
                         <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-xs">Pendente de envio</span>
                       )}
@@ -216,6 +314,87 @@ export default function DashboardProfessoresInicioPage() {
             ))}
           </ul>
         )}
+        </div>
+      </div>
+
+      {/* Aulas do dia e Aulas da semana */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-brand-orange" />
+              {t('professor.home.lessonsToday')}
+            </h2>
+            <Link
+              href="/dashboard-professores/calendario"
+              className="text-sm font-medium text-brand-orange hover:underline"
+            >
+              {t('professor.home.viewCalendar')}
+            </Link>
+          </div>
+          <div className="p-4 min-h-[120px]">
+            {loadingAulasHoje ? (
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('professor.home.loading')}
+              </p>
+            ) : aulasHoje.length === 0 ? (
+              <p className="text-sm text-gray-500">{t('professor.home.noLessonToday')}</p>
+            ) : (
+              <ul className="space-y-2">
+                {aulasHoje.map((l) => (
+                  <li key={l.id} className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                    <span className="text-sm font-medium text-gray-900 truncate" title={lessonDisplayName(l)}>
+                      {lessonDisplayName(l)}
+                    </span>
+                    <span className="text-xs text-gray-500 shrink-0">{formatLessonTime(l.startAt, l.durationMinutes)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-brand-orange" />
+              {t('professor.home.lessonsWeek')}
+            </h2>
+            <Link
+              href="/dashboard-professores/calendario"
+              className="text-sm font-medium text-brand-orange hover:underline"
+            >
+              {t('professor.home.viewCalendar')}
+            </Link>
+          </div>
+          <div className="p-4 min-h-[120px]">
+            {loadingAulasSemana ? (
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('professor.home.loading')}
+              </p>
+            ) : aulasSemana.length === 0 ? (
+              <p className="text-sm text-gray-500">{t('professor.home.noLessonWeek')}</p>
+            ) : (
+              <ul className="space-y-2">
+                {aulasSemana.slice(0, 10).map((l) => (
+                  <li key={l.id} className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                    <span className="text-sm font-medium text-gray-900 truncate" title={lessonDisplayName(l)}>
+                      {lessonDisplayName(l)}
+                    </span>
+                    <span className="text-xs text-gray-500 shrink-0">
+                      {new Date(l.startAt).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })} {new Date(l.startAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </li>
+                ))}
+                {aulasSemana.length > 10 && (
+                  <p className="text-xs text-gray-500 pt-1">{t('professor.home.moreLessons').replace('{n}', String(aulasSemana.length - 10))}</p>
+                )}
+              </ul>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -31,7 +31,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const where: any = {}
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
+    const where: any = { criadoEm: { gte: cutoff } }
     if (teacherId) {
       where.teacherId = teacherId
     }

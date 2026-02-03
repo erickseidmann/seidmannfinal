@@ -56,7 +56,19 @@ export async function GET(request: NextRequest) {
     const lessons = await prisma.lesson.findMany({
       where,
       include: {
-        enrollment: { select: { id: true, nome: true, frequenciaSemanal: true, tipoAula: true, nomeGrupo: true, curso: true } },
+        enrollment: {
+          select: {
+            id: true,
+            nome: true,
+            frequenciaSemanal: true,
+            tipoAula: true,
+            nomeGrupo: true,
+            curso: true,
+            status: true,
+            pausedAt: true,
+            activationDate: true,
+          },
+        },
         teacher: { select: { id: true, nome: true } },
       },
       orderBy: { startAt: 'asc' },
@@ -111,16 +123,58 @@ export async function POST(request: NextRequest) {
     }
 
     // Validar idioma: professor deve ensinar o(s) idioma(s) do curso do aluno
+    // Verificar se o aluno está inativo (não pode criar aulas futuras)
+    // Para alunos pausados: pode criar aulas, mas não pode atribuir professor durante o período pausado
     const [enrollment, teacher] = await Promise.all([
       prisma.enrollment.findUnique({
         where: { id: enrollmentId },
-        select: { curso: true },
+        select: { curso: true, status: true, pausedAt: true, activationDate: true },
       }),
       prisma.teacher.findUnique({
         where: { id: teacherId },
         select: { idiomasEnsina: true },
       }),
     ])
+
+    const startAt = new Date(startAtStr)
+    if (Number.isNaN(startAt.getTime())) {
+      return NextResponse.json(
+        { ok: false, message: 'Data/hora inválida' },
+        { status: 400 }
+      )
+    }
+
+    // Verificar se aluno está inativo - não pode criar aulas futuras
+    if (enrollment && enrollment.status === 'INACTIVE') {
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      if (startAt >= hoje) {
+        return NextResponse.json(
+          { ok: false, message: 'Não é possível adicionar aulas futuras para alunos inativos. Ative o aluno primeiro.' },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Verificar se aluno está pausado e a aula está no período pausado - não pode atribuir professor
+    if (enrollment && enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+      const pausedAt = new Date(enrollment.pausedAt)
+      pausedAt.setHours(0, 0, 0, 0)
+      const lessonDate = new Date(startAt)
+      lessonDate.setHours(0, 0, 0, 0)
+      const activationDate = enrollment.activationDate ? new Date(enrollment.activationDate) : null
+      if (activationDate) {
+        activationDate.setHours(0, 0, 0, 0)
+      }
+      // Se a aula está no período pausado (entre pausedAt e activationDate), não pode atribuir professor
+      if (lessonDate >= pausedAt && (!activationDate || lessonDate < activationDate)) {
+        return NextResponse.json(
+          { ok: false, message: 'Não é possível atribuir professor para aulas de alunos pausados durante o período de pausa. Defina uma data de ativação.' },
+          { status: 400 }
+        )
+      }
+    }
+
     if (enrollment && teacher) {
       const curso = (enrollment as { curso?: string | null }).curso
       const ensina = Array.isArray(teacher.idiomasEnsina)
@@ -148,13 +202,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const startAt = new Date(startAtStr)
-    if (Number.isNaN(startAt.getTime())) {
-      return NextResponse.json(
-        { ok: false, message: 'Data/hora inválida' },
-        { status: 400 }
-      )
-    }
 
     const validStatus = ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status)
       ? status

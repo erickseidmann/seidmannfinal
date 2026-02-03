@@ -165,13 +165,33 @@ export async function POST(request: NextRequest) {
 
     const lesson = await prisma.lesson.findUnique({
       where: { id: lessonId },
-      include: { enrollment: { select: { id: true, nome: true, tipoAula: true, nomeGrupo: true } } },
+      include: { enrollment: { select: { id: true, nome: true, tipoAula: true, nomeGrupo: true, status: true, pausedAt: true, activationDate: true } } },
     })
     if (!lesson) {
       return NextResponse.json(
         { ok: false, message: 'Aula não encontrada' },
         { status: 404 }
       )
+    }
+
+    // Verificar se aluno está pausado - não permite registrar aulas durante o período pausado (entre pausedAt e activationDate)
+    const enrollment = lesson.enrollment as { status: string; pausedAt: Date | null; activationDate: Date | null }
+    if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+      const pausedAt = new Date(enrollment.pausedAt)
+      pausedAt.setHours(0, 0, 0, 0)
+      const lessonDate = new Date(lesson.startAt)
+      lessonDate.setHours(0, 0, 0, 0)
+      const activationDate = enrollment.activationDate ? new Date(enrollment.activationDate) : null
+      if (activationDate) {
+        activationDate.setHours(0, 0, 0, 0)
+      }
+      // Bloquear apenas se a aula está no período pausado (entre pausedAt e activationDate)
+      if (lessonDate >= pausedAt && (!activationDate || lessonDate < activationDate)) {
+        return NextResponse.json(
+          { ok: false, message: 'Não é possível registrar aulas de alunos pausados durante o período de pausa.' },
+          { status: 400 }
+        )
+      }
     }
 
     const existing = await (prisma as any).lessonRecord.findUnique({

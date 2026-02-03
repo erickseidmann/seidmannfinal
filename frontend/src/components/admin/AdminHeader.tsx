@@ -12,7 +12,7 @@ import Link from 'next/link'
 import Button from '@/components/ui/Button'
 import { LanguageSelector } from '@/components/layout/LanguageSelector'
 import { useTranslation } from '@/contexts/LanguageContext'
-import { LogOut, LayoutDashboard, Bell, Loader2 } from 'lucide-react'
+import { LogOut, LayoutDashboard, Bell, Loader2, Menu } from 'lucide-react'
 
 interface AdminNotif {
   id: string
@@ -21,7 +21,11 @@ interface AdminNotif {
   criadoEm: string
 }
 
-export default function AdminHeader() {
+interface AdminHeaderProps {
+  onMenuClick?: () => void
+}
+
+export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
   const router = useRouter()
   const { t } = useTranslation()
   const [notifOpen, setNotifOpen] = useState(false)
@@ -96,13 +100,24 @@ export default function AdminHeader() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-white shadow-sm">
-      <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo / Dashboard */}
-          <Link href="/admin/dashboard" className="flex items-center gap-2 text-brand-orange font-bold text-lg">
-            <LayoutDashboard className="w-5 h-5" />
-            <span>{t('admin.dashboard')}</span>
-          </Link>
+      <div className="container mx-auto px-3 sm:px-4">
+        <div className="flex items-center justify-between h-14 sm:h-16 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {onMenuClick && (
+              <button
+                type="button"
+                onClick={onMenuClick}
+                className="lg:hidden shrink-0 p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+                aria-label="Abrir menu"
+              >
+                <Menu className="w-6 h-6" />
+              </button>
+            )}
+            <Link href="/admin/dashboard" className="flex items-center gap-2 text-brand-orange font-bold text-base sm:text-lg truncate">
+              <LayoutDashboard className="w-5 h-5 shrink-0" />
+              <span>{t('admin.dashboard')}</span>
+            </Link>
+          </div>
 
           <div className="flex items-center gap-4">
             {/* Sininho de notificações */}

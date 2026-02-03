@@ -236,10 +236,14 @@ model Enrollment {
   melhoresDiasSemana String?     @db.VarChar(255) @map("melhores_dias_semana")
   nomeVendedor      String?      @db.VarChar(255) @map("nome_vendedor")
   nomeEmpresaOuIndicador String?  @db.VarChar(255) @map("nome_empresa_ou_indicador")
+  escolaMatricula   String?      @db.VarChar(50) @map("escola_matricula") // SEIDMANN, YOUBECOME, HIGHWAY, OUTRO
+  escolaMatriculaOutro String?   @db.VarChar(255) @map("escola_matricula_outro") // Quando escolaMatricula = OUTRO
   observacoes       String?      @db.Text
   
   status         EnrollmentStatus @default(LEAD)
   inactiveAt     DateTime?        @map("inactive_at") // Data em que foi marcado como inativo (para histórico por mês)
+  pausedAt       DateTime?        @map("paused_at") // Data em que foi marcado como pausado (aulas não contam para pagamento a partir desta data)
+  activationDate DateTime?        @map("activation_date") // Data de ativação para alunos pausados (volta para ACTIVE automaticamente nesta data)
   trackingCode   String?          @unique @map("tracking_code")
   contractAcceptedAt DateTime?    @map("contract_accepted_at")
   contractVersion    String?      @map("contract_version")
@@ -376,6 +380,7 @@ model TeacherPaymentMonth {
   periodoInicio       DateTime? @map("periodo_inicio") // Ex.: 15/01 para período 15 jan a 15 fev
   periodoTermino      DateTime? @map("periodo_termino")
   teacherConfirmedAt  DateTime? @map("teacher_confirmed_at") // Professor clicou "Confirmar valor a receber" → admin vê "pagamento pronto para fazer"
+  proofSentAt         DateTime? @map("proof_sent_at") // Professor enviou nota fiscal/recibo para financeiro@
   criadoEm            DateTime  @default(now()) @map("created_at")
   atualizadoEm        DateTime  @updatedAt @map("updated_at")
 

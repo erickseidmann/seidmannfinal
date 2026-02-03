@@ -24,6 +24,8 @@ import {
   ChevronDown,
   ChevronRight,
   MessageCircle,
+  Menu,
+  X,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -53,12 +55,22 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/alertas': 'alertas',
   '/admin/calendario': 'calendario',
   '/admin/registros-aulas': 'registros-aulas',
-  '/admin/financeiro/geral': 'financeiro',
-  '/admin/financeiro/alunos': 'financeiro',
-  '/admin/financeiro/professores': 'financeiro',
-  '/admin/financeiro/administracao': 'financeiro',
-  '/admin/financeiro/relatorios': 'financeiro',
+  '/admin/financeiro/geral': 'financeiro-geral',
+  '/admin/financeiro/alunos': 'financeiro-alunos',
+  '/admin/financeiro/professores': 'financeiro-professores',
+  '/admin/financeiro/administracao': 'financeiro-administracao',
+  '/admin/financeiro/relatorios': 'financeiro-relatorios',
   '/admin/chat': 'chat',
+}
+
+const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-relatorios'] as const
+function hasFinanceiroAccess(adminPages: string[], subKey: string): boolean {
+  if (adminPages.includes('financeiro')) return true
+  return adminPages.includes(subKey)
+}
+function hasAnyFinanceiroAccess(adminPages: string[]): boolean {
+  if (adminPages.includes('financeiro')) return true
+  return FINANCEIRO_SUB_KEYS.some((k) => adminPages.includes(k))
 }
 
 const baseMenuItems: (MenuItem | MenuGroup)[] = [
@@ -93,6 +105,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [adminPages, setAdminPages] = useState<string[]>([])
   const [meLoaded, setMeLoaded] = useState(false)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -129,6 +142,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       router.replace('/admin/dashboard')
       return
     }
+    if (FINANCEIRO_SUB_KEYS.includes(pageKey as (typeof FINANCEIRO_SUB_KEYS)[number])) {
+      if (!hasFinanceiroAccess(adminPages, pageKey)) {
+        router.replace('/admin/dashboard')
+      }
+      return
+    }
     if (!adminPages.includes(pageKey)) {
       router.replace('/admin/dashboard')
     }
@@ -158,7 +177,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const menuItems = baseMenuItems.filter((item) => {
     if ('type' in item && item.type === 'group') {
       if (isSuperAdmin) return true
-      return adminPages.includes('financeiro')
+      return hasAnyFinanceiroAccess(adminPages)
     }
     const menuItem = item as MenuItem
     if (menuItem.superAdminOnly) return isSuperAdmin
@@ -170,13 +189,43 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   const isFinanceiroExpanded = pathname?.startsWith('/admin/financeiro')
 
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [pathname])
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <AdminHeader />
+      <AdminHeader onMenuClick={() => setSidebarOpen((v) => !v)} />
+
+      {/* Overlay em mobile quando sidebar aberta */}
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Fechar menu"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        />
+      )}
 
       <div className="flex pt-16">
-        <aside className="w-64 bg-white shadow-sm min-h-screen fixed left-0 top-16">
-          <nav className="p-4 space-y-2">
+        <aside
+          className={`fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-64 transform bg-white shadow-lg transition-transform duration-200 ease-out lg:translate-x-0 ${
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="flex h-full flex-col overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-gray-100 p-4 lg:hidden">
+              <span className="font-semibold text-gray-800">Menu</span>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="rounded-lg p-2 text-gray-600 hover:bg-gray-100"
+                aria-label="Fechar menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <nav className="flex-1 p-4 space-y-2">
             {!meLoaded ? (
               <div className="px-4 py-3 text-sm text-gray-500 animate-pulse">
                 Carregando menu...
@@ -186,10 +235,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 if ('type' in item && item.type === 'group') {
                   const group = item as MenuGroup
                   const Icon = group.icon
+                  const firstAccessibleHref =
+                    group.children.find((c) => {
+                      const pk = PAGE_KEY_BY_HREF[c.href]
+                      return pk && (isSuperAdmin || hasFinanceiroAccess(adminPages, pk))
+                    })?.href ?? group.children[0].href
                   return (
                     <div key={group.labelKey} className="space-y-0.5">
                       <Link
-                        href={group.children[0].href}
+                        href={firstAccessibleHref}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                           isFinanceiroExpanded
                             ? 'bg-brand-orange/10 text-brand-orange font-semibold'
@@ -207,6 +261,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                       {isFinanceiroExpanded && (
                         <div className="pl-4 space-y-0.5 border-l-2 border-gray-200 ml-4">
                           {group.children.map((child) => {
+                            const pageKey = PAGE_KEY_BY_HREF[child.href]
+                            const canAccess = isSuperAdmin || (pageKey && hasFinanceiroAccess(adminPages, pageKey))
+                            if (!canAccess) return null
                             const isActive = pathname === child.href
                             return (
                               <Link
@@ -255,11 +312,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 )
               })
             )}
-          </nav>
+            </nav>
+          </div>
         </aside>
 
-        <main className="flex-1 ml-64 p-6">
-          {children}
+        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:ml-64">
+          <div className="mx-auto w-full max-w-[1600px]">
+            {children}
+          </div>
         </main>
       </div>
     </div>

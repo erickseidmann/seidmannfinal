@@ -12,12 +12,16 @@ import {
   LayoutDashboard,
   User,
   Wallet,
+  Calendar,
+  MessageCircle,
   LogOut,
 } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard-aluno', label: 'Início', icon: LayoutDashboard },
   { href: '/dashboard-aluno/dados', label: 'Meus dados', icon: User },
+  { href: '/dashboard-aluno/calendario', label: 'Calendário', icon: Calendar },
+  { href: '/dashboard-aluno/chat', label: 'Chat', icon: MessageCircle },
   { href: '/dashboard-aluno/financeiro', label: 'Financeiro', icon: Wallet },
 ] as const
 
@@ -93,8 +97,8 @@ export default function DashboardAlunoMainLayout({
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">
-          <div className="p-4 md:p-6 lg:p-8">{children}</div>
+        <main className="min-w-0 flex-1 overflow-auto">
+          <div className="p-4 md:p-6 lg:p-8 max-w-full">{children}</div>
         </main>
       </div>
     </div>

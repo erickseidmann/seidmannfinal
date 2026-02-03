@@ -80,6 +80,38 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // Alunos sem aula designada: matrículas ativas sem aula futura agendada
+    let studentsWithoutLesson = 0
+    try {
+      const now = new Date()
+      const activeStatuses = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
+      const enrollmentsWithFuture = await prisma.lesson.findMany({
+        where: { startAt: { gt: now } },
+        select: { enrollmentId: true },
+        distinct: ['enrollmentId'],
+      })
+      const idsWithFuture = new Set(enrollmentsWithFuture.map((l) => l.enrollmentId))
+      const where: { status: { in: string[] }; id?: { notIn: string[] } } = {
+        status: { in: activeStatuses },
+      }
+      if (idsWithFuture.size > 0) {
+        where.id = { notIn: [...idsWithFuture] }
+      }
+      studentsWithoutLesson = await prisma.enrollment.count({ where })
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar alunos sem aula:', err)
+    }
+
+    // Professores com problemas: avaliação 1 estrela (nota === 1)
+    let teachersWithProblems = 0
+    try {
+      teachersWithProblems = await prisma.teacher.count({
+        where: { nota: 1 },
+      })
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar professores com problemas:', err)
+    }
+
     // Calcular faltas (últimos 7 dias e 30 dias)
     // Verificar se o model existe antes de usar
     let studentsAbsencesWeek = 0
@@ -147,6 +179,8 @@ export async function GET(request: NextRequest) {
           INACTIVE: teachers.INACTIVE,
           total: teachers.total,
         },
+        studentsWithoutLesson,
+        teachersWithProblems,
         absences: {
           studentsWeek: studentsAbsencesWeek,
           studentsMonth: studentsAbsencesMonth,

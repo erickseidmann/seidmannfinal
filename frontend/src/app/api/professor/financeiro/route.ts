@@ -1,6 +1,8 @@
 /**
  * GET /api/professor/financeiro?year=YYYY&month=M
  * Dados financeiros do professor logado (somente leitura). Mesma lógica do admin mas para um único professor.
+ *
+ * Regra: o professor recebe por HORAS REGISTRADAS (registros de aula), nunca pela estimativa (aulas agendadas).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -84,6 +86,7 @@ export async function GET(request: NextRequest) {
     let statusPagamento: 'PAGO' | 'EM_ABERTO' = teacher.periodoPagamentoPago ? 'PAGO' : 'EM_ABERTO'
 
     let teacherConfirmedAt: string | null = null
+    let proofSentAt: string | null = null
     if (useMonthMode) {
       periodStart = startOfDay(new Date(year!, month! - 1, 1))
       periodEnd = lastDayOfMonth(new Date(year!, month! - 1, 1))
@@ -97,6 +100,7 @@ export async function GET(request: NextRequest) {
         if (pm.valorExtra != null) valorExtra = Number(pm.valorExtra)
         statusPagamento = pm.paymentStatus === 'PAGO' ? 'PAGO' : 'EM_ABERTO'
         if (pm.teacherConfirmedAt) teacherConfirmedAt = pm.teacherConfirmedAt.toISOString()
+        if (pm.proofSentAt) proofSentAt = pm.proofSentAt.toISOString()
       }
     } else {
       if (teacher.periodoPagamentoInicio) periodStart = startOfDay(teacher.periodoPagamentoInicio)
@@ -124,29 +128,59 @@ export async function GET(request: NextRequest) {
     })
 
     const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
-    let recordsInRange: { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number } }[] = []
+    let recordsInRange: { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number; enrollment: { status: string; pausedAt: Date | null } } }[] = []
     if (lessonRecord?.findMany) {
       const records = await lessonRecord.findMany({
         where: {
           lesson: {
             teacherId: teacher.id,
             startAt: { gte: periodStart, lte: periodEnd },
+            enrollment: {
+              OR: [
+                { status: { not: 'PAUSED' } },
+                { pausedAt: null },
+              ],
+            },
           },
           status: 'CONFIRMED',
         },
         select: {
           tempoAulaMinutos: true,
-          lesson: { select: { startAt: true, durationMinutes: true } },
+          lesson: {
+            select: {
+              startAt: true,
+              durationMinutes: true,
+              enrollment: {
+                select: {
+                  status: true,
+                  pausedAt: true,
+                },
+              },
+            },
+          },
         },
-      }) as { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number } }[]
+      }) as { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number; enrollment: { status: string; pausedAt: Date | null } } }[]
       recordsInRange = records
     }
+
+    // Filtrar manualmente aulas de alunos pausados (a partir da data pausedAt)
+    const filteredRecords = recordsInRange.filter((r) => {
+      const enrollment = r.lesson.enrollment
+      if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+        const pausedAt = new Date(enrollment.pausedAt)
+        pausedAt.setHours(0, 0, 0, 0)
+        const lessonDate = new Date(r.lesson.startAt)
+        lessonDate.setHours(0, 0, 0, 0)
+        return lessonDate < pausedAt
+      }
+      return true
+    })
 
     let totalMinutosRegistrados = 0
     let totalMinutosEstimados = 0
     let totalRegistrosEsperados = 0
 
-    for (const r of recordsInRange) {
+    for (const r of filteredRecords) {
       const startAt = new Date(r.lesson.startAt).getTime()
       if (startAt < periodStartTime || startAt > periodEndTime) continue
       if (holidaySet.has(toDateKey(r.lesson.startAt))) continue
@@ -165,10 +199,12 @@ export async function GET(request: NextRequest) {
     const valorPorHora = teacher.valorPorHora != null ? Number(teacher.valorPorHora) : 0
     const totalHorasRegistradas = Math.round((totalMinutosRegistrados / 60) * 100) / 100
     const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
+    // Pagamento sempre por horas REGISTRADAS (nunca pela estimativa)
     const valorPorHoras = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
     const valorAPagar = Math.round((valorPorHoras + valorPorPeriodo + valorExtra) * 100) / 100
 
     const data = {
+      professorNome: teacher.nome,
       valorPorHora,
       dataInicio: periodStart.toISOString().slice(0, 10),
       dataTermino: periodEnd.toISOString().slice(0, 10),
@@ -183,6 +219,7 @@ export async function GET(request: NextRequest) {
       infosPagamento: teacher.infosPagamento ?? null,
       statusPagamento,
       teacherConfirmedAt,
+      proofSentAt,
       year: useMonthMode ? year : null,
       month: useMonthMode ? month : null,
     }

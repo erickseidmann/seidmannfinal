@@ -114,6 +114,37 @@ En caso de dudas, comuníquese con la gestión de clases a través de los canale
 Atenciosamente / Kind regards / Saludos cordiales,
 Equipe Seidmann Institute`
 
+const MESES_NOME: Record<number, string> = {
+  1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
+  7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro',
+}
+
+/** Mensagem: professor envia nota fiscal/recibo para financeiro */
+export function mensagemNotaFiscalRecibo(opcoes: {
+  nomeProfessor: string
+  year: number
+  month: number
+  mensagemOpcional?: string | null
+}): { subject: string; text: string } {
+  const { nomeProfessor, year, month, mensagemOpcional } = opcoes
+  const mesLabel = MESES_NOME[month] ?? String(month)
+  const subject = `Nota fiscal / Recibo – ${nomeProfessor} – ${mesLabel}/${year}`
+  const linhas: string[] = [
+    `O professor(a) ${nomeProfessor} enviou o comprovante (nota fiscal ou recibo) referente ao período: ${mesLabel} de ${year}.`,
+    '',
+    'Segue em anexo o documento.',
+  ]
+  if (mensagemOpcional?.trim()) {
+    linhas.push('')
+    linhas.push('Mensagem do professor:')
+    linhas.push(mensagemOpcional.trim())
+  }
+  linhas.push('')
+  linhas.push('📌 Esta é uma mensagem automática do Portal do Professor.')
+  const text = linhas.join('\n')
+  return { subject, text }
+}
+
 /** Mensagem: aula(s) confirmada(s) – texto genérico, sem listar dias e horários */
 export function mensagemAulaConfirmada(opcoes: {
   nomeAluno: string

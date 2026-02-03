@@ -8,6 +8,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 
+/** Para ADMIN: retorna setor (Financeiro, Gestão de aulas, Material) a partir de adminPages */
+function getSectorLabelFromPages(adminPages: unknown): string | null {
+  const pages = Array.isArray(adminPages) ? adminPages as string[] : []
+  if (pages.includes('financeiro')) return 'Financeiro'
+  if (pages.some((p) => p === 'calendario' || p === 'registros-aulas')) return 'Gestão de aulas'
+  if (pages.includes('livros')) return 'Material'
+  return null
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -52,7 +61,7 @@ export async function GET(
       orderBy: { criadoEm: 'desc' },
       take: limit,
       include: {
-        sender: { select: { id: true, nome: true, role: true } },
+        sender: { select: { id: true, nome: true, role: true, adminPages: true } },
       },
     })
 
@@ -62,17 +71,22 @@ export async function GET(
       STUDENT: 'Aluno',
     }
 
-    const list = messages.reverse().map((m) => ({
-      id: m.id,
-      conversationId: m.conversationId,
-      senderId: m.senderId,
-      senderNome: m.sender.nome,
-      senderRole: m.sender.role,
-      senderRoleLabel: roleLabel[m.sender.role] ?? m.sender.role,
-      content: m.content,
-      criadoEm: m.criadoEm.toISOString(),
-      isOwn: m.senderId === currentUserId,
-    }))
+    const list = messages.reverse().map((m) => {
+      const sender = m.sender as { id: string; nome: string; role: string; adminPages?: unknown }
+      const sector = sender.role === 'ADMIN' ? getSectorLabelFromPages(sender.adminPages) : null
+      const displayLabel = sector ?? (roleLabel[sender.role] ?? sender.role)
+      return {
+        id: m.id,
+        conversationId: m.conversationId,
+        senderId: m.senderId,
+        senderNome: sender.nome,
+        senderRole: sender.role,
+        senderRoleLabel: displayLabel,
+        content: m.content,
+        criadoEm: m.criadoEm.toISOString(),
+        isOwn: m.senderId === currentUserId,
+      }
+    })
 
     return NextResponse.json({ ok: true, data: { messages: list } })
   } catch (error) {
@@ -126,7 +140,7 @@ export async function POST(
         content,
       },
       include: {
-        sender: { select: { id: true, nome: true, role: true } },
+        sender: { select: { id: true, nome: true, role: true, adminPages: true } },
       },
     })
 
@@ -135,6 +149,9 @@ export async function POST(
       TEACHER: 'Professor',
       STUDENT: 'Aluno',
     }
+    const sender = message.sender as { id: string; nome: string; role: string; adminPages?: unknown }
+    const sector = sender.role === 'ADMIN' ? getSectorLabelFromPages(sender.adminPages) : null
+    const displayLabel = sector ?? (roleLabel[sender.role] ?? sender.role)
 
     return NextResponse.json({
       ok: true,
@@ -143,9 +160,9 @@ export async function POST(
           id: message.id,
           conversationId: message.conversationId,
           senderId: message.senderId,
-          senderNome: message.sender.nome,
-          senderRole: message.sender.role,
-          senderRoleLabel: roleLabel[message.sender.role] ?? message.sender.role,
+          senderNome: sender.nome,
+          senderRole: sender.role,
+          senderRoleLabel: displayLabel,
           content: message.content,
           criadoEm: message.criadoEm.toISOString(),
           isOwn: true,

@@ -30,7 +30,7 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { status } = body
+    const { status, activationDate } = body
 
     // Validações
     if (!status || typeof status !== 'string') {
@@ -71,12 +71,42 @@ export async function PATCH(
       )
     }
 
-    // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao voltar para ACTIVE limpa
-    const updateData: { status: string; inactiveAt?: Date | null } = { status: status as any }
+    // Se status mudou para INACTIVE, cancelar todas as aulas futuras (PAUSED não cancela, apenas bloqueia ações)
+    const oldStatus = enrollment.status
+    if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      await prisma.lesson.updateMany({
+        where: {
+          enrollmentId: id,
+          startAt: { gte: hoje },
+          status: { not: 'CANCELLED' },
+        },
+        data: { status: 'CANCELLED' },
+      })
+    }
+
+    // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao marcar PAUSED grava pausedAt; ao voltar para ACTIVE limpa ambos
+    const updateData: { status: string; inactiveAt?: Date | null; pausedAt?: Date | null; activationDate?: Date | null } = { status: status as any }
     if (status === 'INACTIVE') {
       updateData.inactiveAt = new Date()
+      updateData.pausedAt = null
+      updateData.activationDate = null
+    } else if (status === 'PAUSED') {
+      updateData.pausedAt = new Date()
+      updateData.inactiveAt = null
+      // activationDate é obrigatório para PAUSED
+      if (!activationDate) {
+        return NextResponse.json(
+          { ok: false, message: 'Data de ativação é obrigatória para alunos pausados' },
+          { status: 400 }
+        )
+      }
+      updateData.activationDate = new Date(activationDate)
     } else {
       updateData.inactiveAt = null
+      updateData.pausedAt = null
+      updateData.activationDate = null
     }
     const updatedEnrollment = await prisma.enrollment.update({
       where: { id },

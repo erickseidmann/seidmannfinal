@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import ProfessorHeader from '@/components/professor/ProfessorHeader'
+import { useTranslation } from '@/contexts/LanguageContext'
 import {
   LayoutDashboard,
   User,
@@ -20,12 +21,12 @@ import {
 } from 'lucide-react'
 
 const NAV = [
-  { href: '/dashboard-professores', label: 'Início', icon: LayoutDashboard, showUnreadDot: true },
-  { href: '/dashboard-professores/dados-pessoais', label: 'Dados pessoais', icon: User },
-  { href: '/dashboard-professores/calendario', label: 'Calendário', icon: Calendar },
-  { href: '/dashboard-professores/financeiro', label: 'Financeiro', icon: Wallet },
-  { href: '/dashboard-professores/livros', label: 'Livros', icon: BookOpen },
-  { href: '/dashboard-professores/chat', label: 'Chat', icon: MessageCircle, showChatDot: true },
+  { href: '/dashboard-professores', labelKey: 'professor.nav.home', icon: LayoutDashboard, showUnreadDot: true },
+  { href: '/dashboard-professores/dados-pessoais', labelKey: 'professor.nav.personalData', icon: User },
+  { href: '/dashboard-professores/calendario', labelKey: 'professor.nav.calendar', icon: Calendar },
+  { href: '/dashboard-professores/financeiro', labelKey: 'professor.nav.financial', icon: Wallet },
+  { href: '/dashboard-professores/livros', labelKey: 'professor.nav.books', icon: BookOpen },
+  { href: '/dashboard-professores/chat', labelKey: 'professor.nav.chat', icon: MessageCircle, showChatDot: true },
 ] as const
 
 export default function DashboardProfessoresMainLayout({
@@ -33,6 +34,7 @@ export default function DashboardProfessoresMainLayout({
 }: {
   children: React.ReactNode
 }) {
+  const { t } = useTranslation()
   const pathname = usePathname()
   const [professor, setProfessor] = useState<{ nome: string; nomePreferido: string | null } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -108,7 +110,7 @@ export default function DashboardProfessoresMainLayout({
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Carregando...</p>
+        <p className="text-gray-500">{t('professor.home.loading')}</p>
       </div>
     )
   }
@@ -120,13 +122,14 @@ export default function DashboardProfessoresMainLayout({
         {/* Sidebar */}
         <aside className="w-full md:w-56 lg:w-64 bg-white border-b md:border-b-0 md:border-r border-gray-200 shrink-0 md:min-h-[calc(100vh-4rem)]">
         <div className="p-4 border-b border-gray-100">
-          <h1 className="text-lg font-bold text-gray-900">Dashboard Professores</h1>
+          <h1 className="text-lg font-bold text-gray-900">{t('professor.dashboardTitle')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">{displayName}</p>
         </div>
         <nav className="p-2 space-y-0.5">
-          {NAV.map(({ href, label, icon: Icon, showUnreadDot, showChatDot }) => {
+          {NAV.map(({ href, labelKey, icon: Icon, showUnreadDot, showChatDot }) => {
             const isActive = href === '/dashboard-professores' ? pathname === href : pathname.startsWith(href)
             const showDot = (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
+            const label = t(labelKey)
             return (
               <Link
                 key={href}
@@ -142,8 +145,8 @@ export default function DashboardProfessoresMainLayout({
                 {showDot && (
                   <span
                     className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
-                    title={showChatDot ? (unreadChatCount > 0 ? `${unreadChatCount} mensagem(ns) não lida(s)` : 'Chat') : (unreadAlertsCount > 0 ? `${unreadAlertsCount} notificação(ões) não lida(s)` : label)}
-                    aria-label={`${unreadAlertsCount} não lidas`}
+                    title={showChatDot ? (unreadChatCount > 0 ? t('professor.chatUnreadTitle').replace('{n}', String(unreadChatCount)) : t('professor.chat')) : (unreadAlertsCount > 0 ? t('professor.home.notificationsUnreadTitle').replace('{n}', String(unreadAlertsCount)) : label)}
+                    aria-label={t('professor.home.notificationsUnreadTitle').replace('{n}', String(unreadAlertsCount))}
                   />
                 )}
               </Link>
@@ -157,14 +160,14 @@ export default function DashboardProfessoresMainLayout({
             className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
           >
             <LogOut className="w-5 h-5 shrink-0" />
-            Sair
+            {t('nav.logout')}
           </button>
         </div>
       </aside>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">
-          <div className="p-4 md:p-6 lg:p-8">{children}</div>
+        <main className="min-w-0 flex-1 overflow-auto">
+          <div className="p-4 md:p-6 lg:p-8 max-w-full">{children}</div>
         </main>
       </div>
     </div>

@@ -2,6 +2,7 @@
  * API: GET /api/admin/financeiro/professores?year=YYYY&month=M
  * Lista professores ativos. Com year e month: período = esse mês para todos; status e valores vêm de TeacherPaymentMonth (como financeiro alunos).
  * Sem year/month: período e status vêm do cadastro do professor (periodoPagamentoInicio/Termino, periodoPagamentoPago).
+ * Regra: o professor recebe por HORAS REGISTRADAS (LessonRecord), nunca pela estimativa (Lesson).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -130,6 +131,7 @@ export async function GET(request: NextRequest) {
     })
     const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
 
+    // Aulas canceladas não entram no cálculo de pagamento (apenas CONFIRMED)
     const lessonsInRange = await prisma.lesson.findMany({
       where: {
         startAt: { gte: globalStartDate, lte: globalEndDate },
@@ -143,11 +145,19 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    // Registros de aula cancelada não contam para pagamento
+    // Também não contam aulas de alunos PAUSED a partir da data em que foram pausados
     const recordsInRange = await (prisma as any).lessonRecord.findMany({
       where: {
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
           startAt: { gte: globalStartDate, lte: globalEndDate },
+          enrollment: {
+            OR: [
+              { status: { not: 'PAUSED' } },
+              { pausedAt: null },
+            ],
+          },
         },
         status: 'CONFIRMED',
       },
@@ -158,9 +168,28 @@ export async function GET(request: NextRequest) {
             teacherId: true,
             startAt: true,
             durationMinutes: true,
+            enrollment: {
+              select: {
+                status: true,
+                pausedAt: true,
+              },
+            },
           },
         },
       },
+    })
+
+    // Filtrar manualmente aulas de alunos pausados (a partir da data pausedAt)
+    const filteredRecords = recordsInRange.filter((r: { lesson: { startAt: Date; enrollment: { status: string; pausedAt: Date | null } } }) => {
+      const enrollment = r.lesson.enrollment
+      if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
+        const pausedAt = new Date(enrollment.pausedAt)
+        pausedAt.setHours(0, 0, 0, 0)
+        const lessonDate = new Date(r.lesson.startAt)
+        lessonDate.setHours(0, 0, 0, 0)
+        return lessonDate < pausedAt
+      }
+      return true
     })
 
     const list = teachers.map((t) => {
@@ -184,7 +213,7 @@ export async function GET(request: NextRequest) {
       let totalMinutosEstimados = 0
       let totalRegistrosEsperados = 0
 
-      for (const r of recordsInRange) {
+      for (const r of filteredRecords) {
         const lesson = r.lesson as { teacherId: string; startAt: Date; durationMinutes: number }
         if (lesson.teacherId !== t.id) continue
         const startAt = new Date(lesson.startAt).getTime()
@@ -205,6 +234,7 @@ export async function GET(request: NextRequest) {
 
       const totalHorasRegistradas = Math.round((totalMinutosRegistrados / 60) * 100) / 100
       const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
+      // Professor recebe por horas REGISTRADAS (nunca pela estimativa)
       const valorHoras = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
       const valorAPagar = Math.round((valorHoras + valorPorPeriodo + valorExtra) * 100) / 100
 

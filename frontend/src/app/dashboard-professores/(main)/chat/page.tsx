@@ -7,13 +7,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
-import { MessageCircle, Send, Users, BookOpen, Calendar, Wallet, GraduationCap } from 'lucide-react'
+import { useTranslation } from '@/contexts/LanguageContext'
+import { MessageCircle, Send, Users, BookOpen, Calendar, Wallet, GraduationCap, ArrowLeft } from 'lucide-react'
 
-const SUBJECTS = [
-  { key: 'aula', label: 'Aula', icon: GraduationCap },
-  { key: 'financeiro', label: 'Financeiro', icon: Wallet },
-  { key: 'gestao-aulas', label: 'Gestão de aulas', icon: Calendar },
-  { key: 'material', label: 'Material', icon: BookOpen },
+const SUBJECT_KEYS = [
+  { key: 'aula', labelKey: 'professor.chat.subject.aula', icon: GraduationCap },
+  { key: 'financeiro', labelKey: 'professor.chat.subject.financeiro', icon: Wallet },
+  { key: 'gestao-aulas', labelKey: 'professor.chat.subject.gestao', icon: Calendar },
+  { key: 'material', labelKey: 'professor.chat.subject.material', icon: BookOpen },
 ] as const
 
 interface ChatUser {
@@ -54,11 +55,11 @@ function formatChatTime(iso: string): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
-function formatReadStatus(conv: Conversation): string {
-  if ((conv.unreadCount ?? 0) > 0) return 'Não lida'
+function formatReadStatus(conv: Conversation, readAtLabel: string, atLabel: string, unreadLabel: string): string {
+  if ((conv.unreadCount ?? 0) > 0) return unreadLabel
   if (conv.lastReadAt) {
     const d = new Date(conv.lastReadAt)
-    return 'Lida em ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    return readAtLabel + ' ' + d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + atLabel + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   }
   return ''
 }
@@ -92,6 +93,7 @@ function conversationTitle(conv: Conversation): string {
 const API = '/api/professor/chat'
 
 export default function ProfessorChatPage() {
+  const { t } = useTranslation()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -279,20 +281,20 @@ export default function ProfessorChatPage() {
   const selectedConv = conversations.find((c) => c.id === selectedId)
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
+    <div className="flex flex-col min-h-0 h-[calc(100vh-8rem)] sm:h-[calc(100vh-8rem)]">
+      <div className="mb-3 sm:mb-4 shrink-0">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('professor.chat.title')}</h1>
       </div>
-      <p className="text-sm text-gray-600 mb-4">
-        Conversas com funcionários e alunos. Use a lista &quot;Por assunto&quot; acima para iniciar uma conversa direta ou criar um grupo.
+      <p className="text-sm text-gray-600 mb-3 sm:mb-4 shrink-0">
+        {t('professor.chat.subtitle')}
       </p>
 
-      <div className="flex-1 flex min-h-0 rounded-xl border border-gray-200 bg-white overflow-hidden">
-        <div className="w-80 border-r border-gray-200 flex flex-col">
-          <div className="border-b border-gray-200 p-2">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Por assunto</p>
+      <div className="flex-1 flex min-h-0 rounded-xl border border-gray-200 bg-white overflow-hidden flex-col md:flex-row">
+        <div className={`flex flex-col border-r border-gray-200 md:w-80 w-full min-h-0 ${selectedId ? 'hidden md:flex' : 'flex'}`}>
+          <div className="border-b border-gray-200 p-2 shrink-0">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{t('professor.chat.bySubject')}</p>
             <div className="flex flex-wrap gap-1">
-              {SUBJECTS.map(({ key, label, icon: Icon }) => (
+              {SUBJECT_KEYS.map(({ key, labelKey, icon: Icon }) => (
                 <button
                   key={key}
                   type="button"
@@ -302,16 +304,16 @@ export default function ProfessorChatPage() {
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
-                  {label}
+                  {t(labelKey)}
                 </button>
               ))}
             </div>
             {subjectTab && (
               <div className="mt-2 max-h-40 overflow-y-auto border border-gray-100 rounded-lg">
                 {subjectLoading ? (
-                  <div className="p-2 text-xs text-gray-500">Carregando...</div>
+                  <div className="p-2 text-xs text-gray-500">{t('professor.home.loading')}</div>
                 ) : subjectUsers.length === 0 ? (
-                  <div className="p-2 text-xs text-gray-500">Nenhum contato neste assunto.</div>
+                  <div className="p-2 text-xs text-gray-500">—</div>
                 ) : (
                   <>
                     {subjectTab !== 'aula' && subjectUsers.length > 1 && (
@@ -320,7 +322,7 @@ export default function ProfessorChatPage() {
                         onClick={openNewGroupWithAllSubject}
                         className="w-full text-left px-3 py-2 text-xs font-medium text-brand-orange hover:bg-orange-50 border-b border-gray-100"
                       >
-                        Criar grupo com todos ({subjectUsers.length})
+                        {t('professor.chat.createGroupWithAll').replace('{n}', String(subjectUsers.length))}
                       </button>
                     )}
                     {subjectUsers.map((u) => (
@@ -339,11 +341,11 @@ export default function ProfessorChatPage() {
               </div>
             )}
           </div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-4 pt-2 pb-1">Conversas</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-4 pt-2 pb-1">{t('professor.chat.conversations')}</p>
           {loading ? (
-            <div className="p-4 text-gray-500">Carregando...</div>
+            <div className="p-4 text-gray-500">{t('professor.home.loading')}</div>
           ) : conversations.length === 0 ? (
-            <div className="p-4 text-gray-500 text-sm">Nenhuma conversa. Use um assunto acima para iniciar uma conversa.</div>
+            <div className="p-4 text-gray-500 text-sm">{t('professor.chat.noConversation')}</div>
           ) : (
             <ul className="overflow-y-auto flex-1">
               {conversations.map((conv) => (
@@ -351,21 +353,21 @@ export default function ProfessorChatPage() {
                   <button
                     type="button"
                     onClick={() => setSelectedId(conv.id)}
-                    className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5 relative ${
+                    className={`w-full text-left px-4 py-3 min-h-[56px] sm:min-h-0 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5 relative touch-manipulation ${
                       selectedId === conv.id ? 'bg-orange-50 border-l-4 border-l-orange-500' : ''
                     }`}
                   >
                     <span className="flex items-center gap-2">
                       <span className="font-medium text-gray-900 truncate">{conversationTitle(conv)}</span>
                       {(conv.unreadCount ?? 0) > 0 && (
-                        <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title={`${conv.unreadCount} não lida(s)`} aria-label={`${conv.unreadCount} não lidas`} />
+                        <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title={`${conv.unreadCount} ${t('professor.chat.unread')}`} aria-label={`${conv.unreadCount} ${t('professor.chat.unread')}`} />
                       )}
                     </span>
                     {conv.lastMessage && (
                       <span className="text-xs text-gray-500 truncate">{conv.lastMessage.content}</span>
                     )}
-                    {formatReadStatus(conv) && (
-                      <span className="text-xs text-gray-400">{formatReadStatus(conv)}</span>
+                    {formatReadStatus(conv, t('professor.chat.readAt'), t('professor.chat.at'), t('professor.chat.unread')) && (
+                      <span className="text-xs text-gray-400">{formatReadStatus(conv, t('professor.chat.readAt'), t('professor.chat.at'), t('professor.chat.unread'))}</span>
                     )}
                   </button>
                 </li>
@@ -374,28 +376,36 @@ export default function ProfessorChatPage() {
           )}
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className={`flex-1 flex flex-col min-w-0 min-h-0 ${selectedId ? 'flex' : 'hidden md:flex'}`}>
           {!selectedConv ? (
-            <div className="flex-1 flex items-center justify-center text-gray-500">
+            <div className="flex-1 flex items-center justify-center text-gray-500 p-4">
               <div className="text-center">
                 <MessageCircle className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                <p>Selecione uma conversa ou inicie uma nova.</p>
+                <p className="text-sm">{t('professor.chat.selectOrStart')}</p>
               </div>
             </div>
           ) : (
             <>
-              <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
-                <Users className="w-5 h-5 text-gray-500" />
-                <span className="font-medium text-gray-900">{conversationTitle(selectedConv)}</span>
+              <div className="px-3 sm:px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2 shrink-0 min-h-[52px]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="md:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-200 touch-manipulation flex items-center justify-center"
+                  aria-label={t('professor.chat.backToConversations')}
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <Users className="w-5 h-5 text-gray-500 shrink-0 hidden md:block" />
+                <span className="font-medium text-gray-900 truncate flex-1 min-w-0">{conversationTitle(selectedConv)}</span>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-3">
                 {messages.map((msg) => (
                   <div
                     key={msg.id}
                     className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[75%] rounded-lg px-3 py-2 ${
+                      className={`max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 break-words ${
                         msg.isOwn
                           ? 'bg-orange-600 text-white'
                           : 'bg-gray-100 text-gray-900'
@@ -418,16 +428,16 @@ export default function ProfessorChatPage() {
                 ))}
                 <div ref={messagesEndRef} />
               </div>
-              <div className="p-4 border-t border-gray-200 flex gap-2">
+              <div className="p-3 sm:p-4 border-t border-gray-200 flex gap-2 shrink-0 min-h-[56px]">
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                  placeholder="Digite sua mensagem..."
-                  className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                  placeholder={t('professor.chat.placeholder')}
+                  className="flex-1 min-w-0 rounded-lg border border-gray-300 px-3 sm:px-4 py-2.5 sm:py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                 />
-                <Button variant="primary" onClick={sendMessage} disabled={sending || !inputText.trim()}>
+                <Button variant="primary" onClick={sendMessage} disabled={sending || !inputText.trim()} className="shrink-0 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center">
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
@@ -439,12 +449,12 @@ export default function ProfessorChatPage() {
       <Modal
         isOpen={modalNewChat}
         onClose={() => setModalNewChat(false)}
-        title="Nova conversa"
+        title={t('professor.chat.newChat')}
         size="md"
         footer={
           <>
             <Button variant="secondary" onClick={() => setModalNewChat(false)}>
-              Cancelar
+              {t('common.cancel')}
             </Button>
             <Button
               variant="primary"
@@ -455,17 +465,17 @@ export default function ProfessorChatPage() {
                 (newChatType === 'GROUP' && selectedUserIds.length < 1)
               }
             >
-              {creating ? 'Criando...' : 'Iniciar conversa'}
+              {creating ? t('professor.chat.creating') : t('professor.chat.startConversation')}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
-            Todas as conversas podem ser vistas pela administração (ADM).
+            {t('professor.chat.admNote')}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Tipo</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">—</label>
             <div className="flex gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -478,7 +488,7 @@ export default function ProfessorChatPage() {
                   }}
                   className="text-orange-600"
                 />
-                Conversa direta (1 pessoa)
+                {t('professor.chat.typeDirect')}
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -488,25 +498,25 @@ export default function ProfessorChatPage() {
                   onChange={() => setNewChatType('GROUP')}
                   className="text-orange-600"
                 />
-                Grupo (várias pessoas)
+                {t('professor.chat.typeGroup')}
               </label>
             </div>
           </div>
           {newChatType === 'GROUP' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nome do grupo (opcional)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('professor.chat.groupName')}</label>
               <input
                 type="text"
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
-                placeholder="Ex.: Equipe pedagógica"
+                placeholder="—"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
           )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {newChatType === 'DIRECT' ? 'Selecione a pessoa' : 'Selecione os participantes'}
+              {newChatType === 'DIRECT' ? t('professor.chat.selectPerson') : t('professor.chat.selectParticipants')}
             </label>
             <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
               {chatUsers.map((u) => (

@@ -22,7 +22,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const enrollmentId = searchParams.get('enrollmentId')
 
-    const where: { enrollmentId?: string } = {}
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 15)
+
+    const where: { enrollmentId?: string; criadoEm?: { gte: Date } } = { criadoEm: { gte: cutoff } }
     if (enrollmentId) where.enrollmentId = enrollmentId
 
     const alerts = await prisma.studentAlert.findMany({

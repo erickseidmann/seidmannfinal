@@ -8,9 +8,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import Button from '@/components/ui/Button'
+import { LanguageSelector } from '@/components/layout/LanguageSelector'
+import { useTranslation } from '@/contexts/LanguageContext'
 import { LogOut, LayoutDashboard, MessageCircle } from 'lucide-react'
 
 export default function ProfessorHeader() {
+  const { t } = useTranslation()
   const [unreadChatCount, setUnreadChatCount] = useState(0)
 
   const fetchUnreadCount = useCallback(() => {
@@ -51,14 +54,15 @@ export default function ProfessorHeader() {
         <div className="flex items-center justify-between h-16">
           <Link href="/dashboard-professores" className="flex items-center gap-2 text-brand-orange font-bold text-lg">
             <LayoutDashboard className="w-5 h-5" />
-            <span>Dashboard Professores</span>
+            <span>{t('professor.dashboardTitle')}</span>
           </Link>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <LanguageSelector />
             <Link
               href="/dashboard-professores/chat"
               className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              title={unreadChatCount > 0 ? `${unreadChatCount} mensagem(ns) não lida(s)` : 'Chat'}
+              title={unreadChatCount > 0 ? t('professor.chatUnreadTitle').replace('{n}', String(unreadChatCount)) : t('professor.chat')}
             >
               <MessageCircle className="w-5 h-5" />
               {unreadChatCount > 0 && (
@@ -74,7 +78,7 @@ export default function ProfessorHeader() {
               className="flex items-center gap-2"
             >
               <LogOut className="w-4 h-4" />
-              Sair
+              {t('nav.logout')}
             </Button>
           </div>
         </div>

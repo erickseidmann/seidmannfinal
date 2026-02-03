@@ -44,8 +44,11 @@ function buildUpdateData(body: Record<string, unknown>) {
     melhoresDiasSemana,
     nomeVendedor,
     nomeEmpresaOuIndicador,
+    escolaMatricula,
+    escolaMatriculaOutro,
     observacoes,
     status,
+    activationDate,
   } = body
 
   const update: Record<string, unknown> = {}
@@ -76,8 +79,20 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (melhoresDiasSemana !== undefined) update.melhoresDiasSemana = melhoresDiasSemana ? String(melhoresDiasSemana).trim() : null
   if (nomeVendedor !== undefined) update.nomeVendedor = nomeVendedor ? String(nomeVendedor).trim() : null
   if (nomeEmpresaOuIndicador !== undefined) update.nomeEmpresaOuIndicador = nomeEmpresaOuIndicador ? String(nomeEmpresaOuIndicador).trim() : null
+  if (escolaMatricula !== undefined) {
+    const escola = String(escolaMatricula).trim()
+    if (escola === 'SEIDMANN' || escola === 'YOUBECOME' || escola === 'HIGHWAY' || escola === 'OUTRO') {
+      update.escolaMatricula = escola
+    } else {
+      update.escolaMatricula = null
+    }
+  }
+  if (escolaMatriculaOutro !== undefined) {
+    update.escolaMatriculaOutro = escolaMatriculaOutro ? String(escolaMatriculaOutro).trim() : null
+  }
   if (observacoes !== undefined) update.observacoes = observacoes ? String(observacoes).trim() : null
   if (status !== undefined && VALID_STATUSES.includes(String(status))) update.status = status
+  if (activationDate !== undefined) update.activationDate = activationDate ? new Date(activationDate as string) : null
   return update
 }
 
@@ -134,6 +149,46 @@ export async function PATCH(
         )
       }
       const updateData = buildUpdateData(body) as any
+      const oldStatus = enrollment.status
+      const newStatus = updateData.status
+
+      // Se status mudou para INACTIVE, cancelar todas as aulas futuras (PAUSED não cancela, apenas bloqueia ações)
+      if (newStatus === 'INACTIVE' && oldStatus !== 'INACTIVE') {
+        const hoje = new Date()
+        hoje.setHours(0, 0, 0, 0)
+        await prisma.lesson.updateMany({
+          where: {
+            enrollmentId: id,
+            startAt: { gte: hoje },
+            status: { not: 'CANCELLED' },
+          },
+          data: { status: 'CANCELLED' },
+        })
+      }
+
+      // Atualizar pausedAt, inactiveAt e activationDate conforme o status
+      if (newStatus === 'PAUSED') {
+        updateData.pausedAt = new Date()
+        updateData.inactiveAt = null
+        if (body.activationDate) {
+          updateData.activationDate = new Date(body.activationDate)
+        } else {
+          // Se não forneceu activationDate, requerer
+          return NextResponse.json(
+            { ok: false, message: 'Data de ativação é obrigatória para alunos pausados' },
+            { status: 400 }
+          )
+        }
+      } else if (newStatus === 'INACTIVE') {
+        updateData.inactiveAt = new Date()
+        updateData.pausedAt = null
+        updateData.activationDate = null
+      } else if (newStatus !== oldStatus) {
+        updateData.inactiveAt = null
+        updateData.pausedAt = null
+        updateData.activationDate = null
+      }
+
       updatedEnrollment = await prisma.enrollment.update({
         where: { id },
         data: updateData,

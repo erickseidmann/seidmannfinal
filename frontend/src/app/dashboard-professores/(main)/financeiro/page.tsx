@@ -6,9 +6,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp, Loader2 } from 'lucide-react'
+import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp, Loader2, FileText } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import Modal from '@/components/admin/Modal'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -17,6 +18,7 @@ const MESES_LABELS: Record<number, string> = {
 const ANOS_DISPONIVEIS = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i)
 
 interface FinanceiroData {
+  professorNome?: string
   valorPorHora: number
   dataInicio: string
   dataTermino: string
@@ -31,6 +33,7 @@ interface FinanceiroData {
   infosPagamento: string | null
   statusPagamento: 'PAGO' | 'EM_ABERTO'
   teacherConfirmedAt: string | null
+  proofSentAt: string | null
   year: number | null
   month: number | null
 }
@@ -54,6 +57,10 @@ export default function FinanceiroPage() {
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [comprovanteModalOpen, setComprovanteModalOpen] = useState(false)
+  const [comprovanteFile, setComprovanteFile] = useState<File | null>(null)
+  const [comprovanteMensagem, setComprovanteMensagem] = useState('')
+  const [sendingComprovante, setSendingComprovante] = useState(false)
 
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -78,6 +85,42 @@ export default function FinanceiroPage() {
   useEffect(() => {
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
+
+  const handleEnviarComprovante = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!comprovanteFile || comprovanteFile.size === 0) {
+      setToast({ message: 'Selecione o arquivo (nota fiscal ou recibo).', type: 'error' })
+      return
+    }
+    setSendingComprovante(true)
+    setToast(null)
+    try {
+      const form = new FormData()
+      form.append('year', String(selectedAno))
+      form.append('month', String(selectedMes))
+      form.append('file', comprovanteFile)
+      if (comprovanteMensagem.trim()) form.append('mensagem', comprovanteMensagem.trim())
+      const res = await fetch('/api/professor/financeiro/enviar-comprovante', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao enviar comprovante', type: 'error' })
+        return
+      }
+      setToast({ message: json.data?.message || 'Comprovante enviado. Agora você pode confirmar o valor.', type: 'success' })
+      setComprovanteModalOpen(false)
+      setComprovanteFile(null)
+      setComprovanteMensagem('')
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao enviar comprovante', type: 'error' })
+    } finally {
+      setSendingComprovante(false)
+    }
+  }
 
   const handleConfirmarValor = async () => {
     setConfirming(true)
@@ -189,6 +232,37 @@ export default function FinanceiroPage() {
             </div>
           </div>
 
+          {/* Enviar nota fiscal ou recibo – obrigatório antes de confirmar valor */}
+          <div className="mb-6 p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-800 mb-2">Nota fiscal ou recibo</h3>
+            {data.proofSentAt ? (
+              <div className="flex items-center gap-2 text-green-700">
+                <CheckCircle className="w-5 h-5 shrink-0" />
+                <span className="text-sm font-medium">
+                  Comprovante enviado em {new Date(data.proofSentAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} para financeiro@seidmanninstitute.com
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-gray-600">
+                  Envie a nota fiscal ou recibo referente a {MESES_LABELS[selectedMes]} de {selectedAno}. O e-mail será enviado para financeiro@seidmanninstitute.com. Só depois você poderá confirmar o valor a receber.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setComprovanteModalOpen(true)
+                    setComprovanteFile(null)
+                    setComprovanteMensagem(`Segue em anexo a nota fiscal/recibo referente a ${MESES_LABELS[selectedMes]} de ${selectedAno}, referente à prestação de serviços para a Seidmann Institute.`)
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <FileText className="w-4 h-4" />
+                  Enviar nota fiscal ou recibo
+                </Button>
+              </div>
+            )}
+          </div>
+
           <div className="mb-6 p-4 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             {data.teacherConfirmedAt ? (
               <div className="flex items-center gap-2 text-green-700">
@@ -199,14 +273,17 @@ export default function FinanceiroPage() {
               </div>
             ) : (
               <p className="text-sm text-gray-600">
-                Confirme o valor a receber para que o admin veja &quot;pagamento pronto para fazer&quot;.
+                {data.proofSentAt
+                  ? 'Confirme o valor a receber para que o admin veja "pagamento pronto para fazer".'
+                  : 'Envie primeiro a nota fiscal ou recibo acima para poder confirmar o valor a receber.'}
               </p>
             )}
             {!data.teacherConfirmedAt && (
               <Button
                 variant="primary"
                 onClick={handleConfirmarValor}
-                disabled={confirming}
+                disabled={confirming || !data.proofSentAt}
+                title={!data.proofSentAt ? 'Envie a nota fiscal ou recibo antes' : undefined}
               >
                 {confirming ? (
                   <>
@@ -226,7 +303,10 @@ export default function FinanceiroPage() {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
               <h2 className="text-lg font-semibold text-gray-800">Período e valores</h2>
-              <p className="text-sm text-gray-500 mt-0.5">Dados do período selecionado (definidos pelo admin)</p>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Dados do período selecionado (definidos pelo admin). O valor a receber é calculado somente pelas{' '}
+                <strong>horas registradas</strong>, nunca pela estimativa.
+              </p>
             </div>
             <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
@@ -234,11 +314,6 @@ export default function FinanceiroPage() {
                   <Calendar className="w-5 h-5 text-gray-400" />
                   <span className="font-medium">Período:</span>
                   <span>{formatDate(data.dataInicio)} a {formatDate(data.dataTermino)}</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-700">
-                  <Clock className="w-5 h-5 text-gray-400" />
-                  <span className="font-medium">Horas estimadas:</span>
-                  <span>{data.totalHorasEstimadas} h</span>
                 </div>
                 <div className="flex items-center gap-2 text-gray-700">
                   <Clock className="w-5 h-5 text-gray-400" />
@@ -298,6 +373,98 @@ export default function FinanceiroPage() {
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
+
+      <Modal
+        isOpen={comprovanteModalOpen}
+        onClose={() => {
+          if (!sendingComprovante) {
+            setComprovanteModalOpen(false)
+            setComprovanteFile(null)
+            setComprovanteMensagem('')
+          }
+        }}
+        title="Enviar nota fiscal ou recibo"
+        size="md"
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setComprovanteModalOpen(false)
+                setComprovanteFile(null)
+                setComprovanteMensagem('')
+              }}
+              disabled={sendingComprovante}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              disabled={sendingComprovante || !comprovanteFile}
+              onClick={() => {
+                if (comprovanteFile?.size) handleEnviarComprovante()
+              }}
+            >
+              {sendingComprovante ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                'Enviar'
+              )}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            O e-mail será enviado para <strong>financeiro@seidmanninstitute.com</strong> com seu nome, o período e o modelo abaixo. Anexe o comprovante (PDF ou imagem).
+          </p>
+          <div>
+            <label htmlFor="comprovante-professor" className="block text-sm font-semibold text-gray-700 mb-1">Professor</label>
+            <input
+              id="comprovante-professor"
+              name="professor"
+              type="text"
+              value={data?.professorNome ?? ''}
+              readOnly
+              className="input w-full bg-gray-100"
+              aria-label="Nome do professor"
+            />
+          </div>
+          <div>
+            <label htmlFor="comprovante-anexo" className="block text-sm font-semibold text-gray-700 mb-1">Anexo (nota fiscal ou recibo) *</label>
+            <input
+              id="comprovante-anexo"
+              name="anexo"
+              type="file"
+              accept=".pdf,image/jpeg,image/png,image/gif,image/webp"
+              onChange={(e) => setComprovanteFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
+              aria-required="true"
+              aria-label="Anexar nota fiscal ou recibo"
+            />
+            <p className="text-xs text-gray-500 mt-1">PDF ou imagem (JPG, PNG, GIF, WebP). Máximo 10 MB.</p>
+          </div>
+          <div>
+            <label htmlFor="comprovante-mensagem" className="block text-sm font-semibold text-gray-700 mb-1">Mensagem do e-mail (modelo)</label>
+            <textarea
+              id="comprovante-mensagem"
+              name="mensagem"
+              value={comprovanteMensagem}
+              onChange={(e) => setComprovanteMensagem(e.target.value)}
+              className="input w-full min-h-[100px]"
+              placeholder="Segue em anexo a nota fiscal/recibo referente ao mês de ... referente à prestação de serviços para a Seidmann Institute."
+              rows={4}
+              aria-label="Mensagem do e-mail"
+            />
+            <p className="text-xs text-gray-500 mt-1">Esta mensagem será enviada no corpo do e-mail. Você pode editar o texto acima.</p>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
