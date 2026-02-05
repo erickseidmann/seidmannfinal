@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays } from 'lucide-react'
+import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays, Trash2 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import { useTranslation } from '@/contexts/LanguageContext'
 
@@ -79,6 +79,7 @@ export default function DashboardProfessoresInicioPage() {
   const [notificacoes, setNotificacoes] = useState<Notificacao[]>([])
   const [loadingNotif, setLoadingNotif] = useState(true)
   const [markingId, setMarkingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [aulasHoje, setAulasHoje] = useState<LessonItem[]>([])
   const [aulasSemana, setAulasSemana] = useState<LessonItem[]>([])
   const [loadingAulasHoje, setLoadingAulasHoje] = useState(true)
@@ -170,6 +171,19 @@ export default function DashboardProfessoresInicioPage() {
       .finally(() => setMarkingId(null))
   }
 
+  const handleExcluirNotificacao = (id: string) => {
+    setDeletingId(id)
+    fetch(`/api/professor/alerts/${id}`, { method: 'DELETE', credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok) {
+          setNotificacoes((prev) => prev.filter((n) => n.id !== id))
+          window.dispatchEvent(new CustomEvent('professor-alerts-updated'))
+        }
+      })
+      .finally(() => setDeletingId(null))
+  }
+
   const displayName = professor?.nomePreferido || professor?.nome || 'Professor'
 
   const formatLessonTime = (startAt: string, durationMinutes?: number | null) => {
@@ -258,20 +272,35 @@ export default function DashboardProfessoresInicioPage() {
                       })}
                     </p>
                   </div>
-                  {!n.readAt && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!n.readAt && (
+                      <Button
+                        variant="outline"
+                        onClick={() => handleMarcarLido(n.id)}
+                        disabled={!!markingId || !!deletingId}
+                        className="text-xs py-1.5 px-2"
+                      >
+                        {markingId === n.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          t('professor.home.markRead')
+                        )}
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
-                      onClick={() => handleMarcarLido(n.id)}
-                      disabled={!!markingId}
-                      className="shrink-0 text-xs py-1.5 px-2"
+                      variant="ghost"
+                      onClick={() => handleExcluirNotificacao(n.id)}
+                      disabled={!!markingId || !!deletingId}
+                      className="text-xs py-1.5 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                      title={t('common.delete')}
                     >
-                      {markingId === n.id ? (
+                      {deletingId === n.id ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
-                        t('professor.home.markRead')
+                        <Trash2 className="w-4 h-4" />
                       )}
                     </Button>
-                  )}
+                  </div>
                 </li>
               )
             })}

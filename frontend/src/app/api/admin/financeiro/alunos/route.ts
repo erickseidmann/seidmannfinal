@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
         paymentMonths: hasMonthFilter
           ? { where: { year, month }, take: 1 }
           : false,
+        _count: { select: { financeObservations: true } },
       },
     })
 
@@ -103,6 +104,7 @@ export async function GET(request: NextRequest) {
         notaFiscalEmitida: hasMonthFilter && pm ? (pm.notaFiscalEmitida ?? null) : pi?.notaFiscalEmitida ?? null,
         email: e.email,
         paymentInfoId: pi?.id ?? null,
+        hasFinanceObservations: ((e as { _count?: { financeObservations: number } })._count?.financeObservations ?? 0) > 0,
       }
     })
 

@@ -12,7 +12,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2 } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -41,6 +41,7 @@ interface ProfessorFinanceiro {
   infosPagamento: string | null
   statusPagamento: 'PAGO' | 'EM_ABERTO'
   pagamentoProntoParaFazer: boolean
+  hasFinanceObservations?: boolean
 }
 
 function formatDate(iso: string): string {
@@ -124,6 +125,11 @@ export default function FinanceiroProfessoresPage() {
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [filterAlerta, setFilterAlerta] = useState<'todos' | 'proximo' | 'atrasados'>('todos')
+  const [obsModal, setObsModal] = useState<{ teacherId: string; nome: string } | null>(null)
+  const [obsList, setObsList] = useState<{ id: string; message: string; criadoEm: string }[]>([])
+  const [obsNewMessage, setObsNewMessage] = useState('')
+  const [obsLoading, setObsLoading] = useState(false)
+  const [obsSaving, setObsSaving] = useState(false)
   const COLUMN_KEYS_FINANCEIRO_PROF = [
     'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
@@ -197,6 +203,70 @@ export default function FinanceiroProfessoresPage() {
   const closeEditPeriodo = () => {
     setEditPeriodo(null)
     setToast(null)
+  }
+
+  useEffect(() => {
+    if (!obsModal) {
+      setObsList([])
+      setObsNewMessage('')
+      return
+    }
+    setObsLoading(true)
+    fetch(`/api/admin/financeiro/observations?teacherId=${encodeURIComponent(obsModal.teacherId)}`, {
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.data)) setObsList(j.data)
+        else setObsList([])
+      })
+      .catch(() => setObsList([]))
+      .finally(() => setObsLoading(false))
+  }, [obsModal?.teacherId])
+
+  const addObservation = async () => {
+    if (!obsModal || !obsNewMessage.trim() || obsSaving) return
+    setObsSaving(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/observations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ teacherId: obsModal.teacherId, message: obsNewMessage.trim() }),
+      })
+      const j = await res.json()
+      if (res.ok && j.ok && j.data) {
+        setObsList((prev) => [j.data, ...prev])
+        setObsNewMessage('')
+        setToast({ message: 'Observação adicionada', type: 'success' })
+        fetchData(selectedAno, selectedMes)
+      } else {
+        setToast({ message: j.message || 'Erro ao adicionar', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao adicionar observação', type: 'error' })
+    } finally {
+      setObsSaving(false)
+    }
+  }
+
+  const deleteObservation = async (obsId: string) => {
+    try {
+      const res = await fetch(`/api/admin/financeiro/observations/${obsId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const j = await res.json()
+      if (res.ok && j.ok) {
+        setObsList((prev) => prev.filter((o) => o.id !== obsId))
+        setToast({ message: 'Observação removida', type: 'success' })
+        fetchData(selectedAno, selectedMes)
+      } else {
+        setToast({ message: j.message || 'Erro ao remover', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao remover', type: 'error' })
+    }
   }
 
   const updatePagamento = async (teacherId: string, pago: boolean) => {
@@ -389,15 +459,25 @@ export default function FinanceiroProfessoresPage() {
       key: 'acoes',
       label: '',
       render: (row) => (
-        <button
-          type="button"
-          onClick={() => openEditPeriodo(row)}
-          className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm text-orange-600 hover:bg-orange-50"
-          title="Editar valores do mês"
-        >
-          <Calendar className="w-4 h-4" />
-          Editar mês
-        </button>
+        <div className="inline-flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setObsModal({ teacherId: row.id, nome: row.nome })}
+            className={`p-1.5 rounded ${row.hasFinanceObservations ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50' : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'}`}
+            title={row.hasFinanceObservations ? 'Observações (há notificações)' : 'Observações'}
+          >
+            <MessageSquare className={`w-4 h-4 ${row.hasFinanceObservations ? 'fill-current' : ''}`} />
+          </button>
+          <button
+            type="button"
+            onClick={() => openEditPeriodo(row)}
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm text-orange-600 hover:bg-orange-50"
+            title="Editar valores do mês"
+          >
+            <Calendar className="w-4 h-4" />
+            Editar mês
+          </button>
+        </div>
       ),
     },
   ]
@@ -640,6 +720,62 @@ export default function FinanceiroProfessoresPage() {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               />
               <p className="text-xs text-gray-500 mt-0.5">Salvo no cadastro do professor.</p>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Observações financeiras (professor) */}
+      <Modal
+        isOpen={!!obsModal}
+        onClose={() => setObsModal(null)}
+        title={obsModal ? `Observações – ${obsModal.nome}` : 'Observações'}
+        size="md"
+      >
+        {obsLoading ? (
+          <p className="text-gray-500">Carregando...</p>
+        ) : (
+          <div className="space-y-4">
+            <ul className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+              {obsList.length === 0 ? (
+                <li className="text-gray-500 text-sm">Nenhuma observação anterior.</li>
+              ) : (
+                obsList.map((o) => (
+                  <li key={o.id} className="flex items-start justify-between gap-2 text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                    <span className="flex-1">{o.message}</span>
+                    <span className="text-gray-400 text-xs shrink-0">{new Date(o.criadoEm).toLocaleDateString('pt-BR')}</span>
+                    <button
+                      type="button"
+                      onClick={() => deleteObservation(o.id)}
+                      className="p-1 text-gray-400 hover:text-red-600 rounded"
+                      title="Apagar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Nova observação</label>
+              <textarea
+                value={obsNewMessage}
+                onChange={(e) => setObsNewMessage(e.target.value)}
+                placeholder="Digite a observação..."
+                className="input w-full min-h-[80px]"
+                rows={3}
+              />
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                className="mt-2"
+                disabled={!obsNewMessage.trim() || obsSaving}
+                onClick={addObservation}
+              >
+                {obsSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Adicionar
+              </Button>
             </div>
           </div>
         )}

@@ -68,6 +68,7 @@ export async function GET(request: NextRequest) {
       periodoPagamentoPago: true,
       valorPorPeriodo: true,
       valorExtra: true,
+      _count: { select: { financeObservations: true } },
       ...(useMonthMode && {
         paymentMonths: { where: { year: year!, month: month! }, take: 1 },
       }),
@@ -258,6 +259,7 @@ export async function GET(request: NextRequest) {
         infosPagamento: t.infosPagamento ?? null,
         statusPagamento: statusPagamento as 'PAGO' | 'EM_ABERTO',
         pagamentoProntoParaFazer: !!(pm?.teacherConfirmedAt),
+        hasFinanceObservations: ((t as { _count?: { financeObservations: number } })._count?.financeObservations ?? 0) > 0,
       }
     })
 

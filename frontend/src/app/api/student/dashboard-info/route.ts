@@ -24,15 +24,21 @@ export async function GET(request: NextRequest) {
     const enrollmentIds = enrollments.map((e) => e.id)
     const now = new Date()
 
-    const alerts: { id: string; message: string; level: string | null; criadoEm: string }[] = []
+    const alerts: { id: string; message: string; level: string | null; readAt: string | null; criadoEm: string }[] = []
     if (enrollmentIds.length > 0) {
       const cutoff = new Date()
       cutoff.setDate(cutoff.getDate() - 15)
+      const twoDaysAgo = new Date()
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
       const alertRows = await prisma.studentAlert.findMany({
         where: {
           enrollmentId: { in: enrollmentIds },
           isActive: true,
           criadoEm: { gte: cutoff },
+          OR: [
+            { readAt: null },
+            { readAt: { gte: twoDaysAgo } },
+          ],
         },
         orderBy: { criadoEm: 'desc' },
         take: 20,
@@ -42,6 +48,7 @@ export async function GET(request: NextRequest) {
           id: a.id,
           message: a.message,
           level: a.level,
+          readAt: a.readAt?.toISOString() ?? null,
           criadoEm: a.criadoEm.toISOString(),
         })
       })

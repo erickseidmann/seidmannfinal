@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { User, Wallet, Calendar, MessageCircle, Bell, Clock, ChevronRight } from 'lucide-react'
+import { User, Wallet, Calendar, MessageCircle, Bell, Clock, ChevronRight, Trash2, Loader2 } from 'lucide-react'
 
 interface Aluno {
   nome: string
@@ -17,6 +17,7 @@ interface AlertItem {
   id: string
   message: string
   level: string | null
+  readAt?: string | null
   criadoEm: string
 }
 
@@ -59,6 +60,7 @@ function formatShortDate(iso: string): string {
 export default function DashboardAlunoInicioPage() {
   const [aluno, setAluno] = useState<Aluno | null>(null)
   const [dashboardInfo, setDashboardInfo] = useState<DashboardInfo | null>(null)
+  const [deletingAlertId, setDeletingAlertId] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/student/me', { credentials: 'include' })
@@ -75,6 +77,21 @@ export default function DashboardAlunoInicioPage() {
         if (json.ok && json.data) setDashboardInfo(json.data)
       })
   }, [])
+
+  const handleExcluirNotificacao = (id: string) => {
+    setDeletingAlertId(id)
+    fetch(`/api/student/alerts/${id}`, { method: 'DELETE', credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && dashboardInfo) {
+          setDashboardInfo({
+            ...dashboardInfo,
+            alerts: dashboardInfo.alerts.filter((a) => a.id !== id),
+          })
+        }
+      })
+      .finally(() => setDeletingAlertId(null))
+  }
 
   const displayName = aluno?.nome || 'Aluno'
   const alerts = dashboardInfo?.alerts ?? []
@@ -97,9 +114,24 @@ export default function DashboardAlunoInicioPage() {
             </h2>
             <ul className="divide-y divide-gray-100 max-h-48 overflow-y-auto">
               {alerts.slice(0, 5).map((a) => (
-                <li key={a.id} className="px-4 py-3">
-                  <p className="text-sm text-gray-800">{a.message}</p>
-                  <p className="text-xs text-gray-500 mt-1">{formatDateHour(a.criadoEm)}</p>
+                <li key={a.id} className="px-4 py-3 flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-gray-800">{a.message}</p>
+                    <p className="text-xs text-gray-500 mt-1">{formatDateHour(a.criadoEm)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleExcluirNotificacao(a.id)}
+                    disabled={!!deletingAlertId}
+                    className="shrink-0 p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    title="Excluir"
+                  >
+                    {deletingAlertId === a.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                  </button>
                 </li>
               ))}
             </ul>

@@ -39,6 +39,9 @@ export async function GET(request: NextRequest) {
     cutoff.setDate(cutoff.getDate() - 15)
 
     // Só exibir no Início: pagamento enviado, novo anúncio, novo aluno (apenas últimos 15 dias)
+    // Notificações lidas há mais de 2 dias não são exibidas
+    const twoDaysAgo = new Date()
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
     const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT'] as const
     const alerts = await prisma.teacherAlert.findMany({
       where: {
@@ -46,6 +49,10 @@ export async function GET(request: NextRequest) {
         isActive: true,
         type: { in: [...TIPOS_NOTIFICACAO] },
         criadoEm: { gte: cutoff },
+        OR: [
+          { readAt: null },
+          { readAt: { gte: twoDaysAgo } },
+        ],
       },
       orderBy: { criadoEm: 'desc' },
       take: 50,

@@ -26,6 +26,7 @@ import {
   MessageCircle,
   Menu,
   X,
+  Columns3,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -61,6 +62,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/administracao': 'financeiro-administracao',
   '/admin/financeiro/relatorios': 'financeiro-relatorios',
   '/admin/chat': 'chat',
+  '/admin/kanban': 'kanban',
 }
 
 const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-relatorios'] as const
@@ -83,6 +85,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
   { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
   { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
+  { href: '/admin/kanban', labelKey: 'admin.kanban', icon: Columns3 },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -184,6 +187,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
+    if (pageKey === 'kanban') return adminPages.length === 0 || adminPages.includes('dashboard') || adminPages.includes('kanban')
     return pageKey ? adminPages.includes(pageKey) : false
   })
 

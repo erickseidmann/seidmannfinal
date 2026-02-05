@@ -92,6 +92,7 @@ model User {
   studentAlertsCreated StudentAlert[]
   adminNotifications AdminNotification[]
   adminPaymentMonths AdminUserPaymentMonth[]
+  kanbanCardsAssigned KanbanCard[]
   conversationParticipants ConversationParticipant[]
   chatMessagesSent ChatMessage[]
   
@@ -151,6 +152,23 @@ model AdminNotification {
   @@index([userId])
   @@index([readAt])
   @@map("admin_notifications")
+}
+
+// Kanban: blocos em colunas Para fazer, Fazendo, Feito (admin)
+model KanbanCard {
+  id              String   @id @default(cuid())
+  title           String   @db.VarChar(500)
+  setor           String?  @db.VarChar(100)   // setor
+  assignedToId    String?  @map("assigned_to_id") // User (admin) que fará
+  column          String   @db.VarChar(20)   // TODO | DOING | DONE
+  orderIndex      Int      @default(0) @map("order_index")
+  criadoEm        DateTime @default(now()) @map("created_at")
+  atualizadoEm    DateTime @updatedAt @map("updated_at")
+
+  assignedTo      User?    @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  @@index([column])
+  @@index([assignedToId])
+  @@map("kanban_cards")
 }
 
 // Chat interno: conversas entre funcionários, professores e alunos
@@ -253,9 +271,10 @@ model Enrollment {
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
-  paymentMonths  EnrollmentPaymentMonth[]
-  alerts         StudentAlert[]
-  lessons        Lesson[]
+  paymentMonths       EnrollmentPaymentMonth[]
+  financeObservations FinanceObservation[]
+  alerts              StudentAlert[]
+  lessons             Lesson[]
   lessonRecordPresences LessonRecordStudent[]
 
   @@index([email])
@@ -313,6 +332,22 @@ model EnrollmentPaymentMonth {
   @@map("enrollment_payment_months")
 }
 
+// Observações financeiras (aluno ou professor) – lista, adicionar, apagar
+model FinanceObservation {
+  id           String    @id @default(cuid())
+  enrollmentId String?   @map("enrollment_id")
+  teacherId    String?   @map("teacher_id")
+  message      String    @db.Text
+  criadoEm     DateTime  @default(now()) @map("created_at")
+
+  enrollment   Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  teacher      Teacher?    @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId])
+  @@index([teacherId])
+  @@map("finance_observations")
+}
+
 // Model: Teacher (Professor)
 // Representa um professor do instituto
 model Teacher {
@@ -344,8 +379,9 @@ model Teacher {
   attendances       Attendance[]
   alerts            TeacherAlert[]
   lessons           Lesson[]
-  paymentMonths     TeacherPaymentMonth[]
-  availabilitySlots TeacherAvailabilitySlot[]
+  paymentMonths       TeacherPaymentMonth[]
+  availabilitySlots   TeacherAvailabilitySlot[]
+  financeObservations FinanceObservation[]
 
   // Índices
   @@index([email])
@@ -498,6 +534,7 @@ model StudentAlert {
   message       String
   level         String?    // "INFO", "WARN", "ERROR"
   isActive      Boolean    @default(true) @map("is_active")
+  readAt        DateTime?  @map("read_at") // quando o aluno leu (null = não lido); após 2 dias não é mais exibido
   criadoEm      DateTime   @default(now()) @map("created_at")
   atualizadoEm  DateTime   @updatedAt @map("updated_at")
   createdById   String?    @map("created_by_id")
@@ -507,6 +544,7 @@ model StudentAlert {
 
   @@index([enrollmentId])
   @@index([isActive])
+  @@index([readAt])
   @@map("student_alerts")
 }
 

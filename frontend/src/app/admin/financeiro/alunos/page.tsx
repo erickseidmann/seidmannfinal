@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2 } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -37,6 +37,7 @@ interface AlunoFinanceiro {
   notaFiscalEmitida: boolean | null
   email: string
   paymentInfoId: string | null
+  hasFinanceObservations?: boolean
 }
 
 /** Status efetivo: se não está PAGO e a data de próximo pagamento já passou → ATRASADO. */
@@ -153,6 +154,11 @@ export default function FinanceiroAlunosPage() {
   const [loadingCobrancaForId, setLoadingCobrancaForId] = useState<string | null>(null)
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null)
   const [cellValue, setCellValue] = useState<string | number | boolean>('')
+  const [obsModal, setObsModal] = useState<{ enrollmentId: string; nome: string } | null>(null)
+  const [obsList, setObsList] = useState<{ id: string; message: string; criadoEm: string }[]>([])
+  const [obsNewMessage, setObsNewMessage] = useState('')
+  const [obsLoading, setObsLoading] = useState(false)
+  const [obsSaving, setObsSaving] = useState(false)
   const [form, setForm] = useState({
     quemPaga: '',
     paymentStatus: '',
@@ -267,6 +273,7 @@ export default function FinanceiroAlunosPage() {
   const [cubeModal, setCubeModal] = useState<'atrasado' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
   const [filterProximos5Dias, setFilterProximos5Dias] = useState(false)
+  const [filterAtrasados, setFilterAtrasados] = useState(false)
 
   const FINANCE_COLUMNS = [
     { key: 'aluno', label: 'Aluno', fixed: true },
@@ -337,10 +344,77 @@ export default function FinanceiroAlunosPage() {
         return d >= hoje && d <= em5
       })
     }
+    if (filterAtrasados) {
+      list = list.filter((a) => getEffectiveStatus(a) === 'ATRASADO')
+    }
     return list
-  }, [alunosNoMes, filterBusca, filterProximos5Dias])
+  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados])
 
   const selected = editId ? alunos.find((a) => a.id === editId) : null
+
+  useEffect(() => {
+    if (!obsModal) {
+      setObsList([])
+      setObsNewMessage('')
+      return
+    }
+    setObsLoading(true)
+    fetch(`/api/admin/financeiro/observations?enrollmentId=${encodeURIComponent(obsModal.enrollmentId)}`, {
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.data)) setObsList(j.data)
+        else setObsList([])
+      })
+      .catch(() => setObsList([]))
+      .finally(() => setObsLoading(false))
+  }, [obsModal?.enrollmentId])
+
+  const addObservation = async () => {
+    if (!obsModal || !obsNewMessage.trim() || obsSaving) return
+    setObsSaving(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/observations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ enrollmentId: obsModal.enrollmentId, message: obsNewMessage.trim() }),
+      })
+      const j = await res.json()
+      if (res.ok && j.ok && j.data) {
+        setObsList((prev) => [j.data, ...prev])
+        setObsNewMessage('')
+        setToast({ message: 'Observação adicionada', type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+      } else {
+        setToast({ message: j.message || 'Erro ao adicionar', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao adicionar observação', type: 'error' })
+    } finally {
+      setObsSaving(false)
+    }
+  }
+
+  const deleteObservation = async (obsId: string) => {
+    try {
+      const res = await fetch(`/api/admin/financeiro/observations/${obsId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const j = await res.json()
+      if (res.ok && j.ok) {
+        setObsList((prev) => prev.filter((o) => o.id !== obsId))
+        setToast({ message: 'Observação removida', type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+      } else {
+        setToast({ message: j.message || 'Erro ao remover', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao remover', type: 'error' })
+    }
+  }
 
   const handleCopy = useCallback(() => {
     setToast({ message: 'Copiado para a área de transferência', type: 'success' })
@@ -756,7 +830,7 @@ export default function FinanceiroAlunosPage() {
                   className="input w-full"
                 />
               </div>
-              <div className="flex items-center gap-2 pt-6">
+              <div className="flex items-center gap-4 pt-6">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -765,6 +839,15 @@ export default function FinanceiroAlunosPage() {
                     className="rounded border-gray-300 text-amber-600"
                   />
                   <span className="text-sm font-medium text-gray-700">Vencimento em 5 dias</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={filterAtrasados}
+                    onChange={(e) => setFilterAtrasados(e.target.checked)}
+                    className="rounded border-gray-300 text-red-600"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Atrasados</span>
                 </label>
               </div>
               <div className="pt-6">
@@ -1050,6 +1133,14 @@ export default function FinanceiroAlunosPage() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setObsModal({ enrollmentId: a.id, nome: a.nome })}
+                          className={`ml-1 p-1 ${a.hasFinanceObservations ? 'text-orange-600 hover:text-orange-700' : 'text-gray-600 hover:text-blue-600'}`}
+                          title={a.hasFinanceObservations ? 'Observações (há notificações)' : 'Observações'}
+                        >
+                          <MessageSquare className={`w-4 h-4 ${a.hasFinanceObservations ? 'fill-current' : ''}`} />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => openCobrancaModal(a.id, a.nome)}
                           disabled={!a.email || loadingCobrancaForId === a.id}
                           className="ml-1 text-gray-600 hover:text-green-600 p-1 disabled:opacity-50"
@@ -1145,6 +1236,62 @@ export default function FinanceiroAlunosPage() {
                 </div>
               </div>
             </form>
+          )}
+        </Modal>
+
+        {/* Modal Observações financeiras (aluno) */}
+        <Modal
+          isOpen={!!obsModal}
+          onClose={() => setObsModal(null)}
+          title={obsModal ? `Observações – ${obsModal.nome}` : 'Observações'}
+          size="md"
+        >
+          {obsLoading ? (
+            <p className="text-gray-500">Carregando...</p>
+          ) : (
+            <div className="space-y-4">
+              <ul className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+                {obsList.length === 0 ? (
+                  <li className="text-gray-500 text-sm">Nenhuma observação anterior.</li>
+                ) : (
+                  obsList.map((o) => (
+                    <li key={o.id} className="flex items-start justify-between gap-2 text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                      <span className="flex-1">{o.message}</span>
+                      <span className="text-gray-400 text-xs shrink-0">{new Date(o.criadoEm).toLocaleDateString('pt-BR')}</span>
+                      <button
+                        type="button"
+                        onClick={() => deleteObservation(o.id)}
+                        className="p-1 text-gray-400 hover:text-red-600 rounded"
+                        title="Apagar"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Nova observação</label>
+                <textarea
+                  value={obsNewMessage}
+                  onChange={(e) => setObsNewMessage(e.target.value)}
+                  placeholder="Digite a observação..."
+                  className="input w-full min-h-[80px]"
+                  rows={3}
+                />
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  className="mt-2"
+                  disabled={!obsNewMessage.trim() || obsSaving}
+                  onClick={addObservation}
+                >
+                  {obsSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Adicionar
+                </Button>
+              </div>
+            </div>
           )}
         </Modal>
 
