@@ -66,6 +66,7 @@ const VALID_STATUS = [
 const VALID_CURSO = ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL']
 const VALID_TEMPO = [30, 40, 60, 120]
 const VALID_TIPO_AULA = ['PARTICULAR', 'GRUPO']
+const VALID_ESCOLA_MATRICULA = ['SEIDMANN', 'YOUBECOME', 'HIGHWAY', 'OUTRO']
 
 export async function POST(request: NextRequest) {
   try {
@@ -229,6 +230,14 @@ export async function POST(request: NextRequest) {
       if (tipoAula && !VALID_TIPO_AULA.includes(tipoAula)) tipoAula = null
       const nomeGrupo = tipoAula === 'GRUPO' ? (get(row, 'nomegrupo') || null) : null
 
+      let escolaMatricula: string | null = null
+      const escolaRaw = (get(row, 'escolamatricula') || '').toUpperCase().trim()
+      if (escolaRaw && VALID_ESCOLA_MATRICULA.includes(escolaRaw)) {
+        escolaMatricula = escolaRaw
+      }
+      const escolaMatriculaOutro =
+        escolaMatricula === 'OUTRO' ? (get(row, 'escolamatriculaoutro') || null) : null
+
       const moraNoExterior = /^(1|true|sim|s|yes|y)$/i.test(get(row, 'moranoexterior'))
 
       let valorMensalidade: number | null = null
@@ -287,6 +296,8 @@ export async function POST(request: NextRequest) {
             nomeVendedor: get(row, 'nomevendedor') || null,
             nomeEmpresaOuIndicador: get(row, 'nomeempresaouindicador') || null,
             observacoes: get(row, 'observacoes') || null,
+            escolaMatricula,
+            escolaMatriculaOutro,
           },
         })
         const normalizedEmail = email.trim().toLowerCase()

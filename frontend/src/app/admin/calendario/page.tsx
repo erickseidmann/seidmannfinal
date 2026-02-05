@@ -189,6 +189,7 @@ export default function AdminCalendarioPage() {
     id: string
     nome: string
     status?: string
+    nota?: number | null
     idiomasFala?: string[]
     idiomasEnsina?: string[]
   }[]>([])
@@ -209,6 +210,7 @@ export default function AdminCalendarioPage() {
   const [deleteLessonModalOpen, setDeleteLessonModalOpen] = useState(false)
   const [savingLesson, setSavingLesson] = useState(false)
   const [deletingLesson, setDeletingLesson] = useState(false)
+  const [enrollmentIdsWithFullWeek, setEnrollmentIdsWithFullWeek] = useState<string[]>([])
   const [listModal, setListModal] = useState<{
     title: string
     type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors'
@@ -218,8 +220,14 @@ export default function AdminCalendarioPage() {
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
   const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
   const [teacherAvailabilities, setTeacherAvailabilities] = useState<Record<string, boolean> | null>(null)
+  const [teacherConflicts, setTeacherConflicts] = useState<Record<string, string>>({})
   const [idiomaErrorModalOpen, setIdiomaErrorModalOpen] = useState(false)
   const [lessonProfessorDropdownOpen, setLessonProfessorDropdownOpen] = useState(false)
+  const [lessonAlunoDropdownOpen, setLessonAlunoDropdownOpen] = useState(false)
+  const [lessonAlunoSearch, setLessonAlunoSearch] = useState('')
+  const [lessonProfessorSearch, setLessonProfessorSearch] = useState('')
+  const [lessonStatusDropdownOpen, setLessonStatusDropdownOpen] = useState(false)
+  const [lessonStatusSearch, setLessonStatusSearch] = useState('')
 
   const weekStartForStats = useMemo(() => getMonday(currentDate), [currentDate])
 
@@ -231,11 +239,13 @@ export default function AdminCalendarioPage() {
     ? activeTeachers.find((t) => t.id === selectedTeacherId)
     : null
 
-  // Opções para o select de aluno: grupos (nome do grupo + integrantes) ou aluno individual
+  // Opções para o select de aluno: grupos ou aluno individual; exclui quem já tem frequência correta na semana
   const studentOptions = useMemo(() => {
+    const fullSet = new Set(enrollmentIdsWithFullWeek)
     const list: { value: string; label: string }[] = []
     const groupKeys = new Set<string>()
     for (const e of enrollments) {
+      if (fullSet.has(e.id)) continue
       if (e.tipoAula === 'GRUPO' && e.nomeGrupo?.trim()) {
         const key = e.nomeGrupo.trim()
         if (groupKeys.has(key)) continue
@@ -255,7 +265,7 @@ export default function AdminCalendarioPage() {
       }
     }
     return list
-  }, [enrollments])
+  }, [enrollments, enrollmentIdsWithFullWeek])
 
   const fetchLessons = useCallback(async () => {
     let start: Date
@@ -338,12 +348,14 @@ export default function AdminCalendarioPage() {
           id: string
           nome: string
           status?: string
+          nota?: number | null
           idiomasFala?: string[] | unknown
           idiomasEnsina?: string[] | unknown
         }) => ({
           id: t.id,
           nome: t.nome,
           status: t.status ?? undefined,
+          nota: t.nota ?? undefined,
           idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : [],
           idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : [],
         })))
@@ -352,6 +364,28 @@ export default function AdminCalendarioPage() {
       console.error(e)
     }
   }, [])
+
+  useEffect(() => {
+    if (!lessonModalOpen) {
+      setEnrollmentIdsWithFullWeek([])
+      return
+    }
+    const refDate = lessonForm.startAt ? new Date(lessonForm.startAt) : new Date()
+    if (Number.isNaN(refDate.getTime())) return
+    const weekStart = getMonday(refDate)
+    fetch(`/api/admin/lessons/enrollments-with-full-week?weekStart=${weekStart.toISOString()}`, {
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.data?.enrollmentIds)) {
+          setEnrollmentIdsWithFullWeek(j.data.enrollmentIds)
+        } else {
+          setEnrollmentIdsWithFullWeek([])
+        }
+      })
+      .catch(() => setEnrollmentIdsWithFullWeek([]))
+  }, [lessonModalOpen, lessonForm.startAt])
 
   const getHolidaysRange = useCallback(() => {
     let start: Date
@@ -434,28 +468,43 @@ export default function AdminCalendarioPage() {
   useEffect(() => {
     if (!lessonModalOpen || !lessonForm.startAt?.trim()) {
       setTeacherAvailabilities(null)
+      setTeacherConflicts({})
       return
     }
     const raw = lessonForm.startAt.trim()
     const iso = raw.length >= 16 ? new Date(raw.length === 16 ? raw + ':00' : raw).toISOString() : null
     if (!iso || Number.isNaN(new Date(iso).getTime())) {
       setTeacherAvailabilities(null)
+      setTeacherConflicts({})
       return
     }
+    const duration = lessonForm.durationMinutes || 60
+    const excludeId = editingLesson?.id ?? ''
+    const url = `/api/admin/teachers/check-availability?datetime=${encodeURIComponent(iso)}&durationMinutes=${duration}${excludeId ? `&excludeLessonId=${encodeURIComponent(excludeId)}` : ''}`
     let cancelled = false
-    fetch(`/api/admin/teachers/check-availability?datetime=${encodeURIComponent(iso)}`, { credentials: 'include' })
+    fetch(url, { credentials: 'include' })
       .then((r) => r.json())
       .then((j) => {
-        if (!cancelled && j.ok && j.data?.availabilities) setTeacherAvailabilities(j.data.availabilities)
-        else if (!cancelled) setTeacherAvailabilities(null)
+        if (!cancelled && j.ok) {
+          if (j.data?.availabilities) setTeacherAvailabilities(j.data.availabilities)
+          else setTeacherAvailabilities(null)
+          if (j.data?.conflicts) setTeacherConflicts(j.data.conflicts)
+          else setTeacherConflicts({})
+        } else if (!cancelled) {
+          setTeacherAvailabilities(null)
+          setTeacherConflicts({})
+        }
       })
       .catch(() => {
-        if (!cancelled) setTeacherAvailabilities(null)
+        if (!cancelled) {
+          setTeacherAvailabilities(null)
+          setTeacherConflicts({})
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [lessonModalOpen, lessonForm.startAt])
+  }, [lessonModalOpen, lessonForm.startAt, lessonForm.durationMinutes, editingLesson?.id])
 
   useEffect(() => {
     if (teacherAvailabilities != null && lessonForm.teacherId && teacherAvailabilities[lessonForm.teacherId] === false) {
@@ -1135,6 +1184,11 @@ export default function AdminCalendarioPage() {
           onClose={() => {
             setLessonModalOpen(false)
             setLessonProfessorDropdownOpen(false)
+            setLessonAlunoDropdownOpen(false)
+            setLessonStatusDropdownOpen(false)
+            setLessonAlunoSearch('')
+            setLessonProfessorSearch('')
+            setLessonStatusSearch('')
           }}
           title={editingLesson ? 'Editar aula' : 'Nova aula'}
           size="md"
@@ -1156,6 +1210,8 @@ export default function AdminCalendarioPage() {
                 onClick={() => {
                   setLessonModalOpen(false)
                   setLessonProfessorDropdownOpen(false)
+                  setLessonAlunoDropdownOpen(false)
+                  setLessonStatusDropdownOpen(false)
                 }}
                 disabled={savingLesson}
               >
@@ -1177,43 +1233,102 @@ export default function AdminCalendarioPage() {
           }
         >
           <form onSubmit={handleSaveLesson} className="space-y-4">
+            {/* Aluno – combobox (digitar + lista) */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Aluno *</label>
-              <select
-                value={lessonForm.enrollmentId}
-                onChange={(e) => setLessonForm({ ...lessonForm, enrollmentId: e.target.value })}
-                className="input w-full"
-                required
-              >
-                <option value="">Selecione o aluno</option>
-                {studentOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={
+                    lessonAlunoDropdownOpen
+                      ? lessonAlunoSearch
+                      : studentOptions.find((o) => o.value === lessonForm.enrollmentId)?.label ?? ''
+                  }
+                  onChange={(e) => {
+                    setLessonAlunoSearch(e.target.value)
+                    if (!lessonAlunoDropdownOpen) setLessonAlunoDropdownOpen(true)
+                  }}
+                  onFocus={() => setLessonAlunoDropdownOpen(true)}
+                  placeholder="Digite ou selecione o aluno"
+                  className="input w-full"
+                  autoComplete="off"
+                />
+                {lessonAlunoDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      aria-hidden
+                      onClick={() => setLessonAlunoDropdownOpen(false)}
+                    />
+                    <div className="absolute left-0 right-0 top-full mt-1 z-20 py-1 bg-white rounded-lg border border-gray-200 shadow-lg max-h-[220px] overflow-y-auto">
+                      {studentOptions
+                        .filter(
+                          (opt) =>
+                            !lessonAlunoSearch.trim() ||
+                            opt.label.toLowerCase().includes(lessonAlunoSearch.toLowerCase())
+                        )
+                        .map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setLessonForm({ ...lessonForm, enrollmentId: opt.value })
+                              setLessonAlunoSearch('')
+                              setLessonAlunoDropdownOpen(false)
+                            }}
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      {studentOptions.filter(
+                        (opt) =>
+                          !lessonAlunoSearch.trim() ||
+                          opt.label.toLowerCase().includes(lessonAlunoSearch.toLowerCase())
+                      ).length === 0 && (
+                        <p className="px-3 py-2 text-sm text-gray-500">Nenhum aluno encontrado.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
+            {/* Professor – combobox (digitar para filtrar + lista, indisponível com mensagem) */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Professor *</label>
               <div className="relative">
+                <input
+                  type="text"
+                  value={
+                    lessonProfessorDropdownOpen
+                      ? lessonProfessorSearch
+                      : (() => {
+                          const t = activeTeachers.find((x) => x.id === lessonForm.teacherId)
+                          if (!t) return ''
+                          const unav = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
+                          const conflict = teacherConflicts[t.id]
+                          const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
+                          if (unav && conflict) return `${t.nome}${label} (já tem aula nesse horário com ${conflict})`
+                          if (unav) return `${t.nome}${label} (Indisponível)`
+                          return `${t.nome}${label}`
+                        })()
+                  }
+                  onChange={(e) => {
+                    setLessonProfessorSearch(e.target.value)
+                    if (!lessonProfessorDropdownOpen) setLessonProfessorDropdownOpen(true)
+                  }}
+                  onFocus={() => setLessonProfessorDropdownOpen(true)}
+                  placeholder="Digite ou selecione o professor"
+                  className="input w-full"
+                  autoComplete="off"
+                />
                 <button
                   type="button"
                   onClick={() => setLessonProfessorDropdownOpen((v) => !v)}
-                  className="input w-full text-left flex items-center justify-between"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
                 >
-                  <span>
-                    {lessonForm.teacherId
-                      ? (() => {
-                          const t = activeTeachers.find((x) => x.id === lessonForm.teacherId)
-                          if (!t) return 'Selecione o professor'
-                          const unav = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
-                          const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
-                          return unav ? `${t.nome}${label} (Indisponível)` : `${t.nome}${label}`
-                        })()
-                      : 'Selecione o professor'}
-                  </span>
                   <ChevronRight
-                    className={`w-4 h-4 text-gray-400 transition-transform ${lessonProfessorDropdownOpen ? 'rotate-90' : ''}`}
+                    className={`w-4 h-4 transition-transform ${lessonProfessorDropdownOpen ? 'rotate-90' : ''}`}
                   />
                 </button>
                 {lessonProfessorDropdownOpen && (
@@ -1224,38 +1339,56 @@ export default function AdminCalendarioPage() {
                       onClick={() => setLessonProfessorDropdownOpen(false)}
                     />
                     <div className="absolute left-0 right-0 top-full mt-1 z-20 py-1 bg-white rounded-lg border border-gray-200 shadow-lg max-h-[240px] overflow-y-auto">
-                      {activeTeachers.map((t) => {
-                        const unavailable = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
-                        const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
-                        const teachesEn = (t.idiomasEnsina ?? []).includes('INGLES')
-                        const teachesEs = (t.idiomasEnsina ?? []).includes('ESPANHOL')
-                        const nameColor =
-                          teachesEn && teachesEs
-                            ? 'text-blue-600'
-                            : teachesEn
-                              ? 'text-blue-600 font-medium'
-                              : teachesEs
-                                ? 'text-amber-600 font-medium'
-                                : 'text-gray-800'
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            disabled={unavailable}
-                            onClick={() => {
-                              setLessonForm({ ...lessonForm, teacherId: t.id })
-                              setLessonProfessorDropdownOpen(false)
-                            }}
-                            className={`w-full text-left px-3 py-2 text-sm ${unavailable ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-100'}`}
-                          >
-                            <span className={nameColor}>{t.nome}</span>
-                            {label && <span className="text-gray-500 font-normal">{label}</span>}
-                            {unavailable && <span className="text-gray-400"> (Indisponível)</span>}
-                          </button>
+                      {activeTeachers
+                        .filter(
+                          (t) =>
+                            !lessonProfessorSearch.trim() ||
+                            t.nome.toLowerCase().includes(lessonProfessorSearch.toLowerCase())
                         )
-                      })}
-                      {activeTeachers.length === 0 && (
-                        <p className="px-3 py-2 text-sm text-gray-500">Nenhum professor ativo.</p>
+                        .map((t) => {
+                          const unavailable = teacherAvailabilities != null && teacherAvailabilities[t.id] === false
+                          const conflictMsg = teacherConflicts[t.id]
+                          const label = getTeacherLanguageLabel(t.idiomasFala ?? [], t.idiomasEnsina ?? [])
+                          const teachesEn = (t.idiomasEnsina ?? []).includes('INGLES')
+                          const teachesEs = (t.idiomasEnsina ?? []).includes('ESPANHOL')
+                          const nameColor =
+                            teachesEn && teachesEs
+                              ? 'text-blue-600'
+                              : teachesEn
+                                ? 'text-blue-600 font-medium'
+                                : teachesEs
+                                  ? 'text-amber-600 font-medium'
+                                  : 'text-gray-800'
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              disabled={unavailable}
+                              onClick={() => {
+                                setLessonForm({ ...lessonForm, teacherId: t.id })
+                                setLessonProfessorSearch('')
+                                setLessonProfessorDropdownOpen(false)
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm ${unavailable ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+                            >
+                              <span className={nameColor}>{t.nome}</span>
+                              {label && <span className="text-gray-500 font-normal">{label}</span>}
+                              {unavailable && (
+                                <span className="text-gray-500 block text-xs mt-0.5">
+                                  {conflictMsg
+                                    ? `(já tem aula nesse horário com ${conflictMsg})`
+                                    : '(Indisponível)'}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      {activeTeachers.filter(
+                        (t) =>
+                          !lessonProfessorSearch.trim() ||
+                          t.nome.toLowerCase().includes(lessonProfessorSearch.toLowerCase())
+                      ).length === 0 && (
+                        <p className="px-3 py-2 text-sm text-gray-500">Nenhum professor encontrado.</p>
                       )}
                     </div>
                   </>
@@ -1264,34 +1397,92 @@ export default function AdminCalendarioPage() {
               {lessonForm.teacherId && (() => {
                 const t = teachers.find((x) => x.id === lessonForm.teacherId)
                 const falaPt = t && (t.idiomasFala ?? []).includes('PORTUGUES')
-                if (!t || falaPt) return null
+                if (!t) return null
+                const isOneStar = t.nota === 1
                 return (
-                  <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm mt-2 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    Atenção: esse professor não fala português.
-                  </p>
+                  <>
+                    {isOneStar && (
+                      <p className="text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 text-sm mt-2 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        Atenção: esse é um professor 1 estrela!
+                      </p>
+                    )}
+                    {!falaPt && (
+                      <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm mt-2 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        Atenção: esse professor não fala português.
+                      </p>
+                    )}
+                  </>
                 )
               })()}
               {lessonForm.startAt && teacherAvailabilities != null && (
                 <p className="text-xs text-gray-500 mt-1">
-                  Por padrão todos estão disponíveis. Quem tem horários cadastrados só aparece disponível nesses horários.
+                  Por padrão todos estão disponíveis. Quem tem horários cadastrados só aparece disponível nesses horários. Quem já tem aula no horário aparece como indisponível.
                 </p>
               )}
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-              <select
-                value={lessonForm.status}
-                onChange={(e) =>
-                  setLessonForm({ ...lessonForm, status: e.target.value as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO' })
-                }
-                className="input w-full"
-              >
-                <option value="CONFIRMED">Confirmada</option>
-                <option value="CANCELLED">Cancelada</option>
-                <option value="REPOSICAO">Reposição</option>
-              </select>
-            </div>
+            {/* Status – combobox (digitar + lista) */}
+            {(() => {
+              const STATUS_OPCOES = [
+                { value: 'CONFIRMED' as const, label: 'Confirmada' },
+                { value: 'CANCELLED' as const, label: 'Cancelada' },
+                { value: 'REPOSICAO' as const, label: 'Reposição' },
+              ]
+              const filteredStatus = !lessonStatusSearch.trim()
+                ? STATUS_OPCOES
+                : STATUS_OPCOES.filter((o) =>
+                    o.label.toLowerCase().includes(lessonStatusSearch.toLowerCase())
+                  )
+              return (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={
+                        lessonStatusDropdownOpen
+                          ? lessonStatusSearch
+                          : STATUS_OPCOES.find((o) => o.value === lessonForm.status)?.label ?? ''
+                      }
+                      onChange={(e) => {
+                        setLessonStatusSearch(e.target.value)
+                        if (!lessonStatusDropdownOpen) setLessonStatusDropdownOpen(true)
+                      }}
+                      onFocus={() => setLessonStatusDropdownOpen(true)}
+                      placeholder="Digite ou selecione"
+                      className="input w-full"
+                      autoComplete="off"
+                    />
+                    {lessonStatusDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          aria-hidden
+                          onClick={() => setLessonStatusDropdownOpen(false)}
+                        />
+                        <div className="absolute left-0 right-0 top-full mt-1 z-20 py-1 bg-white rounded-lg border border-gray-200 shadow-lg">
+                          {filteredStatus.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => {
+                                setLessonForm({ ...lessonForm, status: opt.value })
+                                setLessonStatusSearch('')
+                                setLessonStatusDropdownOpen(false)
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Data e hora *</label>
               <input

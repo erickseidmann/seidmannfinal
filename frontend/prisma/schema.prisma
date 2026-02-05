@@ -480,6 +480,16 @@ model TeacherAlert {
   @@map("teacher_alerts")
 }
 
+// Solicitação de novo professor: horários e idiomas desejados (admin cria; pode apagar ao encontrar professor)
+model TeacherRequest {
+  id          String   @id @default(cuid())
+  horarios    String   @db.Text   // Descrição dos horários (ex: "Seg 9h, Qua 14h")
+  idiomas     String   @db.VarChar(255) // Idiomas desejados (ex: "INGLES, ESPANHOL")
+  criadoEm    DateTime @default(now()) @map("created_at")
+
+  @@map("teacher_requests")
+}
+
 // Model: StudentAlert (Alerta para Aluno/Matrícula)
 // Alertas específicos para alunos (como TeacherAlert para professores)
 model StudentAlert {

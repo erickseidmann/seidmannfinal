@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2 } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 interface StudentAlertItem {
@@ -282,8 +282,11 @@ export default function AdminAlunosPage() {
     count: number
     list: { enrollmentId: string; studentName: string; expected: number; actual: number }[]
   }>({ count: 0, list: [] })
-  const defaultVisibleColumnKeys = ['nome', 'idade', 'email', 'whatsapp', 'cpf', 'endereco', 'valorMensalidade', 'tipoAula', 'teacherNameForWeek', 'status', 'trackingCode', 'criadoEm', 'actions']
+  const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'email', 'whatsapp', 'cpf', 'endereco', 'valorMensalidade', 'tipoAula', 'teacherNameForWeek', 'status', 'trackingCode', 'criadoEm', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
+  const [bulkActionLoading, setBulkActionLoading] = useState(false)
+  const [bulkEscola, setBulkEscola] = useState<string>('')
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [reportColumnKeys, setReportColumnKeys] = useState<string[]>(() => REPORT_COLUMNS.map((c) => c.key))
   const [reportFilters, setReportFilters] = useState({ escola: '', status: '', tipo: '', mes: '', ano: '' })
@@ -960,7 +963,148 @@ export default function AdminAlunosPage() {
     })
   }, [])
 
+  const toggleSelectStudent = (id: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const selectAllStudents = () => {
+    if (selectedStudentIds.size === filteredAndSortedStudents.length) {
+      setSelectedStudentIds(new Set())
+    } else {
+      setSelectedStudentIds(new Set(filteredAndSortedStudents.map((s) => s.id)))
+    }
+  }
+  const handleBulkActivateStudents = async () => {
+    const ids = filteredAndSortedStudents
+      .filter((s) => selectedStudentIds.has(s.id) && s.status !== 'ACTIVE')
+      .map((s) => s.id)
+    if (ids.length === 0) {
+      setToast({ message: 'Nenhum aluno inativo nos selecionados.', type: 'error' })
+      return
+    }
+    setBulkActionLoading(true)
+    try {
+      let ok = 0
+      for (const id of ids) {
+        const res = await fetch(`/api/admin/enrollments/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ status: 'ACTIVE' }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) ok++
+      }
+      fetchStudents()
+      setSelectedStudentIds(new Set())
+      setToast({ message: `${ok} aluno(s) ativado(s).`, type: 'success' })
+    } catch {
+      setToast({ message: 'Erro ao ativar selecionados', type: 'error' })
+    } finally {
+      setBulkActionLoading(false)
+    }
+  }
+  const handleBulkExcludeStudents = () => {
+    const ids = [...selectedStudentIds]
+    if (ids.length === 0) return
+    const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    setConfirmModal({
+      title: 'Marcar alunos como Inativos',
+      message: `Deseja marcar ${ids.length} aluno(s) selecionado(s) como Inativo? Essa ação vai cancelar todas as aulas para frente a partir de ${hoje}.`,
+      variant: 'danger',
+      confirmLabel: 'Sim, marcar como Inativo',
+      onConfirm: async () => {
+        setBulkActionLoading(true)
+        try {
+          let ok = 0
+          for (const id of ids) {
+            const res = await fetch(`/api/admin/enrollments/${id}/status`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ status: 'INACTIVE' }),
+            })
+            const json = await res.json()
+            if (res.ok && json.ok) ok++
+          }
+          fetchStudents()
+          setSelectedStudentIds(new Set())
+          setToast({ message: `${ok} aluno(s) marcado(s) como Inativo.`, type: 'success' })
+        } catch {
+          setToast({ message: 'Erro ao alterar status', type: 'error' })
+        } finally {
+          setBulkActionLoading(false)
+          setConfirmModal(null)
+        }
+      },
+    })
+  }
+
+  const ESCOLAS_OPCOES = [
+    { value: '', label: 'Selecione a escola' },
+    { value: 'SEIDMANN', label: 'Seidmann' },
+    { value: 'YOUBECOME', label: 'Youbecome' },
+    { value: 'HIGHWAY', label: 'Highway' },
+    { value: 'OUTRO', label: 'Outros' },
+  ]
+
+  const handleBulkSetEscola = async () => {
+    const ids = [...selectedStudentIds]
+    if (ids.length === 0 || !bulkEscola || !['SEIDMANN', 'YOUBECOME', 'HIGHWAY', 'OUTRO'].includes(bulkEscola)) {
+      setToast({ message: 'Selecione pelo menos um aluno e uma escola.', type: 'error' })
+      return
+    }
+    setBulkActionLoading(true)
+    try {
+      let ok = 0
+      for (const id of ids) {
+        const s = students.find((x) => x.id === id)
+        if (!s) continue
+        const res = await fetch(`/api/admin/enrollments/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            action: 'update',
+            nome: s.nome ?? '',
+            email: s.email ?? '',
+            whatsapp: s.whatsapp ?? '',
+            escolaMatricula: bulkEscola,
+            ...(bulkEscola === 'OUTRO' ? { escolaMatriculaOutro: null } : {}),
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) ok++
+      }
+      fetchStudents()
+      setSelectedStudentIds(new Set())
+      setToast({ message: `Escola definida para ${ok} aluno(s).`, type: 'success' })
+    } catch {
+      setToast({ message: 'Erro ao definir escola', type: 'error' })
+    } finally {
+      setBulkActionLoading(false)
+    }
+  }
+
   const columns = [
+    {
+      key: 'select',
+      label: ' ',
+      fixed: true,
+      render: (s: Student) => (
+        <input
+          type="checkbox"
+          checked={selectedStudentIds.has(s.id)}
+          onChange={() => toggleSelectStudent(s.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+        />
+      ),
+    },
     {
       key: 'nome',
       label: 'Nome',
@@ -1387,6 +1531,79 @@ export default function AdminAlunosPage() {
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
             {error}
+          </div>
+        )}
+
+        {filteredAndSortedStudents.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={
+                  filteredAndSortedStudents.length > 0 &&
+                  selectedStudentIds.size === filteredAndSortedStudents.length
+                }
+                ref={(el) => {
+                  if (el)
+                    el.indeterminate =
+                      selectedStudentIds.size > 0 &&
+                      selectedStudentIds.size < filteredAndSortedStudents.length
+                }}
+                onChange={selectAllStudents}
+                className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+              />
+              <span className="text-sm font-medium text-gray-700">Selecionar todos</span>
+            </label>
+            {selectedStudentIds.size > 0 && (
+              <>
+                <span className="text-sm text-gray-500">
+                  ({selectedStudentIds.size} selecionado(s))
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBulkActivateStudents}
+                  disabled={bulkActionLoading}
+                >
+                  {bulkActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Ativar selecionados
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-red-200 text-red-700 hover:bg-red-50"
+                  onClick={handleBulkExcludeStudents}
+                  disabled={bulkActionLoading}
+                >
+                  Excluir selecionados
+                </Button>
+                <span className="inline-flex items-center gap-2">
+                  <label className="text-sm text-gray-600">Definir escola:</label>
+                  <select
+                    value={bulkEscola}
+                    onChange={(e) => setBulkEscola(e.target.value)}
+                    className="input py-1.5 text-sm min-w-[140px]"
+                  >
+                    {ESCOLAS_OPCOES.map((opt) => (
+                      <option key={opt.value || 'empty'} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkSetEscola}
+                    disabled={bulkActionLoading || !bulkEscola}
+                  >
+                    Aplicar
+                  </Button>
+                </span>
+              </>
+            )}
           </div>
         )}
 

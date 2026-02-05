@@ -1,6 +1,7 @@
 /**
  * GET  /api/admin/teachers/[id]/availability — lista horários disponíveis do professor
  * POST /api/admin/teachers/[id]/availability — adiciona um horário (body: dayOfWeek, startMinutes, endMinutes)
+ * PUT  /api/admin/teachers/[id]/availability — substitui todos os horários (body: { slots: [{ dayOfWeek, startMinutes, endMinutes }] })
  * DELETE /api/admin/teachers/[id]/availability?slotId=xxx — remove um horário
  */
 
@@ -108,6 +109,90 @@ export async function POST(
         : (error as { message?: string })?.message ?? 'Erro ao adicionar horário. Rode: npx prisma migrate deploy e npx prisma generate.'
     return NextResponse.json(
       { ok: false, message },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const auth = await requireAdmin(request)
+    if (!auth.authorized) {
+      return NextResponse.json(
+        { ok: false, message: auth.message || 'Não autorizado' },
+        { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
+      )
+    }
+    const { id: teacherId } = await params
+    const teacher = await prisma.teacher.findUnique({ where: { id: teacherId } })
+    if (!teacher) {
+      return NextResponse.json(
+        { ok: false, message: 'Professor não encontrado' },
+        { status: 404 }
+      )
+    }
+    const body = await request.json().catch(() => ({}))
+    const slots = Array.isArray(body.slots) ? body.slots : []
+    const valid = slots.every(
+      (s: unknown) =>
+        typeof s === 'object' &&
+        s != null &&
+        typeof (s as { dayOfWeek?: unknown }).dayOfWeek === 'number' &&
+        typeof (s as { startMinutes?: unknown }).startMinutes === 'number' &&
+        typeof (s as { endMinutes?: unknown }).endMinutes === 'number'
+    )
+    if (!valid) {
+      return NextResponse.json(
+        { ok: false, message: 'Body deve conter slots: [{ dayOfWeek, startMinutes, endMinutes }]' },
+        { status: 400 }
+      )
+    }
+    for (const s of slots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]) {
+      if (
+        s.dayOfWeek < 0 || s.dayOfWeek > 6 ||
+        s.startMinutes < 0 || s.startMinutes > 1439 ||
+        s.endMinutes < 0 || s.endMinutes > 1439 ||
+        s.startMinutes >= s.endMinutes
+      ) {
+        return NextResponse.json(
+          { ok: false, message: 'Cada slot deve ter dayOfWeek 0-6, startMinutes e endMinutes válidos (início < fim)' },
+          { status: 400 }
+        )
+      }
+    }
+    await prisma.teacherAvailabilitySlot.deleteMany({ where: { teacherId } })
+    if (slots.length > 0) {
+      await prisma.teacherAvailabilitySlot.createMany({
+        data: (slots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]).map((s) => ({
+          teacherId,
+          dayOfWeek: s.dayOfWeek,
+          startMinutes: s.startMinutes,
+          endMinutes: s.endMinutes,
+        })),
+      })
+    }
+    const updated = await prisma.teacherAvailabilitySlot.findMany({
+      where: { teacherId },
+      orderBy: [{ dayOfWeek: 'asc' }, { startMinutes: 'asc' }],
+    })
+    return NextResponse.json({
+      ok: true,
+      data: {
+        slots: updated.map((s) => ({
+          id: s.id,
+          dayOfWeek: s.dayOfWeek,
+          startMinutes: s.startMinutes,
+          endMinutes: s.endMinutes,
+        })),
+      },
+    })
+  } catch (error) {
+    console.error('[api/admin/teachers/[id]/availability PUT]', error)
+    return NextResponse.json(
+      { ok: false, message: 'Erro ao salvar horários' },
       { status: 500 }
     )
   }

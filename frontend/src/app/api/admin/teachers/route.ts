@@ -31,7 +31,18 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const searchParam = request.nextUrl.searchParams.get('search')?.trim() || ''
+    const notaParam = request.nextUrl.searchParams.get('nota') // '1' | '2' | '45'
+    const searchFilter = searchParam
+      ? { nome: { contains: searchParam } }
+      : {}
+    let notaFilter: { nota: number } | { nota: { in: number[] } } | {} = {}
+    if (notaParam === '1') notaFilter = { nota: 1 }
+    else if (notaParam === '2') notaFilter = { nota: 2 }
+    else if (notaParam === '45') notaFilter = { nota: { in: [4, 5] } }
+
     const teachers = await prisma.teacher.findMany({
+      where: { ...searchFilter, ...notaFilter },
       include: {
         user: {
           select: {

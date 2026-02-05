@@ -32,6 +32,8 @@ interface TableProps<T> {
   visibleColumnKeys?: string[]
   /** Callback ao alterar colunas visíveis (permite mostrar botão "Colunas"). */
   onVisibleColumnsChange?: (keys: string[]) => void
+  /** Classe CSS adicional por linha (ex: destaque por nota). */
+  getRowClassName?: (item: T) => string
 }
 
 export default function Table<T extends { id: string }>({
@@ -45,6 +47,7 @@ export default function Table<T extends { id: string }>({
   onSort,
   visibleColumnKeys,
   onVisibleColumnsChange,
+  getRowClassName,
 }: TableProps<T>) {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -160,7 +163,7 @@ export default function Table<T extends { id: string }>({
                 onClick={() => onRowClick?.(item)}
                 className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${
                   onRowClick ? 'cursor-pointer' : ''
-                }`}
+                } ${getRowClassName ? getRowClassName(item) : ''}`}
               >
                 {displayColumns.map((column) => (
                   <td key={column.key} className="py-3 px-3 text-sm text-gray-900 whitespace-nowrap">
