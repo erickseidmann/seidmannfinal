@@ -150,7 +150,7 @@ export default function AdminProfessoresPage() {
         setAvailabilitySlots(slots)
         const set = new Set<string>()
         for (const s of slots) {
-          for (let m = s.startMinutes; m < s.endMinutes; m += 60) {
+          for (let m = s.startMinutes; m < s.endMinutes; m += 30) {
             set.add(`${s.dayOfWeek}-${m}`)
           }
         }
@@ -661,8 +661,8 @@ export default function AdminProfessoresPage() {
     }
   }
 
-  /** Horários da tabela: 08:00 até 22:00 (cada célula = 1 hora) */
-  const AVAIL_HORAS = Array.from({ length: 15 }, (_, i) => (i + 8) * 60) // 480, 540, ..., 1320
+  /** Horários da tabela: 06:00 até 23:00 (cada célula = 30 minutos) - igual ao calendário */
+  const AVAIL_HORAS = Array.from({ length: 35 }, (_, i) => 360 + i * 30) // 360 (6h), 390 (6h30), 420 (7h), ..., 1380 (23h)
   const AVAIL_DIAS = [
     { dayOfWeek: 1, label: 'Seg' },
     { dayOfWeek: 2, label: 'Ter' },
@@ -690,15 +690,15 @@ export default function AdminProfessoresPage() {
       const minutes = AVAIL_HORAS.filter((m) => availabilityChecked.has(`${dayOfWeek}-${m}`)).sort((a, b) => a - b)
       if (minutes.length === 0) continue
       let start = minutes[0]
-      let end = start + 60
+      let end = start + 30
       for (let i = 1; i <= minutes.length; i++) {
         if (i < minutes.length && minutes[i] === end) {
-          end += 60
+          end += 30
         } else {
           slots.push({ dayOfWeek, startMinutes: start, endMinutes: end })
           if (i < minutes.length) {
             start = minutes[i]
-            end = start + 60
+            end = start + 30
           }
         }
       }
@@ -2075,7 +2075,7 @@ export default function AdminProfessoresPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
-                  <table className="w-full border-collapse text-sm min-w-[600px]">
+                  <table className="w-full border-collapse text-sm min-w-[1400px]">
                     <thead>
                       <tr className="border-b border-gray-200">
                         <th className="text-left py-2 px-2 font-semibold text-gray-700 w-14">Dia</th>

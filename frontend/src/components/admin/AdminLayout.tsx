@@ -151,6 +151,10 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       }
       return
     }
+    // Kanban: disponível para todos os usuários admin
+    if (pageKey === 'kanban') {
+      return
+    }
     if (!adminPages.includes(pageKey)) {
       router.replace('/admin/dashboard')
     }
@@ -187,7 +191,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    if (pageKey === 'kanban') return adminPages.length === 0 || adminPages.includes('dashboard') || adminPages.includes('kanban')
+    // Kanban: disponível para todos os usuários admin
+    if (pageKey === 'kanban') return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
 

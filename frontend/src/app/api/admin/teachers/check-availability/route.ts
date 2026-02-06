@@ -2,7 +2,7 @@
  * GET /api/admin/teachers/check-availability?datetime=ISO&durationMinutes=60&excludeLessonId=xxx
  * Para cada professor ativo: disponível nesse dia/hora?
  * - Sem slots cadastrados = disponível em qualquer horário.
- * - Com slots = disponível só se o horário cair dentro de algum slot.
+ * - Com slots = disponível só se a aula inteira (início + duração) couber dentro de algum slot.
  * - Se já tem outra aula no mesmo horário (sobreposição), indisponível e retorna conflito (já tem aula com ...).
  */
 
@@ -100,11 +100,12 @@ export async function GET(request: NextRequest) {
         availabilities[t.id] = true
         continue
       }
+      // Verificar se a aula inteira (início + duração) cabe dentro de algum slot
       const inSlot = teacherSlots.some(
         (slot) =>
           slot.dayOfWeek === dayOfWeek &&
           minutesOfDay >= slot.startMinutes &&
-          minutesOfDay < slot.endMinutes
+          (minutesOfDay + durationMinutes) <= slot.endMinutes // fim da aula dentro do slot
       )
       availabilities[t.id] = inSlot
     }
