@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
-import { Plus, Send, X, Trash2 } from 'lucide-react'
+import { Plus, Send, X, Trash2, Eraser, Loader2 } from 'lucide-react'
 
 interface TeacherAlertItem {
   id: string
@@ -62,6 +62,8 @@ export default function AdminAlertasPage() {
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; confirmLabel?: string } | null>(null)
+  const [clearingTeachers, setClearingTeachers] = useState(false)
+  const [clearingStudents, setClearingStudents] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [formData, setFormData] = useState({
     title: '',
@@ -126,6 +128,64 @@ export default function AdminAlertasPage() {
           } else setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
         } catch (err) {
           setToast({ message: 'Erro ao excluir alerta', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleClearTeacherAlerts = () => {
+    setConfirmModal({
+      title: 'Limpar notificações de professores',
+      message: `Deseja excluir todas as ${teacherAlerts.length} notificação(ões) de professores? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Excluir todas',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setClearingTeachers(true)
+        try {
+          const res = await fetch('/api/admin/teacher-alerts/clear', {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (json.ok) {
+            setTeacherAlerts([])
+            setToast({ message: json.message || 'Notificações excluídas', type: 'success' })
+          } else {
+            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+          }
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir notificações', type: 'error' })
+        } finally {
+          setClearingTeachers(false)
+        }
+      },
+    })
+  }
+
+  const handleClearStudentAlerts = () => {
+    setConfirmModal({
+      title: 'Limpar notificações de alunos',
+      message: `Deseja excluir todas as ${studentAlerts.length} notificação(ões) de alunos? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Excluir todas',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setClearingStudents(true)
+        try {
+          const res = await fetch('/api/admin/student-alerts/clear', {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (json.ok) {
+            setStudentAlerts([])
+            setToast({ message: json.message || 'Notificações excluídas', type: 'success' })
+          } else {
+            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+          }
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir notificações', type: 'error' })
+        } finally {
+          setClearingStudents(false)
         }
       },
     })
@@ -338,7 +398,23 @@ export default function AdminAlertasPage() {
 
         {/* Alertas de Professores */}
         <div className="mt-12">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Notificações de Professores</h2>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-xl font-bold text-gray-900">Notificações de Professores</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearTeacherAlerts}
+              disabled={teacherAlerts.length === 0 || clearingTeachers}
+              className="flex items-center gap-2"
+            >
+              {clearingTeachers ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Eraser className="w-4 h-4" />
+              )}
+              Limpar notificações
+            </Button>
+          </div>
           <p className="text-sm text-gray-600 mb-4">
             Alertas criados na página de Professores (ícone de sino). Passe o mouse para ver o conteúdo.
           </p>
@@ -391,7 +467,23 @@ export default function AdminAlertasPage() {
 
         {/* Alertas de Alunos */}
         <div className="mt-12">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Notificações de Alunos</h2>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-xl font-bold text-gray-900">Notificações de Alunos</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearStudentAlerts}
+              disabled={studentAlerts.length === 0 || clearingStudents}
+              className="flex items-center gap-2"
+            >
+              {clearingStudents ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Eraser className="w-4 h-4" />
+              )}
+              Limpar notificações
+            </Button>
+          </div>
           <p className="text-sm text-gray-600 mb-4">
             Alertas criados na página de Alunos (ícone de sino). Ao adicionar um alerta para um aluno, ele aparece aqui.
           </p>

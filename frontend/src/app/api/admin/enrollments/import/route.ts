@@ -298,6 +298,7 @@ export async function POST(request: NextRequest) {
             observacoes: get(row, 'observacoes') || null,
             escolaMatricula,
             escolaMatriculaOutro,
+            pendenteAdicionarAulas: true,
           },
         })
         const normalizedEmail = email.trim().toLowerCase()

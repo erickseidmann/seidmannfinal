@@ -55,8 +55,27 @@ export async function GET(request: NextRequest) {
         startAt: { gte: startAt, lte: endAt },
       },
       include: {
-        enrollment: { select: { id: true, nome: true, tipoAula: true, nomeGrupo: true } },
+        enrollment: { 
+          select: { 
+            id: true, 
+            nome: true, 
+            tipoAula: true, 
+            nomeGrupo: true,
+            escolaMatricula: true,
+            cancelamentoAntecedenciaHoras: true,
+          } 
+        },
         teacher: { select: { id: true, nome: true } },
+        requests: {
+          where: {
+            status: { in: ['PENDING', 'TEACHER_APPROVED'] },
+          },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+          },
+        },
       },
       orderBy: { startAt: 'asc' },
     })
@@ -71,7 +90,14 @@ export async function GET(request: NextRequest) {
       notes: l.notes,
       enrollment: l.enrollment,
       teacher: l.teacher,
+      requests: (l.requests || []).map((r: any) => ({
+        id: r.id,
+        type: r.type,
+        status: r.status,
+      })),
     }))
+
+    console.log('[api/student/lessons] Retornando', list.length, 'aulas, algumas com requests:', list.filter(l => l.requests.length > 0).length)
 
     return NextResponse.json({
       ok: true,

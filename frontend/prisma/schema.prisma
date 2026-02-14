@@ -95,6 +95,9 @@ model User {
   kanbanCardsAssigned KanbanCard[]
   conversationParticipants ConversationParticipant[]
   chatMessagesSent ChatMessage[]
+  lessonsCreated Lesson[]
+  lessonRequestsCreated LessonRequest[] @relation("LessonRequestsCreated")
+  lessonRequestsProcessed LessonRequest[] @relation("LessonRequestsProcessed")
   
   // Índices
   @@index([email])
@@ -140,6 +143,24 @@ model AdminExpense {
   @@map("admin_expenses")
 }
 
+// Cupom de desconto: define valor por hora-aula e validade
+model Coupon {
+  id                 String    @id @default(cuid())
+  nome               String    @db.VarChar(255) @map("nome")           // Nome do cupom (ex: "Desconto Black Friday")
+  codigo             String?   @unique @db.VarChar(50) @map("codigo")   // Código opcional (ex: BLACK20)
+  valorPorHoraAula   Decimal   @db.Decimal(10, 2) @map("valor_por_hora_aula") // Valor que o aluno paga por hora-aula ao usar o cupom
+  validade           DateTime? @map("validade")   // null = cupom permanente
+  ativo              Boolean   @default(true) @map("ativo")
+  criadoEm           DateTime  @default(now()) @map("created_at")
+  atualizadoEm       DateTime  @updatedAt @map("updated_at")
+
+  enrollments        Enrollment[]
+
+  @@index([ativo])
+  @@index([validade])
+  @@map("coupons")
+}
+
 // Notificações para o admin (ex.: professor confirmou valor, professor alterou dados)
 model AdminNotification {
   id        String    @id @default(cuid())
@@ -162,6 +183,7 @@ model KanbanCard {
   assignedToId    String?  @map("assigned_to_id") // User (admin) que fará
   column          String   @db.VarChar(20)   // TODO | DOING | DONE
   orderIndex      Int      @default(0) @map("order_index")
+  prioridade      String?  @db.VarChar(20)  // EMERGENCIA | PODE_ESPERAR | FIQUE_ATENTO
   criadoEm        DateTime @default(now()) @map("created_at")
   atualizadoEm    DateTime @updatedAt @map("updated_at")
 
@@ -256,8 +278,11 @@ model Enrollment {
   nomeEmpresaOuIndicador String?  @db.VarChar(255) @map("nome_empresa_ou_indicador")
   escolaMatricula   String?      @db.VarChar(50) @map("escola_matricula") // SEIDMANN, YOUBECOME, HIGHWAY, OUTRO
   escolaMatriculaOutro String?   @db.VarChar(255) @map("escola_matricula_outro") // Quando escolaMatricula = OUTRO
+  cancelamentoAntecedenciaHoras Int? @map("cancelamento_antecedencia_horas") // Tempo mínimo de antecedência para cancelamento (em horas). Padrão: 6h para não-YOUBECOME, 24h para YOUBECOME
   observacoes       String?      @db.Text
-  
+  pendenteAdicionarAulas Boolean @default(false) @map("pendente_adicionar_aulas") // true = matriculado pelo formulário, ainda não marcou "já adicionei aulas"
+  linkPagamentoEnviadoAt DateTime? @map("link_pagamento_enviado_at") // data em que o admin marcou "enviei link pag"
+
   status         EnrollmentStatus @default(LEAD)
   inactiveAt     DateTime?        @map("inactive_at") // Data em que foi marcado como inativo (para histórico por mês)
   pausedAt       DateTime?        @map("paused_at") // Data em que foi marcado como pausado (aulas não contam para pagamento a partir desta data)
@@ -265,21 +290,25 @@ model Enrollment {
   trackingCode   String?          @unique @map("tracking_code")
   contractAcceptedAt DateTime?    @map("contract_accepted_at")
   contractVersion    String?      @map("contract_version")
+  couponId       String?          @map("coupon_id") // Cupom usado na inscrição
   criadoEm       DateTime         @default(now()) @map("created_at")
   atualizadoEm   DateTime         @updatedAt @map("updated_at")
   
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  coupon         Coupon?          @relation(fields: [couponId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
   paymentMonths       EnrollmentPaymentMonth[]
   financeObservations FinanceObservation[]
   alerts              StudentAlert[]
   lessons             Lesson[]
+  lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
 
   @@index([email])
   @@index([whatsapp])
   @@index([trackingCode])
+  @@index([couponId])
   @@map("enrollments")
 }
 
@@ -379,6 +408,8 @@ model Teacher {
   attendances       Attendance[]
   alerts            TeacherAlert[]
   lessons           Lesson[]
+  lessonRequests    LessonRequest[]
+  requestedLessonRequests LessonRequest[] @relation("RequestedTeacher")
   paymentMonths       TeacherPaymentMonth[]
   availabilitySlots   TeacherAvailabilitySlot[]
   financeObservations FinanceObservation[]
@@ -451,22 +482,44 @@ model Attendance {
   @@map("attendances")
 }
 
+// Model: Book (Catálogo de Livros)
+// Livros cadastrados com PDF, capa, nível, etc. Usado para liberar aos alunos.
+model Book {
+  id             String   @id @default(cuid())
+  nome           String   @db.VarChar(255) @map("nome")
+  level          String   @db.VarChar(20) @map("level")   // A1, A2, A3, B1, B2, B3, B4, C1, C2
+  totalPaginas   Int      @map("total_paginas")
+  imprimivel     Boolean  @default(true) @map("imprimivel")
+  pdfPath        String?  @db.VarChar(500) @map("pdf_path")  // Caminho relativo: /uploads/books/{id}/livro.pdf
+  capaPath       String?  @db.VarChar(500) @map("capa_path") // Caminho relativo: /uploads/books/{id}/capa.jpg
+  criadoEm       DateTime @default(now()) @map("created_at")
+  atualizadoEm   DateTime @updatedAt @map("updated_at")
+
+  releases       BookRelease[]
+
+  @@index([level])
+  @@map("books")
+}
+
 // Model: BookRelease (Liberação de Livro)
 // Registra quando um livro foi liberado para um aluno
 model BookRelease {
-  id                  String   @id @default(cuid())
-  userId              String   @map("user_id")
-  bookCode            String   // Ex: "BOOK_1", "BOOK_2", etc
-  releasedByAdminEmail String  @map("released_by_admin_email")
-  criadoEm            DateTime @default(now()) @map("created_at")
+  id                   String   @id @default(cuid())
+  userId               String   @map("user_id")
+  bookCode             String   // ID do Book (catálogo) ou código manual legado
+  bookId               String?  @map("book_id") // FK opcional para livro do catálogo
+  releasedByAdminEmail String   @map("released_by_admin_email")
+  criadoEm             DateTime @default(now()) @map("created_at")
   
-  // Relacionamento
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Relacionamentos
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book                 Book?    @relation(fields: [bookId], references: [id], onDelete: SetNull)
   
   // Garantir que um aluno não receba o mesmo livro duas vezes
   @@unique([userId, bookCode], name: "userId_bookCode")
   @@index([userId])
   @@index([bookCode])
+  @@index([bookId])
   @@map("book_releases")
 }
 
@@ -555,6 +608,22 @@ enum LessonStatus {
   REPOSICAO   // Reposição
 }
 
+// Enums para solicitações de aula
+enum LessonRequestType {
+  CANCELAMENTO
+  TROCA_PROFESSOR
+  TROCA_AULA
+}
+
+enum LessonRequestStatus {
+  PENDING
+  TEACHER_APPROVED
+  TEACHER_REJECTED
+  ADMIN_APPROVED
+  ADMIN_REJECTED
+  COMPLETED
+}
+
 // Feriado: dia em que não se pode adicionar aula e aulas não contam para pagamento
 model Holiday {
   id        String   @id @default(cuid())
@@ -574,16 +643,21 @@ model Lesson {
   startAt           DateTime     @map("start_at")
   durationMinutes   Int          @default(60) @map("duration_minutes")
   notes             String?      @db.Text
+  createdById       String?      @map("created_by_id") // Admin que criou/agendou a aula
+  createdByName     String?      @map("created_by_name") @db.VarChar(255) // Nome do admin que criou (para exibição rápida)
   criadoEm          DateTime     @default(now()) @map("created_at")
   atualizadoEm      DateTime     @updatedAt @map("updated_at")
 
   enrollment        Enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   teacher           Teacher      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   record            LessonRecord?
+  createdBy         User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  requests           LessonRequest[]
 
   @@index([startAt])
   @@index([enrollmentId])
   @@index([teacherId])
+  @@index([createdById])
   @@map("lessons")
 }
 
@@ -657,4 +731,43 @@ model LessonRecordStudent {
   @@index([lessonRecordId])
   @@index([enrollmentId])
   @@map("lesson_record_students")
+}
+
+// Solicitações de cancelamento/troca de aula ou professor
+model LessonRequest {
+  id                String              @id @default(cuid())
+  lessonId          String              @map("lesson_id")
+  enrollmentId      String              @map("enrollment_id")
+  teacherId         String              @map("teacher_id")
+  type              LessonRequestType
+  status            LessonRequestStatus @default(PENDING)
+  requiresTeacherApproval Boolean       @default(false) @map("requires_teacher_approval")
+  teacherApproval   String?             @db.VarChar(20) @map("teacher_approval")
+  teacherApprovedAt  DateTime?          @map("teacher_approved_at")
+  requestedStartAt  DateTime?           @map("requested_start_at")
+  requestedTeacherId String?            @map("requested_teacher_id")
+  notes             String?             @db.Text
+  adminNotes        String?             @db.Text @map("admin_notes")
+  createdById       String?             @map("created_by_id")
+  processedById     String?             @map("processed_by_id")
+  criadoEm          DateTime            @default(now()) @map("created_at")
+  atualizadoEm      DateTime            @updatedAt @map("updated_at")
+
+  lesson            Lesson              @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  enrollment        Enrollment          @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  teacher           Teacher             @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  requestedTeacher  Teacher?            @relation("RequestedTeacher", fields: [requestedTeacherId], references: [id], onDelete: SetNull)
+  createdBy         User?               @relation("LessonRequestsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  processedBy       User?               @relation("LessonRequestsProcessed", fields: [processedById], references: [id], onDelete: SetNull)
+
+  @@index([lessonId])
+  @@index([enrollmentId])
+  @@index([teacherId])
+  @@index([requestedTeacherId])
+  @@index([status])
+  @@index([createdById])
+  @@index([type])
+  @@index([requiresTeacherApproval])
+  @@index([teacherApproval])
+  @@map("lesson_requests")
 }

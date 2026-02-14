@@ -56,6 +56,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.financeiroProfessores': 'Professores',
     'admin.financeiroAdministracao': 'Administração',
     'admin.financeiroRelatorios': 'Relatórios',
+    'admin.financeiroCupons': 'Cupons',
 
     // Geral
     'common.cancel': 'Cancelar',
@@ -237,6 +238,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.financeiroProfessores': 'Teachers',
     'admin.financeiroAdministracao': 'Administration',
     'admin.financeiroRelatorios': 'Reports',
+    'admin.financeiroCupons': 'Coupons',
 
     'common.cancel': 'Cancel',
     'common.save': 'Save',
@@ -415,6 +417,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'admin.financeiroProfessores': 'Profesores',
     'admin.financeiroAdministracao': 'Administración',
     'admin.financeiroRelatorios': 'Informes',
+    'admin.financeiroCupons': 'Cupones',
 
     'common.cancel': 'Cancelar',
     'common.save': 'Guardar',

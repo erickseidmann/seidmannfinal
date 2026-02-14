@@ -15,7 +15,7 @@ import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
-import { Edit, Power, Plus, Shield } from 'lucide-react'
+import { Edit, Power, Plus, Shield, X } from 'lucide-react'
 
 const ADMIN_PAGES = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -32,6 +32,7 @@ const ADMIN_PAGES = [
   { key: 'financeiro-professores', label: 'Financeiro – Professores' },
   { key: 'financeiro-administracao', label: 'Financeiro – Administração' },
   { key: 'financeiro-relatorios', label: 'Financeiro – Relatórios' },
+  { key: 'financeiro-cupons', label: 'Financeiro – Cupons' },
 ] as const
 
 type AdminPageKey = (typeof ADMIN_PAGES)[number]['key']
@@ -244,6 +245,32 @@ export default function AdminUsuariosPage() {
     })
   }
 
+  const handleDelete = (user: User) => {
+    if (user.email.toLowerCase() === 'admin@seidmann.com') {
+      setToast({ message: 'Não é permitido excluir o administrador principal', type: 'error' })
+      return
+    }
+    setConfirmModal({
+      title: 'Excluir usuário',
+      message: `Tem certeza que deseja excluir o usuário "${user.nome}" (${user.email})? Esta ação não pode ser desfeita.`,
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE', credentials: 'include' })
+          const json = await res.json()
+          if (!res.ok || !json.ok) {
+            setToast({ message: json.message || 'Erro ao excluir usuário', type: 'error' })
+            return
+          }
+          setToast({ message: 'Usuário excluído com sucesso', type: 'success' })
+          fetchUsers()
+        } catch {
+          setToast({ message: 'Erro ao excluir usuário', type: 'error' })
+        }
+      },
+    })
+  }
+
   const togglePage = (key: AdminPageKey) => {
     setFormData((prev) => ({
       ...prev,
@@ -324,6 +351,15 @@ export default function AdminUsuariosPage() {
           >
             <Power className="w-4 h-4" />
           </button>
+          {u.email.toLowerCase() !== 'admin@seidmann.com' && (
+            <button
+              onClick={() => handleDelete(u)}
+              className="text-red-600 hover:text-red-800 text-sm font-medium"
+              title="Excluir"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       ),
     },

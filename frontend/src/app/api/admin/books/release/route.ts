@@ -19,12 +19,33 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { userId, bookCode } = body
+    const { userId, bookCode, bookId } = body
 
-    // Validações
-    if (!userId || !bookCode) {
+    // bookId (do catálogo) ou bookCode (legado)
+    let finalBookCode = (bookCode || '').trim()
+    let finalBookId: string | null = null
+
+    if (bookId) {
+      if (!prisma.book) {
+        return NextResponse.json(
+          { ok: false, message: 'Modelo Book não disponível' },
+          { status: 503 }
+        )
+      }
+      const book = await prisma.book.findUnique({ where: { id: bookId } })
+      if (!book) {
+        return NextResponse.json(
+          { ok: false, message: 'Livro não encontrado no catálogo' },
+          { status: 404 }
+        )
+      }
+      finalBookCode = book.id
+      finalBookId = book.id
+    }
+
+    if (!userId || !finalBookCode) {
       return NextResponse.json(
-        { ok: false, message: 'userId e bookCode são obrigatórios' },
+        { ok: false, message: 'userId e bookId (ou bookCode) são obrigatórios' },
         { status: 400 }
       )
     }
@@ -55,7 +76,7 @@ export async function POST(request: NextRequest) {
       where: {
         userId_bookCode: {
           userId,
-          bookCode: bookCode.trim(),
+          bookCode: finalBookCode,
         },
       },
     })
@@ -71,7 +92,8 @@ export async function POST(request: NextRequest) {
     const release = await prisma.bookRelease.create({
       data: {
         userId,
-        bookCode: bookCode.trim(),
+        bookCode: finalBookCode,
+        bookId: finalBookId,
         releasedByAdminEmail: auth.session?.email || 'admin@seidmann.com',
       },
       include: {
@@ -82,9 +104,20 @@ export async function POST(request: NextRequest) {
             email: true,
           },
         },
+        book: {
+          select: {
+            id: true,
+            nome: true,
+            level: true,
+            totalPaginas: true,
+            imprimivel: true,
+            capaPath: true,
+          },
+        },
       },
     })
 
+    const bookNome = release.book?.nome || release.bookCode
     return NextResponse.json({
       ok: true,
       data: {
@@ -93,10 +126,12 @@ export async function POST(request: NextRequest) {
           userId: release.userId,
           user: release.user,
           bookCode: release.bookCode,
+          bookId: release.bookId,
+          book: release.book,
           releasedByAdminEmail: release.releasedByAdminEmail,
           criadoEm: release.criadoEm.toISOString(),
         },
-        message: `Livro ${release.bookCode} liberado para ${release.user.nome}`,
+        message: `Livro ${bookNome} liberado para ${release.user.nome}`,
       },
     }, { status: 201 })
   } catch (error: any) {

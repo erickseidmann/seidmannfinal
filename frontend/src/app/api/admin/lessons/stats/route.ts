@@ -138,7 +138,7 @@ export async function GET(request: NextRequest) {
     const activeEnrollments = await prisma.enrollment.findMany({
       where: {
         status: { in: ['ACTIVE', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING'] },
-        frequenciaSemanal: { not: null },
+        frequenciaSemanal: { gt: 0 }, // Fix: use gt:0 instead of not:null for Int fields
       },
       select: {
         id: true,

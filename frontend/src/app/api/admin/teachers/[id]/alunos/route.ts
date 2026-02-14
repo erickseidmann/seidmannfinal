@@ -39,8 +39,15 @@ export async function GET(
       )
     }
 
+    // Data de hoje (início do dia) para filtrar apenas aulas futuras
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+
     const lessons = await prisma.lesson.findMany({
-      where: { teacherId },
+      where: {
+        teacherId,
+        startAt: { gte: hoje }, // Apenas aulas do dia atual em diante
+      },
       select: {
         id: true,
         startAt: true,
@@ -100,13 +107,16 @@ export async function GET(
       })
     }
 
-    const alunos = Array.from(byEnrollment.values()).map((a) => ({
-      ...a,
-      diasHorarios: a.lessons
-        .map((x) => `${x.dayName} ${x.time}`)
-        .filter((v, i, arr) => arr.indexOf(v) === i)
-        .join(', '),
-    }))
+    // Filtrar apenas alunos que têm pelo menos uma aula futura
+    const alunos = Array.from(byEnrollment.values())
+      .filter((a) => a.lessons.length > 0) // Apenas alunos com aulas futuras
+      .map((a) => ({
+        ...a,
+        diasHorarios: a.lessons
+          .map((x) => `${x.dayName} ${x.time}`)
+          .filter((v, i, arr) => arr.indexOf(v) === i)
+          .join(', '),
+      }))
 
     return NextResponse.json({
       ok: true,

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada } from '@/lib/email'
+import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
 
 export async function GET(request: NextRequest) {
   try {
@@ -70,6 +70,16 @@ export async function GET(request: NextRequest) {
           },
         },
         teacher: { select: { id: true, nome: true } },
+        requests: {
+          where: {
+            status: { in: ['PENDING', 'TEACHER_APPROVED'] },
+          },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+          },
+        },
       },
       orderBy: { startAt: 'asc' },
     })
@@ -110,9 +120,14 @@ export async function POST(request: NextRequest) {
       teacherId,
       status = 'CONFIRMED',
       startAt: startAtStr,
-      durationMinutes = 60,
+      durationMinutes = 30,
       notes,
       repeatWeeks: repeatWeeksParam,
+      repeatSameWeek = false,
+      repeatSameWeekStartAt = null,
+      repeatFrequencyEnabled = false,
+      repeatFrequencyWeeks: repeatFrequencyWeeksParam = 0,
+      canceledLessonInfo, // { startAt: string, teacherId: string } - informações da aula cancelada para envio de email
     } = body
 
     if (!enrollmentId || !teacherId || !startAtStr) {
@@ -194,7 +209,7 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-      if (curso === 'INGLES_E_ESPANHOL' && (!ensina.includes('INGLES') || !ensina.includes('ESPANHOL'))) {
+      if (curso === 'INGLES_E_ESPANHOL' && (!ensina.includes('INGLES') && !ensina.includes('ESPANHOL'))) {
         return NextResponse.json(
           { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
           { status: 400 }
@@ -210,6 +225,7 @@ export async function POST(request: NextRequest) {
     const notesTrim = notes?.trim() || null
 
     const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
+    const repeatFrequencyWeeks = repeatFrequencyEnabled ? Math.min(52, Math.max(1, Number(repeatFrequencyWeeksParam) || 1)) : 0
 
     function toDateKey(d: Date): string {
       const y = d.getFullYear()
@@ -218,9 +234,24 @@ export async function POST(request: NextRequest) {
       return `${y}-${m}-${day}`
     }
 
+    // Calcular range de datas para verificar feriados
     const firstStart = new Date(startAt)
-    const lastStart = new Date(startAt)
-    lastStart.setDate(lastStart.getDate() + (repeatWeeks - 1) * 7)
+    let lastStart = new Date(startAt)
+    
+    // Se há repetição de frequência, calcular até a última semana
+    if (repeatFrequencyEnabled && repeatFrequencyWeeks > 0) {
+      lastStart.setDate(lastStart.getDate() + (repeatFrequencyWeeks - 1) * 7)
+      // Se há repetição na mesma semana, considerar também essa data
+      if (repeatSameWeek && repeatSameWeekStartAt) {
+        const sameWeekDate = new Date(repeatSameWeekStartAt)
+        if (sameWeekDate > lastStart) {
+          lastStart = sameWeekDate
+        }
+      }
+    } else if (repeatWeeks > 1) {
+      lastStart.setDate(lastStart.getDate() + (repeatWeeks - 1) * 7)
+    }
+    
     const startKey = toDateKey(firstStart)
     const endKey = toDateKey(lastStart)
 
@@ -235,27 +266,146 @@ export async function POST(request: NextRequest) {
     })
     const isFirstLessonForTeacherAndEnrollment = existingLessonCount === 0
 
-    const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
-    for (let w = 0; w < repeatWeeks; w++) {
-      const lessonStart = new Date(startAt)
-      lessonStart.setDate(lessonStart.getDate() + w * 7)
-      const dateKey = toDateKey(lessonStart)
-      if (holidaySet.has(dateKey)) continue
-      const lesson = await prisma.lesson.create({
-        data: {
-          enrollmentId,
-          teacherId,
-          status: validStatus,
-          startAt: lessonStart,
-          durationMinutes: duration,
-          notes: notesTrim,
-        },
-        include: {
-          enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-          teacher: { select: { id: true, nome: true, email: true } },
-        },
+    // Buscar nome do admin que está criando a aula
+    let createdByName: string | null = null
+    if (auth.session?.sub) {
+      const adminUser = await prisma.user.findUnique({
+        where: { id: auth.session.sub },
+        select: { nome: true },
       })
-      lessonsCreated.push(lesson)
+      createdByName = adminUser?.nome || null
+    }
+
+    const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
+    
+    // Se há repetição de frequência, usar lógica de frequência (não usar repeatWeeks)
+    if (repeatFrequencyEnabled && repeatFrequencyWeeks > 0) {
+      // Criar aulas para todas as semanas (incluindo a primeira)
+      for (let w = 0; w < repeatFrequencyWeeks; w++) {
+        // Aula inicial da semana
+        const lessonStart = new Date(startAt)
+        lessonStart.setDate(lessonStart.getDate() + w * 7)
+        const dateKey1 = toDateKey(lessonStart)
+        if (!holidaySet.has(dateKey1)) {
+          const lesson1 = await prisma.lesson.create({
+            data: {
+              enrollmentId,
+              teacherId,
+              status: validStatus,
+              startAt: lessonStart,
+              durationMinutes: duration,
+              notes: notesTrim,
+              createdById: auth.session?.sub || null,
+              createdByName,
+            },
+            include: {
+              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+              teacher: { select: { id: true, nome: true, email: true } },
+            },
+          })
+          lessonsCreated.push(lesson1)
+        }
+        
+        // Aula da mesma semana (se configurada)
+        if (repeatSameWeek && repeatSameWeekStartAt) {
+          const sameWeekDate = new Date(repeatSameWeekStartAt)
+          sameWeekDate.setDate(sameWeekDate.getDate() + w * 7)
+          const dateKey2 = toDateKey(sameWeekDate)
+          if (!holidaySet.has(dateKey2)) {
+            const lesson2 = await prisma.lesson.create({
+              data: {
+                enrollmentId,
+                teacherId,
+                status: validStatus,
+                startAt: sameWeekDate,
+                durationMinutes: duration,
+                notes: notesTrim,
+                createdById: auth.session?.sub || null,
+                createdByName,
+              },
+              include: {
+                enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+                teacher: { select: { id: true, nome: true, email: true } },
+              },
+            })
+            lessonsCreated.push(lesson2)
+          }
+        }
+      }
+    } else {
+      // Criar aulas com repetição simples (mesmo dia e hora nas próximas semanas)
+      if (repeatWeeks > 1) {
+        for (let w = 0; w < repeatWeeks; w++) {
+          const lessonStart = new Date(startAt)
+          lessonStart.setDate(lessonStart.getDate() + w * 7)
+          const dateKey = toDateKey(lessonStart)
+          if (holidaySet.has(dateKey)) continue
+          const lesson = await prisma.lesson.create({
+            data: {
+              enrollmentId,
+              teacherId,
+              status: validStatus,
+              startAt: lessonStart,
+              durationMinutes: duration,
+              notes: notesTrim,
+              createdById: auth.session?.sub || null,
+              createdByName,
+            },
+            include: {
+              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+              teacher: { select: { id: true, nome: true, email: true } },
+            },
+          })
+          lessonsCreated.push(lesson)
+        }
+      } else {
+        // Criar apenas a aula inicial
+        const dateKey = toDateKey(firstStart)
+        if (!holidaySet.has(dateKey)) {
+          const lesson = await prisma.lesson.create({
+            data: {
+              enrollmentId,
+              teacherId,
+              status: validStatus,
+              startAt: firstStart,
+              durationMinutes: duration,
+              notes: notesTrim,
+              createdById: auth.session?.sub || null,
+              createdByName,
+            },
+            include: {
+              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+              teacher: { select: { id: true, nome: true, email: true } },
+            },
+          })
+          lessonsCreated.push(lesson)
+        }
+      }
+      
+      // Se há repetição na mesma semana (sem frequência), criar essa aula também
+      if (repeatSameWeek && repeatSameWeekStartAt) {
+        const sameWeekDate = new Date(repeatSameWeekStartAt)
+        const dateKey = toDateKey(sameWeekDate)
+        if (!holidaySet.has(dateKey)) {
+          const lesson = await prisma.lesson.create({
+            data: {
+              enrollmentId,
+              teacherId,
+              status: validStatus,
+              startAt: sameWeekDate,
+              durationMinutes: duration,
+              notes: notesTrim,
+              createdById: auth.session?.sub || null,
+              createdByName,
+            },
+            include: {
+              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+              teacher: { select: { id: true, nome: true, email: true } },
+            },
+          })
+          lessonsCreated.push(lesson)
+        }
+      }
     }
 
     if (lessonsCreated.length === 0) {
@@ -316,31 +466,95 @@ export async function POST(request: NextRequest) {
     if (validStatus === 'REPOSICAO' && lessonsCreated.length > 0) {
       const first = lessonsCreated[0]
       const nomeAluno = first.enrollment.nome
-      const nomeProfessor = first.teacher.nome
+      const nomeProfessorReposicao = first.teacher.nome
       const emailAluno = first.enrollment.email
-      const emailProfessor = first.teacher.email
-      const dataAula = first.startAt
-      try {
-        if (emailAluno) {
-          const { subject, text } = mensagemReposicaoAgendada({
-            nomeAluno,
-            nomeProfessor,
-            data: dataAula,
-            destinatario: 'aluno',
+      const emailProfessorReposicao = first.teacher.email
+      const dataReposicao = first.startAt
+      
+      // Se há informações sobre a aula cancelada, enviar email de cancelamento com reposição
+      if (canceledLessonInfo?.startAt && canceledLessonInfo?.teacherId) {
+        try {
+          // Buscar informações do professor da aula cancelada
+          const teacherCanceled = await prisma.teacher.findUnique({
+            where: { id: canceledLessonInfo.teacherId },
+            select: { nome: true },
           })
-          await sendEmail({ to: emailAluno, subject, text })
+          const nomeProfessorCancelado = teacherCanceled?.nome || 'Professor'
+          
+          const dataCancelada = new Date(canceledLessonInfo.startAt)
+          
+          // Enviar para aluno
+          if (emailAluno) {
+            const { subject, text } = mensagemCancelamentoComReposicao({
+              nomeAluno,
+              nomeProfessor: nomeProfessorCancelado,
+              nomeProfessorReposicao,
+              dataCancelada,
+              dataReposicao,
+              destinatario: 'aluno',
+            })
+            await sendEmail({ to: emailAluno, subject, text })
+          }
+          
+          // Enviar para professor da reposição
+          if (emailProfessorReposicao) {
+            const { subject, text } = mensagemCancelamentoComReposicao({
+              nomeAluno,
+              nomeProfessor: nomeProfessorCancelado,
+              nomeProfessorReposicao,
+              dataCancelada,
+              dataReposicao,
+              destinatario: 'professor',
+            })
+            await sendEmail({ to: emailProfessorReposicao, subject, text })
+          }
+          
+          // Enviar também para o professor da aula cancelada (se for diferente)
+          if (canceledLessonInfo.teacherId !== teacherId) {
+            const teacherCanceledUser = await prisma.teacher.findUnique({
+              where: { id: canceledLessonInfo.teacherId },
+              select: { email: true },
+            })
+            const emailProfessorCancelado = teacherCanceledUser?.email
+            if (emailProfessorCancelado) {
+              const { subject, text } = mensagemCancelamentoComReposicao({
+                nomeAluno,
+                nomeProfessor: nomeProfessorCancelado,
+                nomeProfessorReposicao,
+                dataCancelada,
+                dataReposicao,
+                destinatario: 'professor',
+              })
+              await sendEmail({ to: emailProfessorCancelado, subject, text })
+            }
+          }
+        } catch (err) {
+          console.error('[api/admin/lessons POST] Erro ao enviar e-mail de cancelamento com reposição:', err)
         }
-        if (emailProfessor) {
-          const { subject, text } = mensagemReposicaoAgendada({
-            nomeAluno,
-            nomeProfessor,
-            data: dataAula,
-            destinatario: 'professor',
-          })
-          await sendEmail({ to: emailProfessor, subject, text })
+      } else {
+        // Email padrão de reposição (sem informações de cancelamento)
+        try {
+          if (emailAluno) {
+            const { subject, text } = mensagemReposicaoAgendada({
+              nomeAluno,
+              nomeProfessor: nomeProfessorReposicao,
+              data: dataReposicao,
+              destinatario: 'aluno',
+            })
+            await sendEmail({ to: emailAluno, subject, text })
+          }
+          if (emailProfessorReposicao) {
+            const { subject, text } = mensagemReposicaoAgendada({
+              nomeAluno,
+              nomeProfessor: nomeProfessorReposicao,
+              data: dataReposicao,
+              destinatario: 'professor',
+            })
+            await sendEmail({ to: emailProfessorReposicao, subject, text })
+          }
+        } catch (err) {
+          console.error('[api/admin/lessons POST] Erro ao enviar e-mail de reposição:', err)
         }
-      } catch (err) {
-        console.error('[api/admin/lessons POST] Erro ao enviar e-mail de reposição:', err)
       }
     }
 

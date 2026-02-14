@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2 } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -274,6 +274,12 @@ export default function FinanceiroAlunosPage() {
   const [filterBusca, setFilterBusca] = useState('')
   const [filterProximos5Dias, setFilterProximos5Dias] = useState(false)
   const [filterAtrasados, setFilterAtrasados] = useState(false)
+  const [filterPeriodo, setFilterPeriodo] = useState<string>('')
+  const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
+  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
+  const [showDicas, setShowDicas] = useState(false)
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
 
   const FINANCE_COLUMNS = [
     { key: 'aluno', label: 'Aluno', fixed: true },
@@ -294,7 +300,10 @@ export default function FinanceiroAlunosPage() {
     { key: 'nfEmitida', label: 'NF emitida?', fixed: false },
     { key: 'acoes', label: 'Ações', fixed: true },
   ] as const
-  const defaultVisibleKeys = FINANCE_COLUMNS.map((c) => c.key)
+  /** Por padrão ocultamos: endereço, CPF, tipo aula, nome grupo (só aparecem se marcar em Colunas). */
+  const defaultVisibleKeys = FINANCE_COLUMNS.filter(
+    (c) => !['endereco', 'cpf', 'tipoAula', 'nomeGrupo'].includes(c.key)
+  ).map((c) => c.key)
   const [visibleFinanceKeys, setVisibleFinanceKeys] = useState<string[]>(() => defaultVisibleKeys)
   const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
   const columnsDropdownRef = useRef<HTMLDivElement>(null)
@@ -347,8 +356,24 @@ export default function FinanceiroAlunosPage() {
     if (filterAtrasados) {
       list = list.filter((a) => getEffectiveStatus(a) === 'ATRASADO')
     }
+    if (filterStatus) {
+      list = list.filter((a) => getEffectiveStatus(a) === filterStatus)
+    }
+    if (filterPeriodo) {
+      list = list.filter((a) => (a.periodoPagamento ?? '') === filterPeriodo)
+    }
+    if (filterNfEmitida === 'emitida') {
+      list = list.filter((a) => a.notaFiscalEmitida === true)
+    } else if (filterNfEmitida === 'aberto') {
+      list = list.filter((a) => a.notaFiscalEmitida !== true)
+    }
     return list
-  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados])
+  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados, filterStatus, filterPeriodo, filterNfEmitida])
+
+  const displayedAlunos = useMemo(
+    () => filteredAlunos.slice(0, itemsPerPage),
+    [filteredAlunos, itemsPerPage]
+  )
 
   const selected = editId ? alunos.find((a) => a.id === editId) : null
 
@@ -698,202 +723,299 @@ export default function FinanceiroAlunosPage() {
 
   return (
     <AdminLayout>
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Financeiro – Alunos</h1>
-        <p className="text-gray-600 mt-1">
-          Gestão financeira por aluno: valor mensal, status de pagamento, datas e envio de cobrança.
-        </p>
-
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('atrasado')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('atrasado')}
-            className="rounded-xl border-2 border-red-200 bg-red-50 p-4 shadow-sm cursor-pointer hover:bg-red-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-red-800 uppercase tracking-wide">Total atrasado</p>
-            <p className="mt-1 text-2xl font-bold text-red-900">{formatMoney(totalAtrasado)}</p>
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('pago')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('pago')}
-            className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm cursor-pointer hover:bg-green-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-green-800 uppercase tracking-wide">Total pago</p>
-            <p className="mt-1 text-2xl font-bold text-green-900">{formatMoney(totalPago)}</p>
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('aReceber')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('aReceber')}
-            className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm cursor-pointer hover:bg-amber-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-amber-800 uppercase tracking-wide">Total a receber</p>
-            <p className="mt-1 text-2xl font-bold text-amber-900">{formatMoney(totalAReceber)}</p>
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('alunos')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('alunos')}
-            className="rounded-xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm cursor-pointer hover:bg-slate-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-slate-800 uppercase tracking-wide">Total de alunos</p>
-            <p className="mt-1 text-2xl font-bold text-slate-900">{totalAlunos}</p>
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('nfEmAberto')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('nfEmAberto')}
-            className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4 shadow-sm cursor-pointer hover:bg-orange-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-orange-800 uppercase tracking-wide">NF em aberto</p>
-            <p className="mt-1 text-2xl font-bold text-orange-900">{nfEmAberto}</p>
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setCubeModal('nfEmitida')}
-            onKeyDown={(e) => e.key === 'Enter' && setCubeModal('nfEmitida')}
-            className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm cursor-pointer hover:bg-emerald-100 transition-colors"
-          >
-            <p className="text-sm font-semibold text-emerald-800 uppercase tracking-wide">NF emitida</p>
-            <p className="mt-1 text-2xl font-bold text-emerald-900">{nfEmitida}</p>
-          </div>
+      <div className="space-y-8">
+        {/* Cabeçalho */}
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Alunos</h1>
+          <p className="text-gray-600 mt-1 text-sm md:text-base">
+            Gestão financeira por aluno: valor mensal, status de pagamento, datas e envio de cobrança.
+          </p>
         </div>
 
+        {/* Seção: Período (ano e mês) */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800 mb-4">
+            <Calendar className="w-5 h-5 text-brand-orange" />
+            Período
+          </h2>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ano</p>
+              <div className="flex flex-wrap gap-2">
+                {ANOS_DISPONIVEIS.map((ano) => (
+                  <button
+                    key={ano}
+                    type="button"
+                    onClick={() => setSelectedAno(ano)}
+                    className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                      selectedAno === ano ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {ano}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-4">Mês</p>
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setSelectedMes(m)}
+                    className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
+                      selectedMes === m ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {MESES_ABREV[m]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-lg font-semibold text-gray-800 border-l-4 border-brand-orange pl-4">
+              Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
+            </p>
+          </div>
+        </section>
+
+        {/* Seção: Resumo do mês (cubos) */}
+        <section>
+          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('atrasado')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('atrasado')}
+              className="rounded-xl border-2 border-red-200 bg-red-50 p-4 shadow-sm cursor-pointer hover:bg-red-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-red-800 uppercase tracking-wide">Total atrasado</p>
+              <p className="mt-1 text-xl font-bold text-red-900">{formatMoney(totalAtrasado)}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('pago')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('pago')}
+              className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm cursor-pointer hover:bg-green-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-green-800 uppercase tracking-wide">Total pago</p>
+              <p className="mt-1 text-xl font-bold text-green-900">{formatMoney(totalPago)}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('aReceber')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('aReceber')}
+              className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm cursor-pointer hover:bg-amber-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">A receber</p>
+              <p className="mt-1 text-xl font-bold text-amber-900">{formatMoney(totalAReceber)}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('alunos')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('alunos')}
+              className="rounded-xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm cursor-pointer hover:bg-slate-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Alunos</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{totalAlunos}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('nfEmAberto')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('nfEmAberto')}
+              className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4 shadow-sm cursor-pointer hover:bg-orange-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-orange-800 uppercase tracking-wide">NF aberto</p>
+              <p className="mt-1 text-xl font-bold text-orange-900">{nfEmAberto}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('nfEmitida')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('nfEmitida')}
+              className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm cursor-pointer hover:bg-emerald-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">NF emitida</p>
+              <p className="mt-1 text-xl font-bold text-emerald-900">{nfEmitida}</p>
+            </div>
+          </div>
+        </section>
+
         {loading ? (
-          <div className="mt-8 flex justify-center">
+          <div className="flex justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
           </div>
         ) : (
           <>
-            {/* Abas: ano (principal) e mês */}
-            <div className="mt-6 space-y-4">
-              <div>
-                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Selecione o ano</p>
-                <div className="flex flex-wrap gap-2">
-                  {ANOS_DISPONIVEIS.map((ano) => (
-                    <button
-                      key={ano}
-                      type="button"
-                      onClick={() => setSelectedAno(ano)}
-                      className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
-                        selectedAno === ano
-                          ? 'bg-brand-orange text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {ano}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Mês</p>
-                <div className="flex flex-wrap gap-2">
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setSelectedMes(m)}
-                      className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
-                        selectedMes === m
-                          ? 'bg-brand-orange text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {MESES_ABREV[m]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <p className="mt-4 text-sm font-medium text-gray-700">
-              Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
-            </p>
-
-            <div className="mt-4 flex flex-wrap items-center gap-4">
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Buscar</label>
-                <input
-                  type="text"
-                  value={filterBusca}
-                  onChange={(e) => setFilterBusca(e.target.value)}
-                  placeholder="Nome, email, grupo..."
-                  className="input w-full"
-                />
-              </div>
-              <div className="flex items-center gap-4 pt-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filterProximos5Dias}
-                    onChange={(e) => setFilterProximos5Dias(e.target.checked)}
-                    className="rounded border-gray-300 text-amber-600"
-                  />
-                  <span className="text-sm font-medium text-gray-700">Vencimento em 5 dias</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filterAtrasados}
-                    onChange={(e) => setFilterAtrasados(e.target.checked)}
-                    className="rounded border-gray-300 text-red-600"
-                  />
-                  <span className="text-sm font-medium text-gray-700">Atrasados</span>
-                </label>
-              </div>
-              <div className="pt-6">
-                <Button
-                  variant="primary"
-                  onClick={openCobrancaTodosModal}
-                  disabled={atrasadosComEmail.length === 0}
-                >
-                  <Send className="w-4 h-4 mr-2" />
-                  Enviar cobrança para todos atrasados
-                </Button>
-              </div>
-            </div>
-            <p className="mt-2 text-xs text-gray-500">
-              As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única informação que acompanha é <strong>Último pag.</strong> Os cubos e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos. Clique duas vezes em uma célula para editar (Quem paga, Valor mensal, Status, Método pag., Banco, Período, datas, NF).
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <div className="relative" ref={columnsDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setColumnsDropdownOpen((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                >
-                  <Columns className="w-4 h-4" />
-                  Colunas
-                  <ChevronDown className="w-4 h-4" />
-                </button>
-                {columnsDropdownOpen && (
-                  <div className="absolute left-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-lg">
-                    <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
-                    {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
-                      <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
-                        <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
-                        <span className="text-sm text-gray-800">{col.label}</span>
+            {/* Seção: Buscar e filtros (recolhível) */}
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowBuscarFiltros((v) => !v)}
+                className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+              >
+                <Search className="w-5 h-5 text-brand-orange shrink-0" />
+                <span>Buscar e filtros</span>
+                {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
+              </button>
+              {showBuscarFiltros && (
+                <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+                  <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Nome, email ou grupo</label>
+                      <input
+                        type="text"
+                        value={filterBusca}
+                        onChange={(e) => setFilterBusca(e.target.value)}
+                        placeholder="Digite para filtrar..."
+                        className="input w-full"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-6">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={filterProximos5Dias}
+                          onChange={(e) => setFilterProximos5Dias(e.target.checked)}
+                          className="rounded border-gray-300 text-amber-600"
+                        />
+                        <span className="text-sm text-gray-700">Venc. em 5 dias</span>
                       </label>
-                    ))}
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={filterAtrasados}
+                          onChange={(e) => setFilterAtrasados(e.target.checked)}
+                          className="rounded border-gray-300 text-red-600"
+                        />
+                        <span className="text-sm text-gray-700">Atrasados</span>
+                      </label>
+                    </div>
+                    <Button
+                      variant="primary"
+                      onClick={openCobrancaTodosModal}
+                      disabled={atrasadosComEmail.length === 0}
+                      className="shrink-0"
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Enviar cobrança (atrasados)
+                    </Button>
                   </div>
-                )}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const headers = displayColumns.map((c) => c.label).join(';')
-                  const rows = filteredAlunos.map((a) =>
-                    displayColumns
+                  <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-gray-100">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
+                      <select
+                        value={filterStatus}
+                        onChange={(e) => setFilterStatus(e.target.value)}
+                        className="input min-w-[140px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        {STATUS_OPCOES.filter((o) => o.value).map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Período</label>
+                      <select
+                        value={filterPeriodo}
+                        onChange={(e) => setFilterPeriodo(e.target.value)}
+                        className="input min-w-[140px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        {PERIODO_OPCOES.filter((o) => o.value).map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">NF emitida?</label>
+                      <select
+                        value={filterNfEmitida}
+                        onChange={(e) => setFilterNfEmitida(e.target.value)}
+                        className="input min-w-[140px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        <option value="aberto">Em aberto</option>
+                        <option value="emitida">Emitida</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Dicas (recolhível) */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowDicas((v) => !v)}
+                className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                <Info className="w-4 h-4 text-brand-orange shrink-0" />
+                <span>Como usar esta página</span>
+                {showDicas ? <ChevronDown className="w-4 h-4 ml-auto" /> : <ChevronRight className="w-4 h-4 ml-auto" />}
+              </button>
+              {showDicas && (
+                <div className="px-4 pb-4 pt-0 text-xs text-gray-600 border-t border-gray-200">
+                  <p className="pt-3">
+                    As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única que acompanha o aluno é <strong>Último pag.</strong> Os números e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos.
+                  </p>
+                  <p className="mt-2">
+                    <strong>Edição rápida:</strong> clique duas vezes em uma célula para editar (Quem paga, Valor mensal, Status, Método pag., Banco, Período, datas, NF).
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Seção: Lista de alunos */}
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
+                <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Itens por página</label>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                    className="input min-w-[72px] text-sm py-1.5"
+                  >
+                    <option value={5}>5</option>
+                    <option value={30}>30</option>
+                    <option value={500}>500</option>
+                  </select>
+                </div>
+                <div className="relative" ref={columnsDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setColumnsDropdownOpen((v) => !v)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    <Columns className="w-4 h-4" />
+                    Colunas
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  {columnsDropdownOpen && (
+                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-lg">
+                      <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
+                      {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
+                        <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                          <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
+                          <span className="text-sm text-gray-800">{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const headers = displayColumns.map((c) => c.label).join(';')
+                    const rows = filteredAlunos.map((a) =>
+                      displayColumns
                       .map((col) => {
                         if (col.key === 'aluno') return (a.nome ?? '').replace(/;/g, ',')
                         if (col.key === 'cpf') return (a.cpf ?? '').replace(/;/g, ',')
@@ -932,8 +1054,13 @@ export default function FinanceiroAlunosPage() {
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar Excel
               </Button>
-            </div>
-            <div className="mt-4 overflow-x-auto bg-white rounded-xl border border-gray-200 shadow-sm">
+                {filteredAlunos.length > itemsPerPage && (
+                  <span className="text-sm text-gray-500 ml-auto">
+                    Mostrando {displayedAlunos.length} de {filteredAlunos.length} alunos
+                  </span>
+                )}
+              </div>
+              <div className="overflow-x-auto px-5 pb-5">
             <table className="w-full min-w-[1400px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
@@ -953,7 +1080,7 @@ export default function FinanceiroAlunosPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredAlunos.map((a) => {
+                {displayedAlunos.map((a) => {
                   const effective = getEffectiveStatus(a)
                   const isAtrasado = effective === 'ATRASADO'
                   const isEditing = (id: string, field: string) => editingCell?.id === id && editingCell?.field === field
@@ -1155,12 +1282,13 @@ export default function FinanceiroAlunosPage() {
                 })}
               </tbody>
             </table>
-            {filteredAlunos.length === 0 && (
-              <div className="py-12 text-center text-gray-500">
+            {displayedAlunos.length === 0 && (
+              <div className="py-12 text-center text-gray-500 px-5">
                 {alunos.length === 0 ? 'Nenhum aluno encontrado.' : 'Nenhum aluno corresponde aos filtros.'}
               </div>
             )}
-            </div>
+              </div>
+            </section>
           </>
         )}
 

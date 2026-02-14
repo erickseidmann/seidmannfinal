@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2 } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 interface StudentAlertItem {
@@ -46,6 +46,7 @@ interface Student {
   tipoAula?: string | null
   nomeGrupo?: string | null
   teacherNameForWeek?: string | null
+  agenda?: string | null
   cep?: string | null
   rua?: string | null
   cidade?: string | null
@@ -63,6 +64,7 @@ interface Student {
   nomeEmpresaOuIndicador?: string | null
   escolaMatricula?: string | null
   escolaMatriculaOutro?: string | null
+  cancelamentoAntecedenciaHoras?: number | null
   activationDate?: string | null
   user?: { id: string; nome: string; email: string; whatsapp: string | null } | null
 }
@@ -174,7 +176,8 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'endereco', label: 'Endereço', getValue: (s) => formatEndereco(s).replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'valorMensalidade', label: 'Valor', getValue: (s) => (s.valorMensalidade != null ? String(s.valorMensalidade).replace('.', ',') : '—') },
   { key: 'tipoAula', label: 'Tipo', getValue: (s) => (s.tipoAula === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : s.tipoAula ?? '—') },
-  { key: 'teacherNameForWeek', label: 'Professor (semana)', getValue: (s) => (s.teacherNameForWeek ?? 's/ professor').replace(/;/g, ',') },
+  { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.teacherNameForWeek ?? 's/ professor').replace(/;/g, ',') },
+  { key: 'agenda', label: 'Agenda', getValue: (s) => (s.agenda ?? '—').replace(/;/g, ',') },
   { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
   { key: 'trackingCode', label: 'Código', getValue: (s) => (s.trackingCode ?? '').replace(/;/g, ',') },
   { key: 'criadoEm', label: 'Criado em', getValue: (s) => s.criadoEm ? new Date(s.criadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' },
@@ -211,6 +214,7 @@ const initialForm = {
   nomeEmpresaOuIndicador: '',
   escolaMatricula: '',
   escolaMatriculaOutro: '',
+  cancelamentoAntecedenciaHoras: '',
   observacoes: '',
   status: 'ACTIVE',
   activationDate: '',
@@ -221,7 +225,9 @@ export default function AdminAlunosPage() {
   const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
   const [filters, setFilters] = useState({ status: '', search: '', tipo: '', professor: '', escola: '' })
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const [sortKey, setSortKey] = useState<string>('criadoEm')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -282,7 +288,8 @@ export default function AdminAlunosPage() {
     count: number
     list: { enrollmentId: string; studentName: string; expected: number; actual: number }[]
   }>({ count: 0, list: [] })
-  const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'email', 'whatsapp', 'cpf', 'endereco', 'valorMensalidade', 'tipoAula', 'teacherNameForWeek', 'status', 'trackingCode', 'criadoEm', 'actions']
+  // Por padrão ocultas: email, cpf, endereco, valorMensalidade, trackingCode, criadoEm — aparecem só se o usuário selecionar em "Colunas"
+  const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
@@ -372,6 +379,7 @@ export default function AdminAlunosPage() {
       if (filters.status) params.append('status', filters.status)
       if (filters.search) params.append('search', filters.search)
       params.append('weekStart', getMonday(new Date()).toISOString())
+      params.append('limit', String(itemsPerPage))
       const response = await fetch(`/api/admin/enrollments?${params.toString()}`, {
         credentials: 'include',
       })
@@ -395,6 +403,11 @@ export default function AdminAlunosPage() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchStudents()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsPerPage])
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
@@ -437,6 +450,7 @@ export default function AdminAlunosPage() {
       nomeEmpresaOuIndicador: s.nomeEmpresaOuIndicador ?? '',
       escolaMatricula: s.escolaMatricula ?? '',
       escolaMatriculaOutro: s.escolaMatriculaOutro ?? '',
+      cancelamentoAntecedenciaHoras: s.cancelamentoAntecedenciaHoras != null ? String(s.cancelamentoAntecedenciaHoras) : '',
       observacoes: s.observacoes ?? '',
       status: s.status || 'ACTIVE',
       activationDate: s.activationDate ? new Date(s.activationDate).toISOString().slice(0, 10) : '',
@@ -573,6 +587,29 @@ export default function AdminAlunosPage() {
           }
         } catch {
           setToast({ message: 'Erro ao criar acesso', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleDeleteStudent = (s: Student) => {
+    setConfirmModal({
+      title: 'Excluir aluno',
+      message: `Tem certeza que deseja excluir a matrícula de "${s.nome}"? Só é possível excluir se não houver nenhuma aula registrada; caso existam aulas, cancele ou exclua-as antes. Esta ação não pode ser desfeita.`,
+      variant: 'danger',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/enrollments/${s.id}`, { method: 'DELETE', credentials: 'include' })
+          const json = await res.json()
+          if (!res.ok || !json.ok) {
+            setToast({ message: json.message || 'Erro ao excluir aluno', type: 'error' })
+            return
+          }
+          fetchStudents()
+          setToast({ message: 'Aluno excluído com sucesso', type: 'success' })
+        } catch {
+          setToast({ message: 'Erro ao excluir aluno', type: 'error' })
         }
       },
     })
@@ -827,6 +864,7 @@ export default function AdminAlunosPage() {
         nomeEmpresaOuIndicador: formData.nomeEmpresaOuIndicador.trim() || null,
         escolaMatricula: formData.escolaMatricula || null,
         escolaMatriculaOutro: formData.escolaMatricula === 'OUTRO' ? (formData.escolaMatriculaOutro.trim() || null) : null,
+        cancelamentoAntecedenciaHoras: formData.cancelamentoAntecedenciaHoras ? Number(formData.cancelamentoAntecedenciaHoras) : null,
         observacoes: formData.observacoes.trim() || null,
         status: formData.status || 'ACTIVE',
         activationDate: formData.status === 'PAUSED' && formData.activationDate ? formData.activationDate : null,
@@ -911,6 +949,8 @@ export default function AdminAlunosPage() {
         return ((s.tipoAula ?? '') + (s.nomeGrupo ?? '')).toLowerCase()
       case 'teacherNameForWeek':
         return (s.teacherNameForWeek ?? '').toLowerCase()
+      case 'agenda':
+        return (s.agenda ?? '').toLowerCase()
       case 'status':
         return s.status ?? ''
       case 'trackingCode':
@@ -1184,6 +1224,17 @@ export default function AdminAlunosPage() {
         ),
     },
     {
+      key: 'agenda',
+      label: 'Agenda',
+      sortable: true,
+      sortValue: (s: Student) => (s.agenda ?? '').toLowerCase(),
+      render: (s: Student) => (
+        <span title={s.agenda ?? undefined} className="max-w-[200px] truncate block">
+          {s.agenda || '—'}
+        </span>
+      ),
+    },
+    {
       key: 'status',
       label: 'Status',
       sortable: true,
@@ -1296,20 +1347,29 @@ export default function AdminAlunosPage() {
               <UserPlus className="w-4 h-4" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => handleDeleteStudent(s)}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+            title="Excluir"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       ),
     },
-  ]
+  ];
 
   return (
     <AdminLayout>
-      <div>
-        <div className="flex items-center justify-between mb-6">
+      <div className="space-y-8">
+        {/* Cabeçalho */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Alunos</h1>
-            <p className="text-sm text-gray-600">Lista de alunos e matrículas do instituto</p>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Alunos</h1>
+            <p className="text-sm text-gray-600 mt-1">Lista de alunos e matrículas do instituto</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleDeleteLast10Min}
               variant="outline"
@@ -1336,20 +1396,23 @@ export default function AdminAlunosPage() {
           </div>
         </div>
 
-        {/* Cubos de Estatísticas */}
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Seção: Resumo (estilo financeiro: fundo pastel, borda colorida) */}
+        <section>
+          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-stretch">
           {/* Por Status - Mais importantes */}
           <div
             role="button"
             tabIndex={0}
             onClick={() => openListModal('enrollmentsActive', 'Alunos Ativos')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsActive', 'Alunos Ativos')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos Ativos"
               value={statsLoading ? '...' : (stats?.porStatus.ativos ?? 0)}
-              icon={<UserCheck className="w-6 h-6" />}
+              icon={<UserCheck className="w-5 h-5" />}
               color="green"
             />
           </div>
@@ -1358,12 +1421,13 @@ export default function AdminAlunosPage() {
             tabIndex={0}
             onClick={() => openListModal('enrollmentsInactive', 'Alunos Inativos')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsInactive', 'Alunos Inativos')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos Inativos"
               value={statsLoading ? '...' : (stats?.porStatus.inativos ?? 0)}
-              icon={<UserX className="w-6 h-6" />}
+              icon={<UserX className="w-5 h-5" />}
               color="red"
             />
           </div>
@@ -1372,12 +1436,13 @@ export default function AdminAlunosPage() {
             tabIndex={0}
             onClick={() => openListModal('enrollmentsPaused', 'Alunos Pausados')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsPaused', 'Alunos Pausados')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos Pausados"
               value={statsLoading ? '...' : (stats?.porStatus.pausados ?? 0)}
-              icon={<Users className="w-6 h-6" />}
+              icon={<Users className="w-5 h-5" />}
               color="orange"
             />
           </div>
@@ -1386,12 +1451,13 @@ export default function AdminAlunosPage() {
             tabIndex={0}
             onClick={() => openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Sem Professor (semana)"
               value={statsLoading ? '...' : (stats?.semProfessor ?? 0)}
-              icon={<AlertTriangle className="w-6 h-6" />}
+              icon={<AlertTriangle className="w-5 h-5" />}
               color="orange"
               subtitle="Ativos/Pausados sem aula esta semana"
             />
@@ -1409,13 +1475,14 @@ export default function AdminAlunosPage() {
                 setListData([])
               }
             }}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Frequência incorreta"
               value={wrongFrequencyStats.count}
-              icon={<AlertTriangle className="w-6 h-6" />}
-              color="orange"
+              icon={<AlertTriangle className="w-5 h-5" />}
+              color="red"
               subtitle="Ação necessária esta semana"
             />
           </div>
@@ -1435,107 +1502,148 @@ export default function AdminAlunosPage() {
               ] as any)
             }}
             onKeyDown={(e) => e.key === 'Enter' && {}}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Total por Escola"
               value={statsLoading ? '...' : ((stats?.porEscola.seidmann ?? 0) + (stats?.porEscola.youbecome ?? 0) + (stats?.porEscola.highway ?? 0) + (stats?.porEscola.outros ?? 0))}
-              icon={<GraduationCap className="w-6 h-6" />}
+              icon={<GraduationCap className="w-5 h-5" />}
               color="blue"
             />
           </div>
-        </div>
+          </div>
+        </section>
 
-        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
-            <select
-              value={filters.status}
-              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-              className="input w-full"
-            >
-              <option value="">Todos</option>
-              <option value="ACTIVE">Ativo</option>
-              <option value="INACTIVE">Inativo</option>
-              <option value="PAUSED">Pausado</option>
-              <option value="LEAD">Lead</option>
-              <option value="REGISTERED">Matriculado</option>
-              <option value="CONTRACT_ACCEPTED">Contrato aceito</option>
-              <option value="PAYMENT_PENDING">Pagamento pendente</option>
-              <option value="BLOCKED">Bloqueado</option>
-              <option value="COMPLETED">Concluído</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Escola de matrícula</label>
-            <select
-              value={filters.escola}
-              onChange={(e) => setFilters({ ...filters, escola: e.target.value })}
-              className="input w-full"
-            >
-              <option value="">Todas</option>
-              <option value="SEIDMANN">Seidmann</option>
-              <option value="YOUBECOME">Youbecome</option>
-              <option value="HIGHWAY">Highway</option>
-              <option value="OUTROS">Outros</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Tipo</label>
-            <select
-              value={filters.tipo}
-              onChange={(e) => setFilters({ ...filters, tipo: e.target.value })}
-              className="input w-full"
-            >
-              <option value="">Todos</option>
-              <option value="PARTICULAR">Particular</option>
-              <option value="GRUPO">Grupo</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Professor (semana)</label>
-            <select
-              value={filters.professor}
-              onChange={(e) => setFilters({ ...filters, professor: e.target.value })}
-              className="input w-full"
-            >
-              <option value="">Todos</option>
-              <option value="com">Com professor</option>
-              <option value="sem">Sem professor</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Buscar</label>
-            <input
-              type="text"
-              value={filters.search}
-              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-              className="input w-full"
-              placeholder="Nome, email, WhatsApp..."
-            />
-          </div>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="md"
-              onClick={() => setReportModalOpen(true)}
-              className="flex items-center gap-2 w-full justify-center"
-            >
-              <FileDown className="w-4 h-4" />
-              Relatório personalizado
-            </Button>
-          </div>
+        {/* Buscar e filtros (recolhível) */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowBuscarFiltros((v) => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+          >
+            <Search className="w-5 h-5 text-brand-orange shrink-0" />
+            <span>Buscar e filtros</span>
+            {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
+          </button>
+          {showBuscarFiltros && (
+            <div className="px-5 pb-5 pt-0 border-t border-gray-200">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4 pt-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
+                  <select
+                    value={filters.status}
+                    onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                    className="input w-full text-sm py-2"
+                  >
+                    <option value="">Todos</option>
+                    <option value="ACTIVE">Ativo</option>
+                    <option value="INACTIVE">Inativo</option>
+                    <option value="PAUSED">Pausado</option>
+                    <option value="LEAD">Lead</option>
+                    <option value="REGISTERED">Matriculado</option>
+                    <option value="CONTRACT_ACCEPTED">Contrato aceito</option>
+                    <option value="PAYMENT_PENDING">Pagamento pendente</option>
+                    <option value="BLOCKED">Bloqueado</option>
+                    <option value="COMPLETED">Concluído</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
+                  <select
+                    value={filters.escola}
+                    onChange={(e) => setFilters({ ...filters, escola: e.target.value })}
+                    className="input w-full text-sm py-2"
+                  >
+                    <option value="">Todas</option>
+                    <option value="SEIDMANN">Seidmann</option>
+                    <option value="YOUBECOME">Youbecome</option>
+                    <option value="HIGHWAY">Highway</option>
+                    <option value="OUTROS">Outros</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tipo</label>
+                  <select
+                    value={filters.tipo}
+                    onChange={(e) => setFilters({ ...filters, tipo: e.target.value })}
+                    className="input w-full text-sm py-2"
+                  >
+                    <option value="">Todos</option>
+                    <option value="PARTICULAR">Particular</option>
+                    <option value="GRUPO">Grupo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Professor (semana)</label>
+                  <select
+                    value={filters.professor}
+                    onChange={(e) => setFilters({ ...filters, professor: e.target.value })}
+                    className="input w-full text-sm py-2"
+                  >
+                    <option value="">Todos</option>
+                    <option value="com">Com professor</option>
+                    <option value="sem">Sem professor</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 lg:col-span-1">
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Buscar</label>
+                  <input
+                    type="text"
+                    value={filters.search}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                    className="input w-full text-sm py-2"
+                    placeholder="Nome, email, WhatsApp..."
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    onClick={() => setReportModalOpen(true)}
+                    className="flex items-center gap-2 w-full justify-center"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    Relatório personalizado
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
             {error}
           </div>
         )}
 
+        {/* Lista de alunos */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
+            <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Itens por página</label>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                className="input min-w-[72px] text-sm py-1.5"
+              >
+                <option value={5}>5</option>
+                <option value={30}>30</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+            {filteredAndSortedStudents.length > 0 && (
+              <span className="text-sm text-gray-500">
+                {filteredAndSortedStudents.length} aluno(s)
+              </span>
+            )}
+          </div>
+          <div className="px-5 py-4">
         {filteredAndSortedStudents.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -1607,17 +1715,19 @@ export default function AdminAlunosPage() {
           </div>
         )}
 
-        <Table
-          columns={columns}
-          data={filteredAndSortedStudents}
-          loading={loading}
-          emptyMessage="Nenhum aluno encontrado"
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={handleSort}
-          visibleColumnKeys={visibleColumnKeys}
-          onVisibleColumnsChange={setVisibleColumnKeys}
-        />
+            <Table
+              columns={columns}
+              data={filteredAndSortedStudents}
+              loading={loading}
+              emptyMessage="Nenhum aluno encontrado"
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+              visibleColumnKeys={visibleColumnKeys}
+              onVisibleColumnsChange={setVisibleColumnKeys}
+            />
+          </div>
+        </section>
 
         {/* Modal Redefinir senha do aluno */}
         <Modal
@@ -1806,7 +1916,7 @@ export default function AdminAlunosPage() {
                       min={new Date().toISOString().slice(0, 10)}
                       required
                     />
-                    <p className="text-xs text-gray-500 mt-1">A partir desta data, o aluno voltará automaticamente para "Ativo"</p>
+                    <p className="text-xs text-gray-500 mt-1">A partir desta data, o aluno voltará automaticamente para &quot;Ativo&quot;</p>
                   </div>
                 )}
                 <div>
@@ -1844,6 +1954,25 @@ export default function AdminAlunosPage() {
                     />
                   </div>
                 )}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Tempo de antecedência para cancelamento (horas)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={formData.cancelamentoAntecedenciaHoras}
+                    onChange={(e) => setFormData({ ...formData, cancelamentoAntecedenciaHoras: e.target.value })}
+                    className="input w-full"
+                    placeholder={formData.escolaMatricula === 'YOUBECOME' ? 'Padrão: 24 horas' : 'Padrão: 6 horas'}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {formData.escolaMatricula === 'YOUBECOME' 
+                      ? 'Alunos YOUBECOME: mínimo 24 horas (1 dia). Deixe em branco para usar o padrão.'
+                      : 'Tempo mínimo de antecedência necessário para cancelar uma aula. Deixe em branco para usar o padrão de 6 horas.'}
+                  </p>
+                </div>
               </div>
               {isMinor && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-amber-50 rounded-lg border border-amber-200">

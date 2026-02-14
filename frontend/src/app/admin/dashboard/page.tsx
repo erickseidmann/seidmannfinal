@@ -12,9 +12,8 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
-import { Card } from '@/components/ui/Card'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle } from 'lucide-react'
+import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History } from 'lucide-react'
 
 /** Segunda-feira 00:00 da semana que contém d */
 function getMonday(d: Date): Date {
@@ -69,6 +68,7 @@ interface Metrics {
     total: number
   }
   studentsWithoutLesson: number
+  novosMatriculadosCount: number
   teachersWithProblems: number
   absences: {
     studentsWeek: number
@@ -80,6 +80,7 @@ interface Metrics {
 
 type ListType =
   | 'activeStudents'
+  | 'novosMatriculados'
   | 'studentsWithoutLesson'
   | 'inactiveStudents'
   | 'totalUsers'
@@ -101,12 +102,17 @@ interface ListItemWithoutLesson extends ListItemBase {
   ultimoLivro: string | null
   ultimaPagina: string | null
 }
+interface ListItemNovosMatriculados extends ListItemBase {
+  dataMatricula?: string
+  linkPagamentoEnviadoAt?: string | null
+}
 interface ListItemTotalUser extends ListItemBase {
   role?: string
 }
 
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
+  novosMatriculados: 'Novos alunos matriculados',
   studentsWithoutLesson: 'Alunos sem aula designada',
   inactiveStudents: 'Alunos Inativos',
   totalUsers: 'Total de Usuários',
@@ -124,16 +130,39 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [modalType, setModalType] = useState<ListType | null>(null)
   const [listData, setListData] = useState<
-    (ListItemWithData | ListItemWithoutLesson | ListItemTotalUser)[]
+    (ListItemWithData | ListItemWithoutLesson | ListItemTotalUser | ListItemNovosMatriculados)[]
   >([])
   const [listLoading, setListLoading] = useState(false)
   const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
   const [calendarStatsLoading, setCalendarStatsLoading] = useState(true)
   const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
+  const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
+  const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
+  const [showAuditModal, setShowAuditModal] = useState(false)
+  const [auditActivities, setAuditActivities] = useState<Array<{ id: string; actorName: string; action: string; detail: string; createdAt: string }>>([])
+  const [auditHours, setAuditHours] = useState(48)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [auditCount48h, setAuditCount48h] = useState<number | null>(null)
 
   useEffect(() => {
     fetchMetrics()
   }, [])
+
+  const fetchAuditCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/audit-activity?hours=48&countOnly=true', { credentials: 'include' })
+      const json = await res.json()
+      if (json.ok && typeof json.data?.count === 'number') {
+        setAuditCount48h(json.data.count)
+      }
+    } catch {
+      // ignora
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchAuditCount()
+  }, [fetchAuditCount])
 
   const fetchCalendarStats = useCallback(async () => {
     setCalendarStatsLoading(true)
@@ -187,6 +216,89 @@ export default function AdminDashboardPage() {
   )
 
   const closeModal = useCallback(() => setModalType(null), [])
+
+  const openAuditModal = useCallback(async () => {
+    setShowAuditModal(true)
+    setAuditLoading(true)
+    try {
+      const res = await fetch(`/api/admin/audit-activity?hours=${auditHours}`, { credentials: 'include' })
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.activities)) {
+        setAuditActivities(json.data.activities)
+      } else {
+        setAuditActivities([])
+      }
+    } catch {
+      setAuditActivities([])
+    } finally {
+      setAuditLoading(false)
+    }
+  }, [auditHours])
+
+  const refetchAuditWithHours = useCallback((hours: number) => {
+    setAuditHours(hours)
+    setAuditLoading(true)
+    fetch(`/api/admin/audit-activity?hours=${hours}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && Array.isArray(json.data?.activities)) {
+          setAuditActivities(json.data.activities)
+        } else {
+          setAuditActivities([])
+        }
+      })
+      .catch(() => setAuditActivities([]))
+      .finally(() => setAuditLoading(false))
+  }, [])
+
+  const marcarAulasAdicionadas = useCallback(
+    async (enrollmentId: string) => {
+      setMarcandoAulasId(enrollmentId)
+      try {
+        const res = await fetch(`/api/admin/enrollments/${enrollmentId}/marcar-aulas-adicionadas`, {
+          method: 'PATCH',
+          credentials: 'include',
+        })
+        const json = await res.json()
+        if (json.ok) {
+          setListData((prev) => prev.filter((item) => item.id !== enrollmentId))
+          fetchMetrics()
+        }
+      } catch (e) {
+        console.error(e)
+      } finally {
+        setMarcandoAulasId(null)
+      }
+    },
+    []
+  )
+
+  const marcarLinkPagEnviado = useCallback(
+    async (enrollmentId: string) => {
+      setMarcandoLinkPagId(enrollmentId)
+      try {
+        const res = await fetch(`/api/admin/enrollments/${enrollmentId}/marcar-link-pagamento-enviado`, {
+          method: 'PATCH',
+          credentials: 'include',
+        })
+        const json = await res.json()
+        if (json.ok) {
+          setListData((prev) =>
+            prev.map((item) =>
+              item.id === enrollmentId
+                ? { ...item, linkPagamentoEnviadoAt: new Date().toISOString() }
+                : item
+            )
+          )
+        }
+      } catch (e) {
+        console.error(e)
+      } finally {
+        setMarcandoLinkPagId(null)
+      }
+    },
+    []
+  )
 
   const fetchMetrics = async () => {
     try {
@@ -290,31 +402,51 @@ export default function AdminDashboardPage() {
 
   return (
     <AdminLayout>
-      <div>
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-50/50">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-            Dashboard Admin
-          </h1>
-          <p className="text-sm text-gray-600">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-1 h-10 rounded-full bg-gradient-to-b from-brand-orange to-amber-500" aria-hidden />
+            <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+              Dashboard Admin
+            </h1>
+          </div>
+          <p className="text-sm text-slate-500 ml-4">
             Visão geral do sistema e métricas de usuários
           </p>
         </div>
 
-        {/* Cards de Métricas - Usuários (clicáveis) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {/* Cubos de métricas (estilo financeiro, um único grid alinhado) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8 items-stretch">
           <div
             role="button"
             tabIndex={0}
             onClick={() => openListModal('activeStudents')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('activeStudents')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos Ativos"
               value={metrics?.users.ACTIVE || 0}
-              icon={<UserCheck className="w-6 h-6" />}
+              icon={<UserCheck className="w-5 h-5" />}
               color="green"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('novosMatriculados')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('novosMatriculados')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Novos alunos matriculados"
+              value={metrics?.novosMatriculadosCount ?? 0}
+              icon={<UserPlus className="w-5 h-5" />}
+              color="blue"
+              subtitle="Clique para ver, marcar «enviei link pag» e «já adicionei aulas»"
             />
           </div>
           <div
@@ -322,14 +454,15 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => setShowAlunosSemAulaModal(true)}
             onKeyDown={(e) => e.key === 'Enter' && setShowAlunosSemAulaModal(true)}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos sem aula designada"
               value={calendarStatsLoading ? '...' : (calendarStats?.wrongFrequencyCount ?? 0)}
-              icon={<Users className="w-6 h-6" />}
+              icon={<Users className="w-5 h-5" />}
               color="orange"
-              subtitle="Freq. incorreta na semana (seg–sáb) vs. cadastrada"
+              subtitle="Freq. incorreta na semana"
             />
           </div>
           <div
@@ -337,12 +470,13 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('inactiveStudents')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('inactiveStudents')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Alunos Inativos"
               value={metrics?.users.INACTIVE || 0}
-              icon={<UserX className="w-6 h-6" />}
+              icon={<UserX className="w-5 h-5" />}
               color="red"
             />
           </div>
@@ -351,31 +485,29 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('totalUsers')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('totalUsers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Total de Usuários"
               value={metrics?.users.total || 0}
-              icon={<UserCog className="w-6 h-6" />}
+              icon={<UserCog className="w-5 h-5" />}
               color="purple"
             />
           </div>
-        </div>
-
-        {/* Cards de Métricas - Professores e Faltas (clicáveis) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div
             role="button"
             tabIndex={0}
             onClick={() => openListModal('activeTeachers')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('activeTeachers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Professores Ativos"
               value={metrics?.teachers.ACTIVE || 0}
-              icon={<GraduationCap className="w-6 h-6" />}
-              color="blue"
+              icon={<GraduationCap className="w-5 h-5" />}
+              color="green"
             />
           </div>
           <div
@@ -383,12 +515,13 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('inactiveTeachers')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('inactiveTeachers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Professores Inativos"
               value={metrics?.teachers.INACTIVE || 0}
-              icon={<GraduationCap className="w-6 h-6" />}
+              icon={<GraduationCap className="w-5 h-5" />}
               color="red"
             />
           </div>
@@ -397,12 +530,13 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('absencesStudentsWeek')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('absencesStudentsWeek')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Faltas Alunos (7 dias)"
               value={metrics?.absences.studentsWeek || 0}
-              icon={<CalendarX className="w-6 h-6" />}
+              icon={<CalendarX className="w-5 h-5" />}
               color="orange"
               subtitle="Última semana"
             />
@@ -412,54 +546,71 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('teachersWithProblems')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('teachersWithProblems')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Professores com problemas"
               value={metrics?.teachersWithProblems ?? 0}
-              icon={<AlertTriangle className="w-6 h-6" />}
+              icon={<AlertTriangle className="w-5 h-5" />}
               color="red"
               subtitle="Avaliação 1 estrela"
             />
           </div>
-        </div>
-
-        {/* Cards de Faltas Mensais (clicáveis) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div
             role="button"
             tabIndex={0}
             onClick={() => openListModal('absencesStudentsMonth')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('absencesStudentsMonth')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Faltas Alunos (30 dias)"
               value={metrics?.absences.studentsMonth || 0}
-              icon={<CalendarX className="w-6 h-6" />}
+              icon={<CalendarX className="w-5 h-5" />}
               color="orange"
               subtitle="Último mês"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={openAuditModal}
+            onKeyDown={(e) => e.key === 'Enter' && openAuditModal()}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Quem fez o quê"
+              value={auditCount48h ?? '...'}
+              icon={<History className="w-5 h-5" />}
+              color="purple"
+              subtitle="Clique para ver ações dos admins (últimas 48h)"
             />
           </div>
         </div>
 
         {/* Gráfico */}
-        <Card className="p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-6 md:p-8 shadow-lg mb-8">
+          <h2 className="text-xl font-semibold text-slate-800 mb-6 pb-3 border-b border-slate-100">
             Distribuição de Usuários por Status
           </h2>
           <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="Alunos" fill="#f97316" />
-              <Bar dataKey="Professores" fill="#ea580c" />
+            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 12 }} axisLine={{ stroke: '#e2e8f0' }} />
+              <YAxis tick={{ fill: '#64748b', fontSize: 12 }} axisLine={false} tickLine={false} />
+              <Tooltip
+                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                labelStyle={{ fontWeight: 600, color: '#334155' }}
+              />
+              <Legend wrapperStyle={{ paddingTop: 16 }} iconType="circle" iconSize={8} />
+              <Bar dataKey="Alunos" fill="#f97316" radius={[4, 4, 0, 0]} name="Alunos" />
+              <Bar dataKey="Professores" fill="#ea580c" radius={[4, 4, 0, 0]} name="Professores" />
             </BarChart>
           </ResponsiveContainer>
-        </Card>
+        </div>
 
         {/* Modal de lista ao clicar no cubo */}
         <Modal
@@ -472,6 +623,66 @@ export default function AdminDashboardPage() {
             <p className="text-gray-500">Carregando...</p>
           ) : listData.length === 0 ? (
             <p className="text-gray-500">Nenhum registro.</p>
+          ) : modalType === 'novosMatriculados' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Alunos que se matricularam pelo formulário e ainda não foram marcados como «já adicionei aulas». Use «Enviei link pag» para registrar o envio do link de pagamento; «Já adicionei aulas» remove o aluno da lista.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Data da matrícula</th>
+                      <th className="py-2 font-semibold text-gray-700">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as ListItemNovosMatriculados
+                      const dataFormatada = row.dataMatricula
+                        ? new Date(row.dataMatricula).toLocaleDateString('pt-BR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                          })
+                        : '—'
+                      const isLoadingAulas = marcandoAulasId === row.id
+                      const isLoadingLink = marcandoLinkPagId === row.id
+                      const linkEnviado = !!row.linkPagamentoEnviadoAt
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4">{row.nome}</td>
+                          <td className="py-2 pr-4">{dataFormatada}</td>
+                          <td className="py-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => marcarLinkPagEnviado(row.id)}
+                              disabled={isLoadingLink || linkEnviado}
+                              className={`px-3 py-1.5 text-sm font-medium rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
+                                linkEnviado
+                                  ? 'bg-gray-200 text-gray-600 cursor-default'
+                                  : 'bg-sky-600 text-white hover:opacity-90'
+                              }`}
+                            >
+                              {isLoadingLink ? 'Salvando...' : linkEnviado ? 'Link enviado' : 'Enviei link pag'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => marcarAulasAdicionadas(row.id)}
+                              disabled={isLoadingAulas}
+                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isLoadingAulas ? 'Salvando...' : 'Já adicionei aulas'}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : modalType === 'studentsWithoutLesson' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -559,6 +770,64 @@ export default function AdminDashboardPage() {
               ))}
             </ul>
           )}
+        </Modal>
+
+        {/* Modal Quem fez o quê */}
+        <Modal
+          isOpen={showAuditModal}
+          onClose={() => {
+            setShowAuditModal(false)
+            fetchAuditCount()
+          }}
+          title="Quem fez o quê"
+          size="xl"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center gap-4 flex-wrap">
+              <label className="text-sm font-medium text-gray-700">Período:</label>
+              <select
+                value={auditHours}
+                onChange={(e) => refetchAuditWithHours(Number(e.target.value))}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-orange focus:border-brand-orange"
+              >
+                <option value={48}>Últimas 48 horas</option>
+                <option value={72}>Últimas 72 horas</option>
+                <option value={168}>Últimos 7 dias</option>
+                <option value={336}>Últimos 14 dias</option>
+                <option value={720}>Últimos 30 dias</option>
+              </select>
+            </div>
+            {auditLoading ? (
+              <p className="text-gray-500">Carregando...</p>
+            ) : auditActivities.length === 0 ? (
+              <p className="text-gray-500">Nenhuma ação registrada neste período.</p>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-white border-b border-gray-200">
+                    <tr>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Quando</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Quem</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Ação</th>
+                      <th className="py-2 font-semibold text-gray-700">Detalhe</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditActivities.map((item) => (
+                      <tr key={item.id} className="border-b border-gray-100">
+                        <td className="py-2 pr-4 text-sm text-gray-600 whitespace-nowrap">
+                          {formatDateTime(item.createdAt)}
+                        </td>
+                        <td className="py-2 pr-4 font-medium">{item.actorName}</td>
+                        <td className="py-2 pr-4">{item.action}</td>
+                        <td className="py-2 text-gray-600">{item.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </Modal>
 
         {/* Modal Alunos sem aula designada (freq. incorreta): nome, horários de aula, último livro */}

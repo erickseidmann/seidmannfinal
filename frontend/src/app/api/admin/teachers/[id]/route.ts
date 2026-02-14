@@ -194,3 +194,37 @@ export async function PATCH(
     )
   }
 }
+
+/** DELETE: excluir professor. Remove também aulas, alertas e horários vinculados (cascade). */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const auth = await requireAdmin(_request)
+    if (!auth.authorized) {
+      return NextResponse.json(
+        { ok: false, message: auth.message || 'Não autorizado' },
+        { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
+      )
+    }
+
+    const { id } = params
+    const existing = await prisma.teacher.findUnique({ where: { id } })
+    if (!existing) {
+      return NextResponse.json(
+        { ok: false, message: 'Professor não encontrado' },
+        { status: 404 }
+      )
+    }
+
+    await prisma.teacher.delete({ where: { id } })
+    return NextResponse.json({ ok: true, data: { deleted: id } })
+  } catch (error) {
+    console.error('[api/admin/teachers/[id] DELETE] Erro ao excluir professor:', error)
+    return NextResponse.json(
+      { ok: false, message: 'Erro ao excluir professor' },
+      { status: 500 }
+    )
+  }
+}

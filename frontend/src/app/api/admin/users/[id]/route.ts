@@ -123,3 +123,50 @@ export async function PATCH(
     )
   }
 }
+
+/** DELETE: excluir usuário do ADM (apenas @seidmann.com; não permite excluir admin@seidmann.com) */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const auth = await requireSuperAdmin(_request)
+    if (!auth.authorized) {
+      return NextResponse.json(
+        { ok: false, message: auth.message || 'Não autorizado' },
+        { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
+      )
+    }
+
+    const { id } = params
+    const existing = await prisma.user.findUnique({ where: { id } })
+    if (!existing) {
+      return NextResponse.json(
+        { ok: false, message: 'Usuário não encontrado' },
+        { status: 404 }
+      )
+    }
+    if (!existing.email.endsWith(SEIDMANN_SUFFIX)) {
+      return NextResponse.json(
+        { ok: false, message: 'Só é possível excluir usuários do ADM (@seidmann.com)' },
+        { status: 403 }
+      )
+    }
+    const emailLower = existing.email.toLowerCase()
+    if (emailLower === 'admin@seidmann.com') {
+      return NextResponse.json(
+        { ok: false, message: 'Não é permitido excluir o administrador principal' },
+        { status: 403 }
+      )
+    }
+
+    await prisma.user.delete({ where: { id } })
+    return NextResponse.json({ ok: true, data: { deleted: id } })
+  } catch (error) {
+    console.error('[api/admin/users/[id] DELETE] Erro ao excluir usuário:', error)
+    return NextResponse.json(
+      { ok: false, message: 'Erro ao excluir usuário' },
+      { status: 500 }
+    )
+  }
+}

@@ -96,18 +96,19 @@ export default function Table<T extends { id: string }>({
   return (
     <div className="w-full max-w-full">
       {hasColumnSelector && (
-        <div className="mb-3 flex justify-end">
+        <div className="mb-3 flex flex-col sm:flex-row sm:justify-end gap-2">
           <div className="relative" ref={dropdownRef}>
             <button
               type="button"
               onClick={() => setColumnsOpen((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 w-full sm:w-auto justify-center sm:justify-start"
             >
               <Columns className="w-4 h-4" />
-              Colunas
+              <span className="hidden sm:inline">Colunas</span>
+              <span className="sm:hidden">Colunas visíveis</span>
             </button>
             {columnsOpen && (
-              <div className="absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-lg">
+              <div className="absolute right-0 top-full z-20 mt-1 min-w-[200px] max-w-[90vw] rounded-lg border border-gray-200 bg-white py-2 shadow-lg max-h-[60vh] overflow-y-auto">
                 <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
                 {toggleableColumns.map((col) => (
                   <label
@@ -128,52 +129,54 @@ export default function Table<T extends { id: string }>({
           </div>
         </div>
       )}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="w-full min-w-[640px]">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              {displayColumns.map((column) => {
-                const isSorted = sortKey === column.key
-                const canSort = column.sortable && onSort
-                return (
-                  <th
-                    key={column.key}
-                    className={`whitespace-nowrap text-left py-3 px-3 text-sm font-semibold text-gray-700 ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
-                    onClick={() => canSort && onSort(column.key)}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      {column.label}
-                      {canSort && (
-                        <span className="text-gray-400">
-                          {isSorted && sortDir === 'asc' && <ChevronUp className="w-4 h-4" />}
-                          {isSorted && sortDir === 'desc' && <ChevronDown className="w-4 h-4" />}
-                          {!isSorted && <ChevronDown className="w-4 h-4 opacity-40" />}
-                        </span>
-                      )}
-                    </span>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((item) => (
-              <tr
-                key={item.id}
-                onClick={() => onRowClick?.(item)}
-                className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${
-                  onRowClick ? 'cursor-pointer' : ''
-                } ${getRowClassName ? getRowClassName(item) : ''}`}
-              >
-                {displayColumns.map((column) => (
-                  <td key={column.key} className="py-3 px-3 text-sm text-gray-900 whitespace-nowrap">
-                    {column.render ? column.render(item) : (item as any)[column.key]}
-                  </td>
-                ))}
+      <div className="overflow-x-auto -mx-4 sm:mx-0 rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="min-w-full inline-block">
+          <table className="w-full min-w-[640px]">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                {displayColumns.map((column) => {
+                  const isSorted = sortKey === column.key
+                  const canSort = column.sortable && onSort
+                  return (
+                    <th
+                      key={column.key}
+                      className={`whitespace-nowrap text-left py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
+                      onClick={() => canSort && onSort(column.key)}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {column.label}
+                        {canSort && (
+                          <span className="text-gray-400">
+                            {isSorted && sortDir === 'asc' && <ChevronUp className="w-3 h-3 sm:w-4 sm:h-4" />}
+                            {isSorted && sortDir === 'desc' && <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4" />}
+                            {!isSorted && <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-40" />}
+                          </span>
+                        )}
+                      </span>
+                    </th>
+                  )
+                })}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((item) => (
+                <tr
+                  key={item.id}
+                  onClick={() => onRowClick?.(item)}
+                  className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${
+                    onRowClick ? 'cursor-pointer' : ''
+                  } ${getRowClassName ? getRowClassName(item) : ''}`}
+                >
+                  {displayColumns.map((column) => (
+                    <td key={column.key} className="py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm text-gray-900 whitespace-nowrap">
+                      {column.render ? column.render(item) : (item as any)[column.key]}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

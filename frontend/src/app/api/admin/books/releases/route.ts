@@ -1,7 +1,7 @@
 /**
  * API Route: GET /api/admin/books/releases
- * 
- * Lista liberações de livros (com filtro opcional por userId)
+ *
+ * Lista liberações de livros (filtro por nome ou email do usuário)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -19,11 +19,30 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('userId')
+    const search = (searchParams.get('search') || '').trim()
+    const bookIdFilter = (searchParams.get('bookId') || '').trim()
+    const roleFilter = searchParams.get('role') || '' // STUDENT | TEACHER
 
-    const where: any = {}
-    if (userId) {
-      where.userId = userId
+    const userWhere: Record<string, unknown> = {}
+    if (search) {
+      userWhere.OR = [
+        { nome: { contains: search } },
+        { email: { contains: search } },
+      ]
+    }
+    if (roleFilter === 'STUDENT' || roleFilter === 'TEACHER') {
+      userWhere.role = roleFilter
+    }
+
+    const where: Record<string, unknown> = {}
+    if (Object.keys(userWhere).length > 0) {
+      where.user = userWhere
+    }
+    if (bookIdFilter) {
+      where.OR = [
+        { bookId: bookIdFilter },
+        { bookCode: bookIdFilter },
+      ]
     }
 
     // Verificar se o model existe no Prisma Client
@@ -43,6 +62,17 @@ export async function GET(request: NextRequest) {
             id: true,
             nome: true,
             email: true,
+            role: true,
+          },
+        },
+        book: {
+          select: {
+            id: true,
+            nome: true,
+            level: true,
+            totalPaginas: true,
+            imprimivel: true,
+            capaPath: true,
           },
         },
       },
@@ -59,6 +89,8 @@ export async function GET(request: NextRequest) {
           userId: r.userId,
           user: r.user,
           bookCode: r.bookCode,
+          bookId: r.bookId,
+          book: r.book,
           releasedByAdminEmail: r.releasedByAdminEmail,
           criadoEm: r.criadoEm.toISOString(),
         })),

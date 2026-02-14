@@ -47,6 +47,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: users.map((u) => ({ id: u.id, nome: u.nome })) })
     }
 
+    if (type === 'novosMatriculados') {
+      const enrollments = await prisma.enrollment.findMany({
+        where: { pendenteAdicionarAulas: true },
+        select: { id: true, nome: true, criadoEm: true, linkPagamentoEnviadoAt: true },
+        orderBy: { criadoEm: 'desc' },
+      })
+      return NextResponse.json({
+        ok: true,
+        data: enrollments.map((e) => ({
+          id: e.id,
+          nome: e.nome,
+          dataMatricula: e.criadoEm.toISOString(),
+          linkPagamentoEnviadoAt: e.linkPagamentoEnviadoAt?.toISOString() ?? null,
+        })),
+      })
+    }
+
     if (type === 'studentsWithoutLesson') {
       const activeStatuses = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
       const enrollments = await prisma.enrollment.findMany({
@@ -361,7 +378,7 @@ export async function GET(request: NextRequest) {
       const activeEnrollments = await prisma.enrollment.findMany({
         where: {
           status: { in: ['ACTIVE', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING'] },
-          frequenciaSemanal: { not: null },
+          frequenciaSemanal: { gt: 0 }, // Fix: use gt:0 instead of not:null for Int fields
         },
         select: {
           id: true,

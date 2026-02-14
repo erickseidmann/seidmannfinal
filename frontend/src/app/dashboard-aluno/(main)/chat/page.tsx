@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
+import Toast from '@/components/admin/Toast'
 import { MessageCircle, Send, Users, ArrowLeft, PlusCircle } from 'lucide-react'
 
 const API = '/api/student/chat'
@@ -79,6 +80,7 @@ export default function AlunoChatPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [usersLoading, setUsersLoading] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const fetchConversations = useCallback(async () => {
@@ -200,7 +202,7 @@ export default function AlunoChatPage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        alert(json.message || 'Erro ao iniciar conversa')
+        setToast({ message: json.message || 'Erro ao iniciar conversa', type: 'error' })
         return
       }
       const conv = json.data.conversation
@@ -408,6 +410,11 @@ export default function AlunoChatPage() {
           </ul>
         )}
       </Modal>
+
+      {/* Toast de notificação */}
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      )}
     </div>
   )
 }

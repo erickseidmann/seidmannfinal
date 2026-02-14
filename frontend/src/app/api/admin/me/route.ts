@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       data: {
+        id: auth.session.sub,
         email: auth.session.email,
         isSuperAdmin: isSuperAdminEmail(auth.session.email),
         adminPages: auth.session.adminPages ?? [],

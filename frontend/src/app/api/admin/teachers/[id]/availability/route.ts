@@ -163,6 +163,76 @@ export async function PUT(
         )
       }
     }
+
+    // Se slots.length === 0, significa que o professor está disponível em todos os horários
+    // Não precisa validar conflitos nesse caso
+    if (slots.length > 0) {
+      // Buscar todas as aulas futuras do professor (exceto canceladas)
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      
+      const lessons = await prisma.lesson.findMany({
+        where: {
+          teacherId,
+          status: { not: 'CANCELLED' },
+          startAt: { gte: hoje },
+        },
+        select: {
+          id: true,
+          startAt: true,
+          durationMinutes: true,
+          enrollment: {
+            select: {
+              nome: true,
+            },
+          },
+        },
+      })
+
+      // Verificar se alguma aula está fora dos slots marcados
+      const conflicts: Array<{ aluno: string; dia: string; horario: string }> = []
+      
+      for (const lesson of lessons) {
+        const lessonStart = new Date(lesson.startAt)
+        const dayOfWeek = lessonStart.getDay()
+        const startMinutes = lessonStart.getHours() * 60 + lessonStart.getMinutes()
+        const durationMinutes = lesson.durationMinutes ?? 60
+        const endMinutes = startMinutes + durationMinutes
+
+        // Verificar se a aula está dentro de algum slot
+        const isWithinSlot = slots.some(
+          (slot) =>
+            slot.dayOfWeek === dayOfWeek &&
+            startMinutes >= slot.startMinutes &&
+            endMinutes <= slot.endMinutes
+        )
+
+        if (!isWithinSlot) {
+          const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+          const hora = Math.floor(startMinutes / 60)
+            .toString()
+            .padStart(2, '0')
+          const minuto = (startMinutes % 60).toString().padStart(2, '0')
+          conflicts.push({
+            aluno: lesson.enrollment?.nome ?? 'Aluno desconhecido',
+            dia: diasSemana[dayOfWeek],
+            horario: `${hora}:${minuto}`,
+          })
+        }
+      }
+
+      if (conflicts.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: 'O professor já tem aulas na agenda fora desses horários. Troque esses alunos primeiro.',
+            conflicts,
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     await prisma.teacherAvailabilitySlot.deleteMany({ where: { teacherId } })
     if (slots.length > 0) {
       await prisma.teacherAvailabilitySlot.createMany({

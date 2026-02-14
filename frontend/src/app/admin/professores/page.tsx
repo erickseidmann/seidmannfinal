@@ -15,7 +15,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 const IDIOMAS_OPCOES = [
@@ -50,11 +50,30 @@ interface Teacher {
   atualizadoEm: string
 }
 
+const TEACHER_COLUMNS_STORAGE_KEY = 'seidmann_admin_teacher_columns'
+
 export default function AdminProfessoresPage() {
   const router = useRouter()
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const saved = localStorage.getItem(TEACHER_COLUMNS_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
+      }
+    } catch {
+      // Ignorar erros de parsing
+    }
+    // Padrão: todas as colunas exceto as fixas
+    return []
+  })
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null)
   const [alertsModalTeacher, setAlertsModalTeacher] = useState<Teacher | null>(null)
@@ -101,6 +120,9 @@ export default function AdminProfessoresPage() {
   const [availabilityChecked, setAvailabilityChecked] = useState<Set<string>>(new Set())
   const [newSlotForm, setNewSlotForm] = useState({ dayOfWeek: 1, startTime: '09:00', endTime: '12:00' })
   const [addingSlot, setAddingSlot] = useState(false)
+  const [availabilityConflicts, setAvailabilityConflicts] = useState<Array<{ aluno: string; dia: string; horario: string }> | null>(null)
+  const [copyAvailabilityModalOpen, setCopyAvailabilityModalOpen] = useState(false)
+  const [copyFromTeacherId, setCopyFromTeacherId] = useState<string>('')
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set())
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
   const [alunosModalTeacher, setAlunosModalTeacher] = useState<Teacher | null>(null)
@@ -109,7 +131,20 @@ export default function AdminProfessoresPage() {
     alunos: { enrollmentId: string; nome: string; diasHorarios: string; lessons: unknown[] }[]
   } | null>(null)
   const [alunosLoading, setAlunosLoading] = useState(false)
+  const [transferModalOpen, setTransferModalOpen] = useState(false)
+  const [availableTeachers, setAvailableTeachers] = useState<Array<{ id: string; nome: string }>>([])
+  const [availableTeachersLoading, setAvailableTeachersLoading] = useState(false)
+  const [selectedTargetTeacherId, setSelectedTargetTeacherId] = useState<string>('')
+  const [transferStartDate, setTransferStartDate] = useState<string>(() => {
+    // Data padrão: hoje
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return today.toISOString().split('T')[0]
+  })
+  const [transferring, setTransferring] = useState(false)
   const [searchName, setSearchName] = useState('')
+  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterNota, setFilterNota] = useState<string>('')
   const [stats, setStats] = useState<{ nota1: number; nota2: number; nota45: number; teacherRequests: number } | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [listModal, setListModal] = useState<{ type: 'nota1' | 'nota2' | 'nota45'; title: string } | null>(null)
@@ -132,14 +167,16 @@ export default function AdminProfessoresPage() {
   const [teacherRequestsLoading, setTeacherRequestsLoading] = useState(false)
 
   useEffect(() => {
-    fetchTeachers()
+    fetchTeachers({ useCurrentFilters: true })
     fetchStats()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (!availabilityModalTeacher) {
       setAvailabilitySlots([])
       setAvailabilityChecked(new Set())
+      setAvailabilityConflicts(null)
       return
     }
     setAvailabilityLoading(true)
@@ -205,12 +242,19 @@ export default function AdminProfessoresPage() {
       .finally(() => setListTeachersLoading(false))
   }, [listModal?.type])
 
-  const fetchTeachers = async (opts?: { search?: string; nota?: string }) => {
+  const fetchTeachers = async (opts?: { search?: string; nota?: string; status?: string; useCurrentFilters?: boolean }) => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (opts?.search?.trim()) params.set('search', opts.search.trim())
-      if (opts?.nota) params.set('nota', opts.nota)
+      // Se useCurrentFilters for true ou não especificado, usar filtros atuais
+      const search = opts?.useCurrentFilters === false ? opts?.search : (opts?.search ?? searchName)
+      const nota = opts?.useCurrentFilters === false ? opts?.nota : (opts?.nota ?? filterNota)
+      const status = opts?.useCurrentFilters === false ? opts?.status : (opts?.status ?? filterStatus)
+      
+      if (search?.trim()) params.set('search', search.trim())
+      if (nota) params.set('nota', nota)
+      if (status) params.set('status', status)
+      params.set('limit', String(itemsPerPage))
       const url = '/api/admin/teachers' + (params.toString() ? '?' + params.toString() : '')
       const response = await fetch(url, { credentials: 'include' })
 
@@ -235,6 +279,11 @@ export default function AdminProfessoresPage() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    fetchTeachers({ useCurrentFilters: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsPerPage, filterStatus, filterNota])
 
   const fetchStats = async () => {
     setStatsLoading(true)
@@ -337,7 +386,7 @@ export default function AdminProfessoresPage() {
       }
 
       setIsModalOpen(false)
-      fetchTeachers()
+      fetchTeachers({ useCurrentFilters: true })
       setToast({ message: 'Professor salvo com sucesso!', type: 'success' })
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao salvar professor', type: 'error' })
@@ -370,7 +419,7 @@ export default function AdminProfessoresPage() {
       setAlterarSenhaTeacher(null)
       setAlterarSenhaNova('')
       setAlterarSenhaConfirmar('')
-      fetchTeachers()
+      fetchTeachers({ useCurrentFilters: true })
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao alterar senha', type: 'error' })
     } finally {
@@ -400,7 +449,7 @@ export default function AdminProfessoresPage() {
       setToast({ message: json.data?.message || 'Acesso ao Dashboard Professores criado.', type: 'success' })
       setCriarAcessoTeacher(null)
       setCriarAcessoSenha('')
-      fetchTeachers()
+      fetchTeachers({ useCurrentFilters: true })
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao criar acesso', type: 'error' })
     } finally {
@@ -420,10 +469,30 @@ export default function AdminProfessoresPage() {
           })
           const json = await response.json()
           if (!response.ok || !json.ok) throw new Error(json.message || 'Erro ao alterar status')
-          fetchTeachers()
+          fetchTeachers({ useCurrentFilters: true })
           setToast({ message: 'Status alterado com sucesso!', type: 'success' })
         } catch (err) {
           setToast({ message: err instanceof Error ? err.message : 'Erro ao alterar status', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleDeleteTeacher = (teacher: Teacher) => {
+    setConfirmModal({
+      title: 'Excluir professor',
+      message: `Tem certeza que deseja excluir o professor "${teacher.nome}"? Todas as aulas, alertas e horários vinculados serão removidos. Esta ação não pode ser desfeita.`,
+      variant: 'danger',
+      confirmLabel: 'Excluir',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/teachers/${teacher.id}`, { method: 'DELETE', credentials: 'include' })
+          const json = await res.json()
+          if (!res.ok || !json.ok) throw new Error(json.message || 'Erro ao excluir professor')
+          fetchTeachers({ useCurrentFilters: true })
+          setToast({ message: 'Professor excluído com sucesso', type: 'success' })
+        } catch (err) {
+          setToast({ message: err instanceof Error ? err.message : 'Erro ao excluir professor', type: 'error' })
         }
       },
     })
@@ -454,7 +523,7 @@ export default function AdminProfessoresPage() {
         setCreateAlertModalTeacher(null)
         setNewAlertForm({ message: '', level: 'INFO' })
         setToast({ message: 'Alerta criado com sucesso!', type: 'success' })
-        fetchTeachers()
+        fetchTeachers({ useCurrentFilters: true })
       } else {
         setToast({ message: json.message || 'Erro ao criar alerta', type: 'error' })
       }
@@ -478,7 +547,7 @@ export default function AdminProfessoresPage() {
           })
           const json = await res.json()
           if (json.ok) {
-            fetchTeachers()
+            fetchTeachers({ useCurrentFilters: true })
             setToast({ message: 'Alerta excluído', type: 'success' })
           } else {
             setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
@@ -567,7 +636,7 @@ export default function AdminProfessoresPage() {
       if (json.ok && json.data) {
         setImportResult(json.data)
         if (json.data.created > 0) {
-          fetchTeachers()
+          fetchTeachers({ useCurrentFilters: true })
           setToast({
             message: `${json.data.created} professor(es) adicionado(s) com sucesso!`,
             type: 'success',
@@ -683,6 +752,34 @@ export default function AdminProfessoresPage() {
     })
   }
 
+  const toggleAvailabilityForWeekdays = (startMinutes: number) => {
+    // Dias úteis: Segunda (1) a Sexta (5)
+    const weekdays = [1, 2, 3, 4, 5]
+    const keys = weekdays.map((dayOfWeek) => `${dayOfWeek}-${startMinutes}`)
+    
+    // Verificar se todos os dias úteis estão marcados
+    const allChecked = keys.every((key) => availabilityChecked.has(key))
+    
+    setAvailabilityChecked((prev) => {
+      const next = new Set(prev)
+      if (allChecked) {
+        // Se todos estão marcados, desmarcar todos
+        keys.forEach((key) => next.delete(key))
+      } else {
+        // Se algum não está marcado, marcar todos
+        keys.forEach((key) => next.add(key))
+      }
+      return next
+    })
+  }
+
+  const isWeekdayHourChecked = (startMinutes: number): boolean => {
+    // Dias úteis: Segunda (1) a Sexta (5)
+    const weekdays = [1, 2, 3, 4, 5]
+    const keys = weekdays.map((dayOfWeek) => `${dayOfWeek}-${startMinutes}`)
+    return keys.every((key) => availabilityChecked.has(key))
+  }
+
   /** Converte o set de checkboxes em slots (intervalos consecutivos por dia) */
   const buildSlotsFromGrid = (): { dayOfWeek: number; startMinutes: number; endMinutes: number }[] => {
     const slots: { dayOfWeek: number; startMinutes: number; endMinutes: number }[] = []
@@ -710,6 +807,7 @@ export default function AdminProfessoresPage() {
     if (!availabilityModalTeacher) return
     setAvailabilitySaving(true)
     setToast(null)
+    setAvailabilityConflicts(null)
     try {
       const slots = buildSlotsFromGrid()
       const res = await fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/availability`, {
@@ -720,16 +818,51 @@ export default function AdminProfessoresPage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
+        if (json.conflicts && Array.isArray(json.conflicts)) {
+          setAvailabilityConflicts(json.conflicts)
+        }
         setToast({ message: json.message || 'Erro ao salvar horários', type: 'error' })
         return
       }
       if (json.data?.slots) setAvailabilitySlots(json.data.slots)
       setToast({ message: 'Horários salvos.', type: 'success' })
       setAvailabilityModalTeacher(null)
+      setAvailabilityConflicts(null)
     } catch {
       setToast({ message: 'Erro ao salvar horários', type: 'error' })
     } finally {
       setAvailabilitySaving(false)
+    }
+  }
+
+  const handleCopyAvailability = async () => {
+    if (!copyFromTeacherId || !availabilityModalTeacher) return
+    setAvailabilityLoading(true)
+    setToast(null)
+    try {
+      const res = await fetch(`/api/admin/teachers/${copyFromTeacherId}/availability`, {
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok || !json.data?.slots) {
+        setToast({ message: json.message || 'Erro ao copiar horários', type: 'error' })
+        return
+      }
+      const slots = json.data.slots
+      const set = new Set<string>()
+      for (const s of slots) {
+        for (let m = s.startMinutes; m < s.endMinutes; m += 30) {
+          set.add(`${s.dayOfWeek}-${m}`)
+        }
+      }
+      setAvailabilityChecked(set)
+      setCopyAvailabilityModalOpen(false)
+      setCopyFromTeacherId('')
+      setToast({ message: 'Horários copiados. Clique em "Salvar horários" para aplicar.', type: 'success' })
+    } catch {
+      setToast({ message: 'Erro ao copiar horários', type: 'error' })
+    } finally {
+      setAvailabilityLoading(false)
     }
   }
 
@@ -777,7 +910,7 @@ export default function AdminProfessoresPage() {
         const json = await res.json()
         if (res.ok && json.ok) ok++
       }
-      fetchTeachers()
+      fetchTeachers({ useCurrentFilters: true })
       setSelectedTeacherIds(new Set())
       setToast({ message: `${ok} professor(es) ativado(s).`, type: 'success' })
     } catch {
@@ -803,7 +936,7 @@ export default function AdminProfessoresPage() {
             const json = await res.json()
             if (res.ok && json.ok) ok++
           }
-          fetchTeachers()
+          fetchTeachers({ useCurrentFilters: true })
           setSelectedTeacherIds(new Set())
           setToast({ message: `${ok} professor(es) desativado(s).`, type: 'success' })
         } catch {
@@ -973,6 +1106,13 @@ export default function AdminProfessoresPage() {
           >
             <Bell className={`w-4 h-4 ${t.alerts?.length ? 'fill-blue-600' : ''}`} />
           </button>
+          <button
+            onClick={() => handleDeleteTeacher(t)}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+            title="Excluir"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       ),
     },
@@ -1024,18 +1164,20 @@ export default function AdminProfessoresPage() {
           </div>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Cubos de métricas (estilo financeiro) */}
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div
             role="button"
             tabIndex={0}
             onClick={() => setListModal({ type: 'nota1', title: 'Professores que precisam ser substituídos' })}
             onKeyDown={(e) => e.key === 'Enter' && setListModal({ type: 'nota1', title: 'Professores que precisam ser substituídos' })}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Precisam ser substituídos"
               value={statsLoading ? '...' : (stats?.nota1 ?? 0)}
-              icon={<AlertCircle className="w-6 h-6" />}
+              icon={<AlertCircle className="w-5 h-5" />}
               color="red"
               subtitle="1 estrela"
             />
@@ -1045,12 +1187,13 @@ export default function AdminProfessoresPage() {
             tabIndex={0}
             onClick={() => setListModal({ type: 'nota45', title: 'Professores 4 e 5 estrelas' })}
             onKeyDown={(e) => e.key === 'Enter' && setListModal({ type: 'nota45', title: 'Professores 4 e 5 estrelas' })}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="4 e 5 estrelas"
               value={statsLoading ? '...' : (stats?.nota45 ?? 0)}
-              icon={<Star className="w-6 h-6" />}
+              icon={<Star className="w-5 h-5" />}
               color="green"
             />
           </div>
@@ -1059,12 +1202,13 @@ export default function AdminProfessoresPage() {
             tabIndex={0}
             onClick={() => setListModal({ type: 'nota2', title: 'Professores com problemas' })}
             onKeyDown={(e) => e.key === 'Enter' && setListModal({ type: 'nota2', title: 'Professores com problemas' })}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Com problemas"
               value={statsLoading ? '...' : (stats?.nota2 ?? 0)}
-              icon={<AlertCircle className="w-6 h-6" />}
+              icon={<AlertCircle className="w-5 h-5" />}
               color="orange"
               subtitle="2 estrelas"
             />
@@ -1077,40 +1221,80 @@ export default function AdminProfessoresPage() {
               fetchTeacherRequests()
             }}
             onKeyDown={(e) => e.key === 'Enter' && (setTeacherRequestsModalOpen(true), fetchTeacherRequests())}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-lg"
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
+              variant="finance"
               title="Solicitação de professor"
               value={statsLoading ? '...' : (stats?.teacherRequests ?? 0)}
-              icon={<Users className="w-6 h-6" />}
+              icon={<Users className="w-5 h-5" />}
               color="blue"
             />
           </div>
         </div>
 
-        <div className="mb-4 flex flex-wrap items-end gap-2">
-          <div className="min-w-[200px] max-w-xs">
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Pesquisar por nome</label>
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+          <div className="sm:col-span-2 lg:col-span-1">
+            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Pesquisar por nome</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={searchName}
                 onChange={(e) => setSearchName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && fetchTeachers({ search: searchName })}
+                onKeyDown={(e) => e.key === 'Enter' && fetchTeachers({ useCurrentFilters: true })}
                 placeholder="Nome do professor"
-                className="input flex-1"
+                className="input flex-1 text-sm"
               />
               <Button
                 type="button"
                 variant="outline"
                 size="md"
-                onClick={() => fetchTeachers({ search: searchName })}
-                className="flex items-center gap-1"
+                onClick={() => fetchTeachers({ useCurrentFilters: true })}
+                className="flex items-center gap-1 shrink-0"
               >
                 <Search className="w-4 h-4" />
-                Pesquisar
+                <span className="hidden sm:inline">Pesquisar</span>
               </Button>
             </div>
+          </div>
+          <div>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Status</label>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="input w-full text-sm"
+            >
+              <option value="">Todos</option>
+              <option value="ACTIVE">Ativo</option>
+              <option value="INACTIVE">Inativo</option>
+              <option value="PENDING">Pendente</option>
+              <option value="BLOCKED">Bloqueado</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Nota</label>
+            <select
+              value={filterNota}
+              onChange={(e) => setFilterNota(e.target.value)}
+              className="input w-full text-sm"
+            >
+              <option value="">Todas</option>
+              <option value="1">1 estrela</option>
+              <option value="2">2 estrelas</option>
+              <option value="45">4 e 5 estrelas</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Itens por página</label>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => setItemsPerPage(Number(e.target.value))}
+              className="input w-full text-sm"
+            >
+              <option value={5}>5</option>
+              <option value={30}>30</option>
+              <option value={500}>500</option>
+            </select>
           </div>
         </div>
 
@@ -1167,6 +1351,15 @@ export default function AdminProfessoresPage() {
           data={teachers}
           loading={loading}
           emptyMessage="Nenhum professor cadastrado"
+          visibleColumnKeys={visibleColumns.length > 0 ? visibleColumns : undefined}
+          onVisibleColumnsChange={(keys) => {
+            setVisibleColumns(keys)
+            try {
+              localStorage.setItem(TEACHER_COLUMNS_STORAGE_KEY, JSON.stringify(keys))
+            } catch {
+              // Ignorar erros de localStorage
+            }
+          }}
           getRowClassName={(t) => {
             const n = t.nota ?? 0
             if (n === 1) return 'bg-red-100'
@@ -2043,19 +2236,39 @@ export default function AdminProfessoresPage() {
         {/* Modal Horários disponíveis – tabela de dias e horários para ticar */}
         <Modal
           isOpen={!!availabilityModalTeacher}
-          onClose={() => setAvailabilityModalTeacher(null)}
+          onClose={() => {
+            setAvailabilityModalTeacher(null)
+            setAvailabilityConflicts(null)
+          }}
           title={`Horários disponíveis – ${availabilityModalTeacher?.nome ?? ''}`}
           size="lg"
           footer={
             <>
-              <Button variant="outline" onClick={() => setAvailabilityModalTeacher(null)}>
+              <Button
+                variant="outline"
+                onClick={() => setCopyAvailabilityModalOpen(true)}
+                disabled={availabilityLoading || availabilitySaving}
+                className="flex items-center gap-2 text-xs sm:text-sm w-full sm:w-auto justify-center"
+              >
+                <Copy className="w-3 h-3 sm:w-4 sm:h-4" />
+                <span className="hidden sm:inline">Copiar de outro professor</span>
+                <span className="sm:hidden">Copiar</span>
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setAvailabilityModalTeacher(null)
+                  setAvailabilityConflicts(null)
+                }}
+                className="w-full sm:w-auto"
+              >
                 Fechar
               </Button>
               <Button
                 variant="primary"
                 onClick={handleSaveAvailabilityGrid}
                 disabled={availabilityLoading || availabilitySaving}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 w-full sm:w-auto justify-center"
               >
                 {availabilitySaving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {availabilitySaving ? 'Salvando...' : 'Salvar horários'}
@@ -2068,58 +2281,146 @@ export default function AdminProfessoresPage() {
               <p className="text-sm text-gray-600">
                 Por padrão o professor está disponível em <strong>todos os horários</strong>. Marque os horários em que ele pode dar aula; fora desses períodos aparecerá como &quot;Indisponível&quot; ao agendar.
               </p>
+              {availabilityConflicts && availabilityConflicts.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-red-800 mb-2">
+                    O professor já tem aulas na agenda fora desses horários. Troque esses alunos primeiro:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 text-sm text-red-700">
+                    {availabilityConflicts.map((conflict, idx) => (
+                      <li key={idx}>
+                        <strong>{conflict.aluno}</strong> - {conflict.dia} às {conflict.horario}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {availabilityLoading ? (
                 <div className="flex items-center gap-2 text-gray-500">
                   <Loader2 className="w-5 h-5 animate-spin" />
                   Carregando...
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-2">
-                  <table className="w-full border-collapse text-sm min-w-[1400px]">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-2 px-2 font-semibold text-gray-700 w-14">Dia</th>
-                        {AVAIL_HORAS.map((m) => (
-                          <th key={m} className="py-2 px-1 text-center font-semibold text-gray-600 w-12">
-                            {minutesToTime(m)}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {AVAIL_DIAS.map(({ dayOfWeek, label }) => (
-                        <tr key={dayOfWeek} className="border-b border-gray-100 hover:bg-gray-50/50">
-                          <td className="py-1.5 px-2 font-medium text-gray-800">{label}</td>
-                          {AVAIL_HORAS.map((startMinutes) => {
-                            const key = `${dayOfWeek}-${startMinutes}`
-                            const checked = availabilityChecked.has(key)
-                            return (
-                              <td key={key} className="py-1 px-1 text-center">
-                                <label className="inline-flex items-center justify-center w-10 h-8 cursor-pointer rounded border border-gray-200 hover:bg-gray-100">
+                <div className="overflow-x-auto -mx-4 sm:-mx-2">
+                  <div className="inline-block min-w-full">
+                    <table className="w-full border-collapse text-xs sm:text-sm min-w-[800px] sm:min-w-[1000px] lg:min-w-[1400px]">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-2 px-1 sm:px-2 font-semibold text-gray-700 w-12 sm:w-14 sticky left-0 bg-white z-10">Dia</th>
+                          {AVAIL_HORAS.map((m) => (
+                            <th key={m} className="py-2 px-0.5 sm:px-1 text-center font-semibold text-gray-600 w-8 sm:w-12 relative">
+                              <div className="flex flex-col items-center gap-0.5 sm:gap-1">
+                                <span className="text-[10px] sm:text-xs">{minutesToTime(m)}</span>
+                                <label className="inline-flex items-center justify-center cursor-pointer" title="Marcar/desmarcar Seg-Sex">
                                   <input
                                     type="checkbox"
-                                    checked={checked}
-                                    onChange={() => toggleAvailabilityCell(dayOfWeek, startMinutes)}
-                                    className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange w-4 h-4"
+                                    checked={isWeekdayHourChecked(m)}
+                                    onChange={() => toggleAvailabilityForWeekdays(m)}
+                                    className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange w-3 h-3 sm:w-3.5 sm:h-3.5"
+                                    onClick={(e) => e.stopPropagation()}
                                   />
                                 </label>
-                              </td>
-                            )
-                          })}
+                              </div>
+                            </th>
+                          ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {AVAIL_DIAS.map(({ dayOfWeek, label }) => (
+                          <tr key={dayOfWeek} className="border-b border-gray-100 hover:bg-gray-50/50">
+                            <td className="py-1.5 px-1 sm:px-2 font-medium text-gray-800 sticky left-0 bg-white z-10">{label}</td>
+                            {AVAIL_HORAS.map((startMinutes) => {
+                              const key = `${dayOfWeek}-${startMinutes}`
+                              const checked = availabilityChecked.has(key)
+                              return (
+                                <td key={key} className="py-1 px-0.5 sm:px-1 text-center">
+                                  <label className="inline-flex items-center justify-center w-8 h-7 sm:w-10 sm:h-8 cursor-pointer rounded border border-gray-200 hover:bg-gray-100">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleAvailabilityCell(dayOfWeek, startMinutes)}
+                                      className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange w-3 h-3 sm:w-4 sm:h-4"
+                                    />
+                                  </label>
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
           )}
         </Modal>
 
+        {/* Modal Copiar Horários */}
+        <Modal
+          isOpen={copyAvailabilityModalOpen}
+          onClose={() => {
+            setCopyAvailabilityModalOpen(false)
+            setCopyFromTeacherId('')
+          }}
+          title="Copiar horários de outro professor"
+          size="md"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCopyAvailabilityModalOpen(false)
+                  setCopyFromTeacherId('')
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleCopyAvailability}
+                disabled={!copyFromTeacherId || availabilityLoading}
+                className="flex items-center gap-2"
+              >
+                {availabilityLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                Copiar
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Selecione o professor do qual deseja copiar os horários disponíveis.
+            </p>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Professor <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={copyFromTeacherId}
+                onChange={(e) => setCopyFromTeacherId(e.target.value)}
+                className="input w-full"
+              >
+                <option value="">Selecione um professor</option>
+                {teachers
+                  .filter((t) => t.id !== availabilityModalTeacher?.id)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+        </Modal>
+
         {/* Modal Alunos do professor */}
         <Modal
-          isOpen={!!alunosModalTeacher}
-          onClose={() => setAlunosModalTeacher(null)}
+          isOpen={!!alunosModalTeacher && !transferModalOpen}
+          onClose={() => {
+            setAlunosModalTeacher(null)
+            setTransferModalOpen(false)
+          }}
           title={`Alunos – ${alunosModalTeacher?.nome ?? ''}`}
           size="lg"
           footer={
@@ -2128,7 +2429,54 @@ export default function AdminProfessoresPage() {
                 <Download className="w-4 h-4 mr-2" />
                 Exportar CSV
               </Button>
-              <Button variant="primary" onClick={() => setAlunosModalTeacher(null)}>
+              {alunosData?.alunos?.length ? (
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!alunosModalTeacher) return
+                    // Resetar data para hoje
+                    const today = new Date()
+                    today.setHours(0, 0, 0, 0)
+                    setTransferStartDate(today.toISOString().split('T')[0])
+                    setAvailableTeachersLoading(true)
+                    try {
+                      const res = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/transfer/available-teachers?startDate=${encodeURIComponent(today.toISOString().split('T')[0])}`, {
+                        credentials: 'include',
+                      })
+                      const json = await res.json()
+                      if (res.ok && json.ok && json.data?.teachers) {
+                        setAvailableTeachers(json.data.teachers)
+                        setSelectedTargetTeacherId('')
+                        setTransferModalOpen(true)
+                      } else {
+                        setToast({ message: json.message || 'Erro ao buscar professores disponíveis', type: 'error' })
+                      }
+                    } catch {
+                      setToast({ message: 'Erro ao buscar professores disponíveis', type: 'error' })
+                    } finally {
+                      setAvailableTeachersLoading(false)
+                    }
+                  }}
+                  disabled={availableTeachersLoading}
+                  className="flex items-center gap-2"
+                >
+                  {availableTeachersLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Carregando...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRight className="w-4 h-4" />
+                      Transferir todas as aulas
+                    </>
+                  )}
+                </Button>
+              ) : null}
+              <Button variant="primary" onClick={() => {
+                setAlunosModalTeacher(null)
+                setTransferModalOpen(false)
+              }}>
                 Fechar
               </Button>
             </>
@@ -2162,6 +2510,198 @@ export default function AdminProfessoresPage() {
                 </div>
               ) : (
                 <p className="text-gray-500 text-sm">Nenhum aluno com aulas agendadas para este professor.</p>
+              )}
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Transferir Aulas */}
+        <Modal
+          isOpen={transferModalOpen && !!alunosModalTeacher}
+          onClose={() => {
+            setTransferModalOpen(false)
+            setSelectedTargetTeacherId('')
+          }}
+          title="Transferir todas as aulas"
+          size="md"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setTransferModalOpen(false)
+                  setSelectedTargetTeacherId('')
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (!alunosModalTeacher || !selectedTargetTeacherId || !transferStartDate) return
+                  const targetTeacher = availableTeachers.find((t) => t.id === selectedTargetTeacherId)
+                  if (!targetTeacher) return
+                  
+                  // Recarregar professores disponíveis com a data selecionada
+                  setAvailableTeachersLoading(true)
+                  try {
+                    const checkRes = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/transfer/available-teachers?startDate=${encodeURIComponent(transferStartDate)}`, {
+                      credentials: 'include',
+                    })
+                    const checkJson = await checkRes.json()
+                    if (!checkRes.ok || !checkJson.ok || !checkJson.data?.teachers) {
+                      setToast({ message: checkJson.message || 'Erro ao verificar disponibilidade', type: 'error' })
+                      setAvailableTeachersLoading(false)
+                      return
+                    }
+                    
+                    const stillAvailable = checkJson.data.teachers.find((t: { id: string }) => t.id === selectedTargetTeacherId)
+                    if (!stillAvailable) {
+                      setToast({ message: 'O professor selecionado não está mais disponível para as aulas a partir da data escolhida', type: 'error' })
+                      setAvailableTeachers(checkJson.data.teachers)
+                      setAvailableTeachersLoading(false)
+                      return
+                    }
+                    
+                    setAvailableTeachersLoading(false)
+                    
+                    const startDateObj = new Date(transferStartDate)
+                    startDateObj.setHours(0, 0, 0, 0)
+                    const startDateFormatted = startDateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                    
+                    setConfirmModal({
+                      title: 'Confirmar transferência',
+                      message: `Tem certeza que deseja transferir todas as aulas do professor ${alunosModalTeacher.nome} para o professor ${targetTeacher.nome} a partir do dia ${startDateFormatted}?`,
+                      variant: 'default',
+                      confirmLabel: 'Sim, transferir',
+                      onConfirm: async () => {
+                        setTransferring(true)
+                        try {
+                          const res = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/transfer`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({ 
+                              targetTeacherId: selectedTargetTeacherId,
+                              startDate: transferStartDate,
+                            }),
+                          })
+                          const json = await res.json()
+                          if (res.ok && json.ok) {
+                            setToast({ message: `Aulas a partir de ${startDateFormatted} foram transferidas para ${targetTeacher.nome}`, type: 'success' })
+                            setTransferModalOpen(false)
+                            setSelectedTargetTeacherId('')
+                            fetchTeachers({ useCurrentFilters: true })
+                            // Recarregar dados dos alunos
+                            if (alunosModalTeacher) {
+                              const alunosRes = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/alunos`, { credentials: 'include' })
+                              const alunosJson = await alunosRes.json()
+                              if (alunosRes.ok && alunosJson.ok && alunosJson.data) {
+                                setAlunosData(alunosJson.data)
+                              }
+                            }
+                          } else {
+                            setToast({ message: json.message || 'Erro ao transferir aulas', type: 'error' })
+                          }
+                        } catch {
+                          setToast({ message: 'Erro ao transferir aulas', type: 'error' })
+                        } finally {
+                          setTransferring(false)
+                          setConfirmModal(null)
+                        }
+                      },
+                    })
+                  } catch {
+                    setToast({ message: 'Erro ao verificar disponibilidade', type: 'error' })
+                    setAvailableTeachersLoading(false)
+                  }
+                }}
+                disabled={!selectedTargetTeacherId || !transferStartDate || transferring || availableTeachersLoading}
+              >
+                {transferring || availableTeachersLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    {transferring ? 'Transferindo...' : 'Verificando...'}
+                  </>
+                ) : (
+                  'Transferir'
+                )}
+              </Button>
+            </>
+          }
+        >
+          {alunosModalTeacher && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Selecione o professor e a data a partir da qual deseja transferir as aulas do professor <strong>{alunosModalTeacher.nome}</strong>.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Transferir aulas a partir de <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={transferStartDate}
+                  onChange={async (e) => {
+                    const newDate = e.target.value
+                    setTransferStartDate(newDate)
+                    // Recarregar lista de professores disponíveis com a nova data
+                    setAvailableTeachersLoading(true)
+                    try {
+                      const res = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/transfer/available-teachers?startDate=${encodeURIComponent(newDate)}`, {
+                        credentials: 'include',
+                      })
+                      const json = await res.json()
+                      if (res.ok && json.ok && json.data?.teachers) {
+                        setAvailableTeachers(json.data.teachers)
+                        // Se tinha um professor selecionado e ele não está mais disponível, limpar seleção
+                        if (selectedTargetTeacherId && !json.data.teachers.find((t: { id: string }) => t.id === selectedTargetTeacherId)) {
+                          setSelectedTargetTeacherId('')
+                        }
+                      }
+                    } catch {
+                      // Ignorar erros
+                    } finally {
+                      setAvailableTeachersLoading(false)
+                    }
+                  }}
+                  className="input w-full"
+                  min={new Date().toISOString().split('T')[0]}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Apenas aulas a partir desta data serão transferidas. Aulas anteriores permanecerão com o professor atual.
+                </p>
+              </div>
+              {availableTeachersLoading ? (
+                <div className="flex items-center gap-2 text-gray-500 py-4">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Carregando professores disponíveis...
+                </div>
+              ) : availableTeachers.length === 0 ? (
+                <p className="text-sm text-amber-600 py-4">
+                  Nenhum professor disponível com horários compatíveis para todas as aulas a partir da data selecionada.
+                </p>
+              ) : (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Professor destino <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={selectedTargetTeacherId}
+                    onChange={(e) => setSelectedTargetTeacherId(e.target.value)}
+                    className="input w-full"
+                  >
+                    <option value="">Selecione um professor</option>
+                    {availableTeachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.nome}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Apenas professores com todos os horários necessários disponíveis são mostrados.
+                  </p>
+                </div>
               )}
             </div>
           )}

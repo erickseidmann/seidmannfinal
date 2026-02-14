@@ -10,6 +10,15 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useLanguage } from '@/contexts/LanguageContext'
+import {
+  formatTimeInTZ,
+  formatDateTimeInTZ,
+  isSameDayInTZ,
+  getDateInTZ,
+  getTimeInTZ,
+  formatWeekdayInTZ,
+  formatMonthInTZ,
+} from '@/lib/datetime'
 
 type ViewType = 'month' | 'week' | 'day'
 type ModalStep = 'choose' | 'ver-ultima' | 'registrar'
@@ -31,6 +40,7 @@ interface Lesson {
   }
   teacher: { id: string; nome: string }
   record?: { id: string } | null
+  requests?: Array<{ id: string; type: string; status: string }>
 }
 
 interface UltimaRecord {
@@ -89,26 +99,12 @@ function addMonths(d: Date, n: number): Date {
   return r
 }
 
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
-}
-
 function isSameMonth(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
 }
 
 function isToday(d: Date): boolean {
-  return isSameDay(d, new Date())
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso)
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-}
-
-function formatDateTime(iso: string, dateLocale: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString(dateLocale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return isSameDayInTZ(d, new Date())
 }
 
 function getLessonStudentLabel(l: Lesson): string {
@@ -121,18 +117,22 @@ function getLessonStudentLabel(l: Lesson): string {
   return l.enrollment.nome
 }
 
-const statusColor = (s: string) =>
-  s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : s === 'CANCELLED' ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'
+const statusColor = (s: string, hasPendingRequest?: boolean) => {
+  if (hasPendingRequest) {
+    return 'bg-purple-100 text-purple-800 border-purple-200'
+  }
+  return s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : s === 'CANCELLED' ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'
+}
 
 export default function CalendarioProfessorPage() {
   const { locale, t } = useLanguage()
   const dateLocale = DATE_LOCALE_MAP[locale] ?? 'pt-BR'
   const DIAS_SEMANA = useMemo(
-    () => [0, 1, 2, 3, 4, 5, 6].map((d) => new Date(2024, 0, d).toLocaleDateString(dateLocale, { weekday: 'short' })),
+    () => [0, 1, 2, 3, 4, 5, 6].map((d) => formatWeekdayInTZ(new Date(2024, 0, d), dateLocale)),
     [dateLocale]
   )
   const MESES = useMemo(
-    () => [...Array(12)].map((_, i) => new Date(2024, i, 1).toLocaleDateString(dateLocale, { month: 'long' })),
+    () => [...Array(12)].map((_, i) => formatMonthInTZ(new Date(2024, i, 1), dateLocale)),
     [dateLocale]
   )
   const statusLabel = (s: string) =>
@@ -148,6 +148,8 @@ export default function CalendarioProfessorPage() {
   const [lessons, setLessons] = useState<Lesson[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [teacherSlots, setTeacherSlots] = useState<Array<{ dayOfWeek: number; startMinutes: number; endMinutes: number }>>([])
+  const [currentTeacherId, setCurrentTeacherId] = useState<string | null>(null)
 
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null)
   const [modalStep, setModalStep] = useState<ModalStep>('choose')
@@ -221,8 +223,25 @@ export default function CalendarioProfessorPage() {
       const params = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })
       const res = await fetch(`/api/professor/lessons?${params}`, { credentials: 'include' })
       const json = await res.json()
-      if (res.ok && json.ok) setLessons(json.data.lessons || [])
-      else setError(json.message || t('professor.calendar.errorLoad'))
+      if (res.ok && json.ok) {
+        const lessonsData = json.data.lessons || []
+        setLessons(lessonsData)
+        // Obter teacherId da primeira aula ou buscar via API
+        if (lessonsData.length > 0 && lessonsData[0].teacherId) {
+          setCurrentTeacherId(lessonsData[0].teacherId)
+        } else {
+          // Se não houver aulas, buscar teacherId via API
+          try {
+            const teacherRes = await fetch('/api/professor/me', { credentials: 'include' })
+            const teacherJson = await teacherRes.json()
+            if (teacherRes.ok && teacherJson.ok && teacherJson.data?.professor?.id) {
+              setCurrentTeacherId(teacherJson.data.professor.id)
+            }
+          } catch (e) {
+            console.error('Erro ao buscar teacherId:', e)
+          }
+        }
+      } else setError(json.message || t('professor.calendar.errorLoad'))
     } catch (e) {
       setError(t('professor.calendar.errorLoad'))
     } finally {
@@ -230,8 +249,46 @@ export default function CalendarioProfessorPage() {
     }
   }, [view, currentDate, t])
 
+  // Buscar slots de disponibilidade do professor
+  useEffect(() => {
+    if (!currentTeacherId) {
+      setTeacherSlots([])
+      return
+    }
+    const fetchTeacherSlots = async () => {
+      try {
+        const res = await fetch(`/api/professor/availability`, {
+          credentials: 'include',
+        })
+        if (res.ok) {
+          const json = await res.json()
+          if (json.ok && json.data?.slots) {
+            setTeacherSlots(json.data.slots)
+          } else {
+            setTeacherSlots([])
+          }
+        } else {
+          setTeacherSlots([])
+        }
+      } catch (e) {
+        console.error('Erro ao buscar slots de disponibilidade:', e)
+        setTeacherSlots([])
+      }
+    }
+    fetchTeacherSlots()
+  }, [currentTeacherId])
+
   useEffect(() => {
     fetchLessons()
+  }, [fetchLessons])
+
+  // Ouvir evento de atualização de aulas (quando solicitação é aprovada)
+  useEffect(() => {
+    const handleLessonsUpdated = () => {
+      fetchLessons()
+    }
+    window.addEventListener('lessons-updated', handleLessonsUpdated)
+    return () => window.removeEventListener('lessons-updated', handleLessonsUpdated)
   }, [fetchLessons])
 
   useEffect(() => {
@@ -398,24 +455,51 @@ export default function CalendarioProfessorPage() {
   }, [currentDate])
 
   const weekStart = useMemo(() => getStartOfWeek(currentDate), [currentDate])
+  
+  // Verificar se o professor está disponível em um horário específico
+  const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 60): boolean => {
+    // Se não há slots cadastrados, sempre disponível
+    if (!currentTeacherId || teacherSlots.length === 0) {
+      return true
+    }
+
+    const dayOfWeek = day.getDay()
+    const slotStartMinutes = slotHour * 60 + slotMinute
+    const slotEndMinutes = slotStartMinutes + durationMinutes
+
+    // Verificar se o slot está dentro de algum slot de disponibilidade do professor
+    return teacherSlots.some(
+      (slot) =>
+        slot.dayOfWeek === dayOfWeek &&
+        slotStartMinutes >= slot.startMinutes &&
+        slotEndMinutes <= slot.endMinutes
+    )
+  }, [currentTeacherId, teacherSlots])
+
   const timeSlots = useMemo(() => {
     const slots: { hour: number; minute: number }[] = []
     for (let h = 6; h <= 23; h++) {
       slots.push({ hour: h, minute: 0 })
-      if (h < 23) slots.push({ hour: h, minute: 30 })
+      if (h <= 23) slots.push({ hour: h, minute: 30 }) // Fix: include 23:30
     }
     return slots
   }, [])
 
-  const getLessonsForDay = (day: Date) => lessons.filter((l) => isSameDay(new Date(l.startAt), day))
+  const getLessonsForDay = (day: Date) => lessons.filter((l) => isSameDayInTZ(l.startAt, day))
   const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
-    const slotStart = new Date(day)
-    slotStart.setHours(slotHour, slotMinute, 0, 0)
-    const slotEnd = new Date(day)
-    slotEnd.setHours(slotMinute === 30 ? slotHour + 1 : slotHour, slotMinute === 30 ? 0 : 30, 0, 0)
+    // Compare times in Brazil timezone
+    const dayInTZ = getDateInTZ(day)
     return lessons.filter((l) => {
-      const start = new Date(l.startAt)
-      return start >= slotStart && start < slotEnd
+      const lessonTime = getTimeInTZ(l.startAt)
+      const lessonDay = getDateInTZ(l.startAt)
+      if (!isSameDayInTZ(lessonDay, dayInTZ)) return false
+      const slotEndHour = slotMinute === 30 ? slotHour + 1 : slotHour
+      const slotEndMinute = slotMinute === 30 ? 0 : 30
+      if (lessonTime.hour < slotHour) return false
+      if (lessonTime.hour === slotHour && lessonTime.minute < slotMinute) return false
+      if (lessonTime.hour > slotEndHour) return false
+      if (lessonTime.hour === slotEndHour && lessonTime.minute >= slotEndMinute) return false
+      return true
     })
   }
 
@@ -432,7 +516,8 @@ export default function CalendarioProfessorPage() {
   return (
     <div className="min-w-0">
       <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-2">{t('professor.calendar.title')}</h1>
-      <p className="text-sm sm:text-base text-gray-600 mb-3 sm:mb-4">{t('professor.calendar.subtitle')}</p>
+      <p className="text-sm sm:text-base text-gray-600 mb-1">{t('professor.calendar.subtitle')}</p>
+      <p className="text-xs text-gray-500 mb-3 sm:mb-4">Horários exibidos em America/Sao_Paulo (Brasil)</p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 mb-3 sm:mb-4">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
@@ -523,10 +608,10 @@ export default function CalendarioProfessorPage() {
                           key={l.id}
                           type="button"
                           onClick={() => openLesson(l)}
-                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status)}`}
-                          title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${t('professor.calendar.clickToView')}`}
+                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
+                          title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ${t('professor.calendar.clickToView')}`}
                         >
-                          {getLessonStudentLabel(l)} {formatTime(l.startAt)}
+                          {getLessonStudentLabel(l)} {formatTimeInTZ(l.startAt, dateLocale)}
                         </button>
                       ))}
                       {dayLessons.length > 3 && <span className="text-[10px] sm:text-xs text-gray-400">+{dayLessons.length - 3}</span>}
@@ -558,14 +643,18 @@ export default function CalendarioProfessorPage() {
                   {Array.from({ length: 7 }, (_, i) => {
                     const d = addDays(weekStart, i)
                     const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
+                    const isAvailable = isTeacherAvailableAtSlot(d, slot.hour, slot.minute)
                     return (
                       <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${d.getDay() === 0 ? 'bg-red-50' : ''}`}>
+                        {!isAvailable && d.getDay() !== 0 && (
+                          <span className="text-[10px] text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
+                        )}
                         {slotLessons.map((l) => (
                           <button
                             key={l.id}
                             type="button"
                             onClick={() => openLesson(l)}
-                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status)}`}
+                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
                           >
                             {getLessonStudentLabel(l)}
                           </button>
@@ -588,18 +677,22 @@ export default function CalendarioProfessorPage() {
           <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${currentDate.getDay() === 0 ? 'bg-red-50/30' : ''}`}>
             {timeSlots.map((slot) => {
               const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
+              const isAvailable = isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute)
               return (
                 <div key={`${slot.hour}-${slot.minute}`} className="flex border-b border-gray-100 min-h-[52px] sm:min-h-[48px]">
                   <div className="w-14 sm:w-16 shrink-0 py-2 sm:py-1.5 pl-2 text-xs text-gray-500 border-r border-gray-100">{formatSlotLabel(slot)}</div>
                   <div className="flex-1 min-w-0 p-2 flex flex-col gap-1">
+                    {!isAvailable && currentDate.getDay() !== 0 && (
+                      <span className="text-xs text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
+                    )}
                     {slotLessons.map((l) => (
                       <button
                         key={l.id}
                         type="button"
                         onClick={() => openLesson(l)}
-                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status)}`}
+                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
                       >
-                        {getLessonStudentLabel(l)} – {statusLabel(l.status)} ({formatTime(l.startAt)})
+                        {getLessonStudentLabel(l)} – {statusLabel(l.status)} {l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ({formatTimeInTZ(l.startAt, dateLocale)})
                       </button>
                     ))}
                   </div>
@@ -664,10 +757,10 @@ export default function CalendarioProfessorPage() {
               <strong>{getLessonStudentLabel(selectedLesson)}</strong>
             </p>
             <p className="text-sm text-gray-600">
-              {formatDateTime(selectedLesson.startAt, dateLocale)} — {selectedLesson.durationMinutes} min
+              {formatDateTimeInTZ(selectedLesson.startAt, dateLocale)} — {selectedLesson.durationMinutes} min
             </p>
             <p className="text-sm">
-              {t('professor.calendar.status')}: <span className={statusColor(selectedLesson.status)}>{statusLabel(selectedLesson.status)}</span>
+              {t('professor.calendar.status')}: <span className={statusColor(selectedLesson.status, selectedLesson.requests && selectedLesson.requests.length > 0)}>{statusLabel(selectedLesson.status)} {selectedLesson.requests && selectedLesson.requests.length > 0 ? '(Em processo de troca)' : ''}</span>
             </p>
             {selectedLesson.record && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -687,7 +780,7 @@ export default function CalendarioProfessorPage() {
             ) : ultimaRecord ? (
               <div className="space-y-3 text-sm">
                 <p className="text-gray-600">
-                  {t('professor.calendar.classOf')} <strong>{formatDateTime(ultimaRecord.lesson.startAt, dateLocale)}</strong> — {ultimaRecord.lesson.enrollment?.nome ?? ultimaRecord.lesson.enrollment?.nomeGrupo ?? '—'}
+                  {t('professor.calendar.classOf')} <strong>{formatDateTimeInTZ(ultimaRecord.lesson.startAt, dateLocale)}</strong> — {ultimaRecord.lesson.enrollment?.nome ?? ultimaRecord.lesson.enrollment?.nomeGrupo ?? '—'}
                 </p>
                 <p><strong>{t('professor.calendar.status')}:</strong> {statusLabel(ultimaRecord.status)}</p>
                 <p><strong>{t('professor.calendar.presence')}:</strong> {getPresenceLabel(ultimaRecord.presence)}</p>
@@ -711,7 +804,7 @@ export default function CalendarioProfessorPage() {
         {modalStep === 'registrar' && selectedLesson && (
           <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
             <p className="text-sm text-gray-600">
-              {t('professor.calendar.modalClass')}: <strong>{formatDateTime(selectedLesson.startAt, dateLocale)}</strong> — {getLessonStudentLabel(selectedLesson)}
+              {t('professor.calendar.modalClass')}: <strong>{formatDateTimeInTZ(selectedLesson.startAt, dateLocale)}</strong> — {getLessonStudentLabel(selectedLesson)}
             </p>
 
             <div>

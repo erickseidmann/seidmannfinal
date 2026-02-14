@@ -1,9 +1,11 @@
 /**
- * GET /api/admin/teachers/check-availability?datetime=ISO&durationMinutes=60&excludeLessonId=xxx
- * Para cada professor ativo: disponível nesse dia/hora?
+ * GET /api/admin/teachers/check-availability?datetime=ISO&durationMinutes=60&teacherId=xxx&excludeLessonId=xxx
+ * Verifica se o professor está disponível nesse dia/hora.
+ * - teacherId é obrigatório.
  * - Sem slots cadastrados = disponível em qualquer horário.
  * - Com slots = disponível só se a aula inteira (início + duração) couber dentro de algum slot.
- * - Se já tem outra aula no mesmo horário (sobreposição), indisponível e retorna conflito (já tem aula com ...).
+ * - Se já tem outra aula no mesmo horário (sobreposição), indisponível e retorna reason.
+ * Resposta: { ok: true, available: boolean, reason?: string }
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -20,9 +22,17 @@ export async function GET(request: NextRequest) {
       )
     }
     const { searchParams } = new URL(request.url)
+    const teacherId = searchParams.get('teacherId')
     const datetimeParam = searchParams.get('datetime')
     const durationMinutes = Math.max(0, parseInt(searchParams.get('durationMinutes') ?? '60', 10) || 60)
     const excludeLessonId = searchParams.get('excludeLessonId') ?? null
+
+    if (!teacherId || !teacherId.trim()) {
+      return NextResponse.json(
+        { ok: false, message: 'teacherId is required' },
+        { status: 400 }
+      )
+    }
 
     if (!datetimeParam) {
       return NextResponse.json(
@@ -37,83 +47,74 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
+
+    const teacher = await prisma.teacher.findFirst({
+      where: { id: teacherId.trim(), status: 'ACTIVE' },
+      select: { id: true },
+    })
+    if (!teacher) {
+      return NextResponse.json(
+        { ok: false, message: 'Professor não encontrado ou inativo' },
+        { status: 404 }
+      )
+    }
+
     const dayOfWeek = dt.getDay()
     const minutesOfDay = dt.getHours() * 60 + dt.getMinutes()
     const startAt = new Date(dt)
     const endAt = new Date(dt.getTime() + durationMinutes * 60 * 1000)
 
-    const teachers = await prisma.teacher.findMany({
-      where: { status: 'ACTIVE' },
-      select: { id: true },
-    })
-    const teacherIds = teachers.map((t) => t.id)
-
     const slots = await prisma.teacherAvailabilitySlot.findMany({
-      where: { teacherId: { in: teacherIds } },
-      select: { teacherId: true, dayOfWeek: true, startMinutes: true, endMinutes: true },
+      where: { teacherId: teacher.id },
+      select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
     })
-
-    const slotsByTeacher = new Map<string, { dayOfWeek: number; startMinutes: number; endMinutes: number }[]>()
-    for (const s of slots) {
-      if (!slotsByTeacher.has(s.teacherId)) slotsByTeacher.set(s.teacherId, [])
-      slotsByTeacher.get(s.teacherId)!.push({
-        dayOfWeek: s.dayOfWeek,
-        startMinutes: s.startMinutes,
-        endMinutes: s.endMinutes,
-      })
-    }
 
     const existingLessons = await prisma.lesson.findMany({
       where: {
-        teacherId: { in: teacherIds },
+        teacherId: teacher.id,
         status: { not: 'CANCELLED' },
         ...(excludeLessonId ? { id: { not: excludeLessonId } } : {}),
       },
       select: {
-        teacherId: true,
         startAt: true,
         durationMinutes: true,
         enrollment: { select: { nome: true } },
       },
     })
 
-    const conflicts: Record<string, string> = {}
     for (const l of existingLessons) {
       const lessonStart = new Date(l.startAt)
       const lessonEnd = new Date(lessonStart.getTime() + (l.durationMinutes ?? 60) * 60 * 1000)
       if (startAt < lessonEnd && endAt > lessonStart) {
         const studentName = (l.enrollment as { nome: string })?.nome ?? 'aluno'
-        if (!conflicts[l.teacherId] || conflicts[l.teacherId] === studentName) {
-          conflicts[l.teacherId] = studentName
-        }
+        return NextResponse.json({
+          ok: true,
+          available: false,
+          reason: `Já tem aula nesse horário com ${studentName}`,
+        })
       }
     }
 
-    const availabilities: Record<string, boolean> = {}
-    for (const t of teachers) {
-      if (conflicts[t.id]) {
-        availabilities[t.id] = false
-        continue
-      }
-      const teacherSlots = slotsByTeacher.get(t.id)
-      if (!teacherSlots || teacherSlots.length === 0) {
-        availabilities[t.id] = true
-        continue
-      }
-      // Verificar se a aula inteira (início + duração) cabe dentro de algum slot
-      const inSlot = teacherSlots.some(
-        (slot) =>
-          slot.dayOfWeek === dayOfWeek &&
-          minutesOfDay >= slot.startMinutes &&
-          (minutesOfDay + durationMinutes) <= slot.endMinutes // fim da aula dentro do slot
-      )
-      availabilities[t.id] = inSlot
+    if (!slots.length) {
+      return NextResponse.json({ ok: true, available: true })
     }
 
-    return NextResponse.json({
-      ok: true,
-      data: { availabilities, conflicts },
-    })
+    const inSlot = slots.some(
+      (slot) =>
+        slot.dayOfWeek === dayOfWeek &&
+        minutesOfDay >= slot.startMinutes &&
+        (minutesOfDay + durationMinutes) <= slot.endMinutes
+    )
+
+    if (!inSlot) {
+      return NextResponse.json({
+        ok: true,
+        available: false,
+        reason: 'Fora do horário de disponibilidade do professor',
+      })
+    }
+
+    return NextResponse.json({ ok: true, available: true })
   } catch (error) {
     console.error('[api/admin/teachers/check-availability GET]', error)
     return NextResponse.json(

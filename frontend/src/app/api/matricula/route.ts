@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { isValidEmail, normalizePhone, requireMinDigits } from '@/lib/validators'
 import { normalizeLanguage } from '@/lib/normalizeLanguage'
 import { createUniqueTrackingCode } from '@/lib/trackingCode'
+import { sendComprovanteMatricula } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   // Proteção externa: garantir que SEMPRE retornamos JSON
@@ -29,7 +30,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { nome, email, whatsapp, idioma, nivel, objetivo, disponibilidade, updateExisting } = body
+    const {
+      nome,
+      email,
+      whatsapp,
+      idioma,
+      nivel,
+      objetivo,
+      disponibilidade,
+      updateExisting,
+      dataNascimento,
+      cpf,
+      tipoAula,
+      nomeGrupo,
+      tempoAulaMinutos,
+      frequenciaSemanal,
+      valorMensalidade: valorMensalidadeBody,
+      diaPagamento,
+      codigoCupom,
+    } = body
 
     // Log do payload (sanitizado - sem dados sensíveis demais)
     console.log('[api/matricula] Payload recebido:', {
@@ -172,21 +191,94 @@ export async function POST(request: NextRequest) {
         // Gerar trackingCode único
         const trackingCode = await createUniqueTrackingCode()
 
+        const createData: Record<string, unknown> = {
+          nome: nome.trim(),
+          email: normalizedEmail,
+          whatsapp: normalizedWhatsapp,
+          idioma: normalizedLanguage,
+          nivel: (nivel && typeof nivel === 'string') ? nivel.trim() : null,
+          objetivo: objetivo?.trim() || null,
+          disponibilidade: disponibilidade?.trim() || null,
+          status: 'ACTIVE',
+          pendenteAdicionarAulas: true,
+          trackingCode,
+        }
+        if (dataNascimento && typeof dataNascimento === 'string' && dataNascimento.trim()) {
+          const d = new Date(dataNascimento.trim())
+          if (!isNaN(d.getTime())) createData.dataNascimento = d
+        }
+        if (cpf && typeof cpf === 'string' && cpf.trim()) {
+          createData.cpf = cpf.trim().replace(/\D/g, '').slice(0, 14)
+        }
+        if (tipoAula === 'PARTICULAR' || tipoAula === 'GRUPO') {
+          createData.tipoAula = tipoAula
+          if (tipoAula === 'GRUPO' && nomeGrupo && typeof nomeGrupo === 'string' && nomeGrupo.trim()) {
+            createData.nomeGrupo = nomeGrupo.trim().slice(0, 255)
+          }
+        }
+        createData.escolaMatricula = 'SEIDMANN'
+        if (tempoAulaMinutos != null && tempoAulaMinutos !== '') {
+          const t = typeof tempoAulaMinutos === 'number' ? tempoAulaMinutos : parseInt(String(tempoAulaMinutos), 10)
+          if (!Number.isNaN(t) && [30, 40, 60, 120].includes(t)) {
+            createData.tempoAulaMinutos = t
+          }
+        }
+        if (frequenciaSemanal != null && frequenciaSemanal !== '') {
+          const f = typeof frequenciaSemanal === 'number' ? frequenciaSemanal : parseInt(String(frequenciaSemanal), 10)
+          if (!Number.isNaN(f) && f >= 1 && f <= 7) {
+            createData.frequenciaSemanal = f
+          }
+        }
+        if (valorMensalidadeBody != null) {
+          const v = typeof valorMensalidadeBody === 'number' ? valorMensalidadeBody : parseFloat(String(valorMensalidadeBody).replace(',', '.'))
+          if (!Number.isNaN(v) && v >= 0) createData.valorMensalidade = v
+        }
+        if (diaPagamento != null && diaPagamento !== '') {
+          const d = typeof diaPagamento === 'number' ? diaPagamento : parseInt(String(diaPagamento), 10)
+          if (!Number.isNaN(d) && d >= 1 && d <= 25) {
+            createData.diaPagamento = d
+          }
+        }
+        if (codigoCupom && typeof codigoCupom === 'string' && codigoCupom.trim()) {
+          const coupon = await prisma.coupon.findFirst({
+            where: {
+              codigo: codigoCupom.trim().toUpperCase(),
+              ativo: true,
+              OR: [
+                { validade: null },
+                { validade: { gte: new Date() } },
+              ],
+            },
+          })
+          if (coupon) {
+            createData.couponId = coupon.id
+          }
+        }
         enrollment = await prisma.enrollment.create({
-          data: {
-            nome: nome.trim(),
-            email: normalizedEmail,
-            whatsapp: normalizedWhatsapp,
-            idioma: normalizedLanguage, // Já validado e normalizado acima
-            nivel: nivel.trim(),
-            objetivo: objetivo?.trim() || null,
-            disponibilidade: disponibilidade?.trim() || null,
-            status: 'LEAD',
-            trackingCode, // Código único para acompanhamento
-          },
+          data: createData as any,
         })
 
         console.log('[api/matricula] Enrollment criado com sucesso:', enrollment.id)
+
+        // Enviar e-mail de comprovante de matrícula ao aluno (não bloqueia a resposta)
+        const emailEnviado = await sendComprovanteMatricula({
+          nome: enrollment.nome,
+          email: enrollment.email,
+          whatsapp: enrollment.whatsapp,
+          idioma: enrollment.idioma ?? undefined,
+          tipoAula: enrollment.tipoAula ?? undefined,
+          nomeGrupo: enrollment.nomeGrupo ?? undefined,
+          valorMensalidade: enrollment.valorMensalidade,
+          frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
+          disponibilidade: enrollment.disponibilidade ?? undefined,
+          diaPagamento: enrollment.diaPagamento ?? undefined,
+          nomeVendedor: enrollment.nomeVendedor ?? undefined,
+        })
+        if (emailEnviado) {
+          console.log('[api/matricula] E-mail de comprovante enviado para:', enrollment.email)
+        } else {
+          console.warn('[api/matricula] E-mail de comprovante não enviado (SMTP pode não estar configurado)')
+        }
       }
     } catch (prismaError: any) {
       // Erro específico do Prisma - sempre retornar JSON

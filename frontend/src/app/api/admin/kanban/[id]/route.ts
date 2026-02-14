@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
 const COLUMNS = ['TODO', 'DOING', 'DONE'] as const
+const PRIORIDADES = ['EMERGENCIA', 'PODE_ESPERAR', 'FIQUE_ATENTO'] as const
 
 export async function PATCH(
   request: NextRequest,
@@ -30,12 +31,13 @@ export async function PATCH(
         { status: 404 }
       )
     }
-    const data: { title?: string; setor?: string | null; assignedToId?: string | null; column?: string; orderIndex?: number } = {}
+    const data: { title?: string; setor?: string | null; assignedToId?: string | null; column?: string; orderIndex?: number; prioridade?: string | null } = {}
     if (typeof body.title === 'string' && body.title.trim()) data.title = body.title.trim()
     if ('setor' in body) data.setor = body.setor ? String(body.setor).trim() : null
     if ('assignedToId' in body) data.assignedToId = body.assignedToId || null
     if (body.column && COLUMNS.includes(body.column)) data.column = body.column
     if (typeof body.orderIndex === 'number') data.orderIndex = body.orderIndex
+    if ('prioridade' in body) data.prioridade = body.prioridade && PRIORIDADES.includes(body.prioridade) ? body.prioridade : null
 
     const card = await prisma.kanbanCard.update({
       where: { id },
@@ -64,6 +66,7 @@ export async function PATCH(
         assignedTo: card.assignedTo ? { id: card.assignedTo.id, nome: card.assignedTo.nome } : null,
         column: card.column,
         orderIndex: card.orderIndex,
+        prioridade: card.prioridade ?? null,
         criadoEm: card.criadoEm.toISOString(),
       },
     })

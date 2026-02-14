@@ -6,12 +6,18 @@
 
 'use client'
 
-import { useState, FormEvent, Suspense } from 'react'
+import { useState, FormEvent, Suspense, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import Link from 'next/link'
 import type { MatriculaResponse, ApiResponse } from '@/contracts/api.contract'
+import { User, BookOpen, FileCheck } from 'lucide-react'
+
+const STEPS = [
+  { id: 1, label: 'Dados pessoais', icon: User },
+  { id: 2, label: 'Preferências', icon: BookOpen },
+  { id: 3, label: 'Termos e pagamento', icon: FileCheck },
+] as const
 
 interface FormErrors {
   nome?: string
@@ -20,7 +26,42 @@ interface FormErrors {
   idioma?: string
   nivel?: string
   disponibilidade?: string
-  checkbox?: string
+  tempoAulaMinutos?: string
+  frequenciaSemanal?: string
+  aceiteTermos?: string
+  aceiteFerias?: string
+}
+
+const TEMPO_AULA_OPCOES = [
+  { value: '', label: 'Selecione' },
+  { value: '30', label: '30 min' },
+  { value: '40', label: '40 min' },
+  { value: '60', label: '1 hora' },
+  { value: '120', label: '2 horas' },
+]
+
+const FREQUENCIA_SEMANAL_OPCOES = [
+  { value: '', label: 'Selecione' },
+  { value: '1', label: '1x por semana' },
+  { value: '2', label: '2x por semana' },
+  { value: '3', label: '3x por semana' },
+  { value: '4', label: '4x por semana' },
+  { value: '5', label: '5x por semana' },
+  { value: '6', label: '6x por semana' },
+  { value: '7', label: '7x por semana' },
+]
+
+const VALOR_HORA_PARTICULAR = 60
+const VALOR_HORA_GRUPO = 45
+const SEMANAS_POR_MES = 4
+/** Códigos de cupom: valor é multiplicador do valor hora (ex: 0.9 = 10% off). */
+const CUPONS: Record<string, number> = {
+  PROMO10: 0.9,
+  DESC20: 0.8,
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
 }
 
 function MatriculaPageContent() {
@@ -29,19 +70,92 @@ function MatriculaPageContent() {
   
   const [formData, setFormData] = useState({
     nome: '',
+    dataNascimento: '',
+    cpf: '',
     whatsapp: '',
     email: '',
     idioma: '',
     nivel: '',
     objetivo: '',
     disponibilidade: '',
-    checkbox: false,
+    tipoAula: '' as '' | 'PARTICULAR' | 'GRUPO',
+    nomeGrupo: '',
+    tempoAulaMinutos: '',
+    frequenciaSemanal: '',
+    codigoCupom: '',
+    aceiteTermos: false,
+    aceiteFerias: false,
+    diaPagamento: '',
   })
 
   const [errors, setErrors] = useState<FormErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [couponValidado, setCouponValidado] = useState<{ valorPorHoraAula: number } | null>(null)
+
+  useEffect(() => {
+    const code = formData.codigoCupom.trim().toUpperCase()
+    if (!code) {
+      setCouponValidado(null)
+      return
+    }
+    const ctrl = new AbortController()
+    fetch(`/api/coupons/validate?code=${encodeURIComponent(code)}`, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.ok && json.data?.valorPorHoraAula != null) {
+          setCouponValidado({ valorPorHoraAula: json.data.valorPorHoraAula })
+        } else {
+          setCouponValidado(null)
+        }
+      })
+      .catch(() => setCouponValidado(null))
+    return () => ctrl.abort()
+  }, [formData.codigoCupom])
+
+  /** Valor da mensalidade: particular R$ 60/h, grupo R$ 36,50/h. Cupom do banco ou legado altera o valor hora. */
+  const { valorMensalidade, valorHoraAplicado } = useMemo(() => {
+    const tempoMin = formData.tempoAulaMinutos ? Number(formData.tempoAulaMinutos) : 0
+    const freq = formData.frequenciaSemanal ? Number(formData.frequenciaSemanal) : 0
+    let valorHora: number
+    if (couponValidado) {
+      valorHora = couponValidado.valorPorHoraAula
+    } else {
+      const multiplicador = formData.codigoCupom.trim()
+        ? (CUPONS[formData.codigoCupom.trim().toUpperCase()] ?? 1)
+        : 1
+      const valorHoraBase = formData.tipoAula === 'GRUPO' ? VALOR_HORA_GRUPO : VALOR_HORA_PARTICULAR
+      valorHora = valorHoraBase * multiplicador
+    }
+    const tempoHoras = tempoMin / 60
+    const mensal = tempoMin && freq ? valorHora * tempoHoras * freq * SEMANAS_POR_MES : 0
+    return { valorMensalidade: Math.round(mensal * 100) / 100, valorHoraAplicado: valorHora }
+  }, [formData.tempoAulaMinutos, formData.frequenciaSemanal, formData.codigoCupom, formData.tipoAula, couponValidado])
+
+  /** Valida apenas os campos da etapa 1 (nome, contato, idioma, nível). */
+  const validateStep1 = (): boolean => {
+    const newErrors: FormErrors = {}
+    if (!formData.nome.trim()) newErrors.nome = 'Nome completo é obrigatório'
+    if (!formData.whatsapp.trim()) newErrors.whatsapp = 'WhatsApp é obrigatório'
+    if (!formData.email.trim()) newErrors.email = 'Email é obrigatório'
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Email inválido'
+    if (!formData.idioma) newErrors.idioma = 'Idioma é obrigatório'
+    if (!formData.nivel) newErrors.nivel = 'Nível é obrigatório'
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
+  /** Valida apenas a etapa 2 (disponibilidade, tempo de aula, frequência). */
+  const validateStep2 = (): boolean => {
+    const newErrors: FormErrors = {}
+    if (!formData.disponibilidade.trim()) newErrors.disponibilidade = 'Disponibilidade é obrigatória'
+    if (!formData.tempoAulaMinutos) newErrors.tempoAulaMinutos = 'Tempo de aula é obrigatório'
+    if (!formData.frequenciaSemanal) newErrors.frequenciaSemanal = 'Frequência semanal é obrigatória'
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
 
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {}
@@ -71,9 +185,18 @@ function MatriculaPageContent() {
     if (!formData.disponibilidade.trim()) {
       newErrors.disponibilidade = 'Disponibilidade é obrigatória'
     }
+    if (!formData.tempoAulaMinutos) {
+      newErrors.tempoAulaMinutos = 'Tempo de aula é obrigatório'
+    }
+    if (!formData.frequenciaSemanal) {
+      newErrors.frequenciaSemanal = 'Frequência semanal é obrigatória'
+    }
 
-    if (!formData.checkbox) {
-      newErrors.checkbox = 'Você precisa concordar para continuar'
+    if (!formData.aceiteTermos) {
+      newErrors.aceiteTermos = 'É necessário aceitar os termos e condições'
+    }
+    if (!formData.aceiteFerias) {
+      newErrors.aceiteFerias = 'É necessário aceitar as regras de férias e feriados'
     }
 
     setErrors(newErrors)
@@ -103,10 +226,20 @@ function MatriculaPageContent() {
           nome: formData.nome,
           email: formData.email,
           whatsapp: formData.whatsapp,
-          idioma: formData.idioma, // Já vem como "ENGLISH" ou "SPANISH"
+          idioma: formData.idioma,
           nivel: formData.nivel,
           objetivo: formData.objetivo || null,
           disponibilidade: formData.disponibilidade,
+          dataNascimento: formData.dataNascimento || undefined,
+          cpf: formData.cpf ? formData.cpf.replace(/\D/g, '') : undefined,
+          tipoAula: formData.tipoAula || undefined,
+          nomeGrupo: formData.tipoAula === 'GRUPO' ? formData.nomeGrupo : undefined,
+          escolaMatricula: 'SEIDMANN',
+          tempoAulaMinutos: formData.tempoAulaMinutos ? Number(formData.tempoAulaMinutos) : undefined,
+          frequenciaSemanal: formData.frequenciaSemanal ? Number(formData.frequenciaSemanal) : undefined,
+          valorMensalidade: valorMensalidade > 0 ? valorMensalidade : undefined,
+          diaPagamento: formData.diaPagamento ? Number(formData.diaPagamento) : undefined,
+          codigoCupom: formData.codigoCupom?.trim() || undefined,
         }),
       })
 
@@ -137,8 +270,9 @@ function MatriculaPageContent() {
       const languageLabel = enrollment.idioma 
         ? (languageLabelMap[enrollment.idioma] || enrollment.idioma)
         : 'Não informado'
+      const codigo = (enrollment as { trackingCode?: string }).trackingCode || enrollment.id
       const mensagem = `Olá! Quero finalizar minha matrícula no Seidmann Institute.
-ID Matrícula: ${enrollment.id}
+Número de Matrícula: ${codigo}
 Nome: ${enrollment.nome}
 Idioma: ${languageLabel}
 Nível: ${enrollment.nivel}
@@ -186,16 +320,6 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
     <main className="min-h-screen bg-gradient-to-b from-orange-50 to-white pt-24 pb-20">
       <div className="container mx-auto px-4">
         <div className="max-w-3xl mx-auto">
-          {/* Título e Subtítulo */}
-          <div className="text-center mb-8">
-            <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-text mb-4">
-              Matrícula
-            </h1>
-            <p className="text-lg text-gray-600">
-              Preencha os dados e fale com a equipe para concluir sua matrícula.
-            </p>
-          </div>
-
           {/* Banner de autocomplete (quando auto=1) */}
           {isAutoComplete && (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -208,13 +332,6 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
             </div>
           )}
 
-          {/* Mensagem de sucesso */}
-          {showSuccess && (
-            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
-              Matrícula criada com sucesso! Abrindo WhatsApp...
-            </div>
-          )}
-
           {/* Mensagem de erro */}
           {submitError && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
@@ -222,34 +339,131 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
             </div>
           )}
 
-          {/* Card do Formulário */}
-          <Card className="p-6 md:p-8">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Nome Completo */}
-              <div>
-                <label htmlFor="nome" className="block text-sm font-semibold text-gray-700 mb-2">
-                  Nome completo <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="nome"
-                  name="nome"
-                  value={formData.nome}
-                  onChange={handleChange}
-                  placeholder="Digite seu nome completo"
-                  className={`input ${errors.nome ? 'border-red-500 focus:ring-red-500' : ''}`}
-                  aria-invalid={errors.nome ? 'true' : 'false'}
-                  aria-describedby={errors.nome ? 'nome-error' : undefined}
+          {/* Tela de sucesso (outro tipo) */}
+          {showSuccess ? (
+            <Card className="p-8 md:p-12 text-center">
+              <div className="max-w-md mx-auto space-y-6">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+                  <FileCheck className="w-8 h-8 text-green-600" />
+                </div>
+                <h2 className="text-2xl font-bold text-brand-text">Matrícula enviada!</h2>
+                <p className="text-gray-600">
+                  Sua solicitação foi registrada. Abrindo o WhatsApp para você falar com a equipe e concluir sua matrícula.
+                </p>
+                <Button href="/" variant="primary" size="lg">
+                  Voltar para a Home
+                </Button>
+              </div>
+            </Card>
+          ) : (
+          /* Card do Formulário com abas */
+          <Card className="p-6 md:p-8 overflow-hidden">
+            {/* Welcome integrado às mini abas – cor Seidmann */}
+            <div className="text-center mb-8 pb-6 border-b border-orange-100">
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-display font-bold bg-gradient-to-r from-brand-orange to-brand-yellow bg-clip-text text-transparent">
+                Welcome To Seidmann Institute
+              </h1>
+              <p className="text-gray-500 text-sm sm:text-base mt-2">
+                Preencha as 3 etapas para concluir sua matrícula. É rápido e fácil.
+              </p>
+            </div>
+
+            {/* Mini abas + barra de progresso */}
+            <div className="mb-8">
+              <div className="flex justify-between items-center mb-2">
+                {STEPS.map((s) => {
+                  const Icon = s.icon
+                  const active = step === s.id
+                  const done = step > s.id
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setStep(s.id as 1 | 2 | 3)}
+                      className={`flex flex-col items-center gap-1 flex-1 ${done ? 'text-brand-orange' : active ? 'text-brand-orange font-semibold' : 'text-gray-400'}`}
+                    >
+                      <span className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${active || done ? 'border-brand-orange bg-orange-50' : 'border-gray-300'}`}>
+                        <Icon className="w-5 h-5" />
+                      </span>
+                      <span className="text-xs hidden sm:inline">{s.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-brand-orange to-brand-yellow transition-all duration-300 rounded-full"
+                  style={{ width: `${(step / 3) * 100}%` }}
                 />
-                {errors.nome && (
-                  <p id="nome-error" className="mt-1 text-sm text-red-600">
-                    {errors.nome}
-                  </p>
-                )}
+              </div>
+              <p className="text-center text-sm text-gray-500 mt-2">Etapa {step} de 3</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-8">
+              {/* ========== ABA 1: Dados pessoais + Contato + Idioma ========== */}
+              {step === 1 && (
+              <>
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Dados pessoais</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="space-y-4">
+                <div>
+                  <label htmlFor="nome" className="block text-sm font-semibold text-gray-700 mb-2">
+                    Nome completo <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="nome"
+                    name="nome"
+                    value={formData.nome}
+                    onChange={handleChange}
+                    placeholder="Digite seu nome completo"
+                    className={`input w-full ${errors.nome ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    aria-invalid={errors.nome ? 'true' : 'false'}
+                    aria-describedby={errors.nome ? 'nome-error' : undefined}
+                  />
+                  {errors.nome && (
+                    <p id="nome-error" className="mt-1 text-sm text-red-600">{errors.nome}</p>
+                  )}
+                </div>
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label htmlFor="dataNascimento" className="block text-sm font-semibold text-gray-700 mb-2">
+                      Data de nascimento <span className="text-gray-500 text-xs">(opcional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      id="dataNascimento"
+                      name="dataNascimento"
+                      value={formData.dataNascimento}
+                      onChange={handleChange}
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="cpf" className="block text-sm font-semibold text-gray-700 mb-2">
+                      CPF <span className="text-gray-500 text-xs">(opcional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="cpf"
+                      name="cpf"
+                      value={formData.cpf}
+                      onChange={handleChange}
+                      placeholder="000.000.000-00"
+                      className="input w-full"
+                      maxLength={14}
+                    />
+                  </div>
+                </div>
+                </div>
               </div>
 
-              {/* Grid: WhatsApp e Email */}
-              <div className="grid md:grid-cols-2 gap-6">
+              {/* Seção: Contato */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Contato</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="grid md:grid-cols-2 gap-6">
                 {/* WhatsApp */}
                 <div>
                   <label htmlFor="whatsapp" className="block text-sm font-semibold text-gray-700 mb-2">
@@ -296,9 +510,13 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                   )}
                 </div>
               </div>
+              </div>
 
-              {/* Grid: Idioma e Nível */}
-              <div className="grid md:grid-cols-2 gap-6">
+              {/* Seção: Idioma e nível */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Idioma e nível</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="grid md:grid-cols-2 gap-6">
                 {/* Idioma */}
                 <div>
                   <label htmlFor="idioma" className="block text-sm font-semibold text-gray-700 mb-2">
@@ -351,8 +569,98 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                   )}
                 </div>
               </div>
+              </div>
+              </>
+              )}
 
-              {/* Objetivo (Opcional) */}
+              {/* ========== ABA 2: Preferências + Objetivo e disponibilidade ========== */}
+              {step === 2 && (
+              <>
+              <p className="text-sm text-gray-600 mb-4">
+                Este formulário é para matrícula na <strong>Seidmann Institute</strong>. Todos os cadastros serão da Seidmann.
+              </p>
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Preferências de aula</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label htmlFor="tipoAula" className="block text-sm font-semibold text-gray-700 mb-2">
+                      Tipo de aula
+                    </label>
+                    <select
+                      id="tipoAula"
+                      name="tipoAula"
+                      value={formData.tipoAula}
+                      onChange={handleChange}
+                      className="input w-full"
+                    >
+                      <option value="">Selecione</option>
+                      <option value="PARTICULAR">Particular</option>
+                      <option value="GRUPO">Grupo / Turma</option>
+                    </select>
+                  </div>
+                  {formData.tipoAula === 'GRUPO' && (
+                    <div>
+                      <label htmlFor="nomeGrupo" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Nome do grupo ou turma
+                      </label>
+                      <input
+                        type="text"
+                        id="nomeGrupo"
+                        name="nomeGrupo"
+                        value={formData.nomeGrupo}
+                        onChange={handleChange}
+                        placeholder="Ex: Turma Kids, Grupo Intermediário"
+                        className="input w-full"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="tempoAulaMinutos" className="block text-sm font-semibold text-gray-700 mb-2">
+                      Tempo de aula <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="tempoAulaMinutos"
+                      name="tempoAulaMinutos"
+                      value={formData.tempoAulaMinutos}
+                      onChange={handleChange}
+                      className={`input w-full ${errors.tempoAulaMinutos ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    >
+                      {TEMPO_AULA_OPCOES.map((opt) => (
+                        <option key={opt.value || 'empty'} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    {errors.tempoAulaMinutos && (
+                      <p className="mt-1 text-sm text-red-600">{errors.tempoAulaMinutos}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="frequenciaSemanal" className="block text-sm font-semibold text-gray-700 mb-2">
+                      Frequência semanal <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="frequenciaSemanal"
+                      name="frequenciaSemanal"
+                      value={formData.frequenciaSemanal}
+                      onChange={handleChange}
+                      className={`input w-full ${errors.frequenciaSemanal ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    >
+                      {FREQUENCIA_SEMANAL_OPCOES.map((opt) => (
+                        <option key={opt.value || 'empty'} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    {errors.frequenciaSemanal && (
+                      <p className="mt-1 text-sm text-red-600">{errors.frequenciaSemanal}                    </p>
+                  )}
+                </div>
+              </div>
+              </div>
+
+              {/* Objetivo e disponibilidade */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Objetivo e disponibilidade</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+              <div className="space-y-4">
               <div>
                 <label htmlFor="objetivo" className="block text-sm font-semibold text-gray-700 mb-2">
                   Objetivo <span className="text-gray-500 text-xs">(opcional)</span>
@@ -390,34 +698,169 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                   </p>
                 )}
               </div>
+              </div>
+              </div>
+              </>
+              )}
 
-              {/* Checkbox */}
-              <div>
+              {/* ========== ABA 3: Termos, pagamento e envio ========== */}
+              {step === 3 && (
+              <>
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Termos e Condições Seidmann Institute</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="space-y-5">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 text-sm text-gray-700 space-y-3">
+                  <p><strong>Pagamento:</strong> Todos os pagamentos devem ser realizados na data acordada. Se o vencimento cair em fim de semana ou feriado, o pagamento deve ser feito no próximo dia útil.</p>
+                  <p><strong>Atraso:</strong> Se o aluno não avisar a escola sobre eventual atraso no pagamento, perderá o direito a descontos e será cobrado o valor integral da mensalidade.</p>
+                </div>
+
+                <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                  <p className="text-sm font-semibold text-gray-700 mb-1">Valor da mensalidade</p>
+                  <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                  <div className="flex flex-wrap items-center gap-6">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-brand-orange">
+                        {formData.tempoAulaMinutos && formData.frequenciaSemanal
+                          ? formatMoney(valorMensalidade)
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-[160px] max-w-[200px]">
+                      <label htmlFor="codigoCupom" className="sr-only">Código cupom</label>
+                      <input
+                        type="text"
+                        id="codigoCupom"
+                        name="codigoCupom"
+                        value={formData.codigoCupom}
+                        onChange={handleChange}
+                        placeholder="Cupom (opcional)"
+                        className="input w-full text-sm uppercase placeholder:normal-case placeholder:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  {formData.tempoAulaMinutos && formData.frequenciaSemanal && (
+                    <p className="text-xs text-gray-500 mt-3 pt-3 border-t border-orange-100">
+                      Base: {formData.tempoAulaMinutos} min × {formData.frequenciaSemanal}x/semana
+                      {(formData.tipoAula === 'GRUPO' ? valorHoraAplicado !== VALOR_HORA_GRUPO : valorHoraAplicado !== VALOR_HORA_PARTICULAR) && (
+                        <> • Valor hora com cupom: {formatMoney(valorHoraAplicado)}</>
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-1">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="aceiteTermos"
+                      checked={formData.aceiteTermos}
+                      onChange={handleChange}
+                      className="mt-1 w-4 h-4 text-brand-orange border-gray-300 rounded focus:ring-brand-orange focus:ring-2"
+                      aria-invalid={errors.aceiteTermos ? 'true' : 'false'}
+                    />
+                    <span className="text-sm text-gray-700">Entendo e concordo. <span className="text-red-500">*</span></span>
+                  </label>
+                  {errors.aceiteTermos && (
+                    <p className="mt-1 text-sm text-red-600 ml-7">{errors.aceiteTermos}</p>
+                  )}
+                </div>
+                </div>
+              </div>
+
+              {/* Cancelamento e trocas */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Cancelamento do curso e trocas de horários</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 space-y-2 mt-4">
+                  <p>Para alterações de horário, entre em contato com a equipe de gestão. Remarcações devem ser feitas em até 1 (um) mês; após esse período a aula será considerada perdida. Cancelamentos de longa duração devem ser avisados com pelo menos 1 mês de antecedência. O cancelamento do curso deve ser comunicado com pelo menos uma semana de antecedência em relação à data de pagamento mensal. Cancelamento fora desse prazo sujeita-se à cobrança equivalente a uma semana de aulas.</p>
+                </div>
+              </div>
+
+              {/* Férias / Feriados */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Férias / Feriados</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="space-y-4">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700">
+                  <p>Férias: A escola não faz ajustes nos valores para os meses de 5 semanas, mas para ajustar o banco de horas a escola tem duas férias no ano (última semana de julho e última semana de dezembro e primeira de janeiro), totalizando 3 semanas e dois dias de férias por ano. Qualquer dúvida, favor comunicar-se com o professor responsável. A escola não trabalha nos feriados nacionais; as únicas aulas que podem ser remanejadas são as de 1 vez por semana.</p>
+                </div>
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input
                     type="checkbox"
-                    name="checkbox"
-                    checked={formData.checkbox}
+                    name="aceiteFerias"
+                    checked={formData.aceiteFerias}
                     onChange={handleChange}
                     className="mt-1 w-4 h-4 text-brand-orange border-gray-300 rounded focus:ring-brand-orange focus:ring-2"
-                    aria-invalid={errors.checkbox ? 'true' : 'false'}
-                    aria-describedby={errors.checkbox ? 'checkbox-error' : undefined}
+                    aria-invalid={errors.aceiteFerias ? 'true' : 'false'}
                   />
-                  <span className="text-sm text-gray-700">
-                    Concordo em ser contatado pela equipe do Seidmann Institute via WhatsApp e e-mail.{' '}
-                    <span className="text-red-500">*</span>
-                  </span>
+                  <span className="text-sm text-gray-700">Entendo e concordo sobre as férias e os feriados. <span className="text-red-500">*</span></span>
                 </label>
-                {errors.checkbox && (
-                  <p id="checkbox-error" className="mt-1 text-sm text-red-600 ml-7">
-                    {errors.checkbox}
-                  </p>
+                {errors.aceiteFerias && (
+                  <p className="mt-1 text-sm text-red-600 ml-7">{errors.aceiteFerias}</p>
                 )}
+                </div>
               </div>
 
-              {/* Botões */}
-              <div className="space-y-4 pt-4">
-                <div className="flex flex-col sm:flex-row gap-4">
+              {/* Dia de pagamento */}
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Dia de pagamento</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <p className="text-sm text-gray-600 mb-4">
+                  Escolha o dia do mês para vencimento da mensalidade (do dia 1 ao 25). Deve ser acordado com o professor; em caso de dúvida entre em contato.
+                </p>
+                <div>
+                  <label htmlFor="diaPagamento" className="block text-sm font-semibold text-gray-700 mb-2">
+                    Dia do mês (1 a 25):
+                  </label>
+                  <select
+                    id="diaPagamento"
+                    name="diaPagamento"
+                    value={formData.diaPagamento}
+                    onChange={handleChange}
+                    className="input w-full max-w-[140px]"
+                  >
+                    <option value="">Selecione</option>
+                    {Array.from({ length: 25 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              </>
+              )}
+
+              {/* Navegação entre abas */}
+              <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-gray-200">
+                {step > 1 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="flex-1"
+                    onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3)}
+                  >
+                    Voltar
+                  </Button>
+                ) : (
+                  <Button href="/" variant="outline" size="lg" className="flex-1">
+                    Voltar para a Home
+                  </Button>
+                )}
+                {step < 3 ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="lg"
+                    className="flex-1"
+                    onClick={() => {
+                      if (step === 1 && validateStep1()) setStep(2)
+                      if (step === 2 && validateStep2()) setStep(3)
+                    }}
+                  >
+                    Próximo
+                  </Button>
+                ) : (
                   <Button
                     type="submit"
                     variant="primary"
@@ -425,28 +868,13 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                     className="flex-1"
                     disabled={isSubmitting}
                   >
-                    {isSubmitting ? 'Abrindo WhatsApp...' : 'Enviar e falar no WhatsApp'}
+                    {isSubmitting ? 'Enviando...' : 'Matricule-se'}
                   </Button>
-                  <Button
-                    href="/"
-                    variant="outline"
-                    size="lg"
-                    className="flex-1"
-                  >
-                    Voltar para a Home
-                  </Button>
-                </div>
-                <Button
-                  href="/cadastro"
-                  variant="outline"
-                  size="lg"
-                  className="w-full"
-                >
-                  Já fiz a matrícula — Quero me cadastrar
-                </Button>
+                )}
               </div>
             </form>
           </Card>
+          )}
         </div>
       </div>
     </main>

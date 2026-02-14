@@ -33,6 +33,10 @@ export async function GET(request: NextRequest) {
 
     const searchParam = request.nextUrl.searchParams.get('search')?.trim() || ''
     const notaParam = request.nextUrl.searchParams.get('nota') // '1' | '2' | '45'
+    const statusParam = request.nextUrl.searchParams.get('status') // 'ACTIVE' | 'INACTIVE' | etc.
+    const limitParam = request.nextUrl.searchParams.get('limit')
+    const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
+    
     const searchFilter = searchParam
       ? { nome: { contains: searchParam } }
       : {}
@@ -40,9 +44,12 @@ export async function GET(request: NextRequest) {
     if (notaParam === '1') notaFilter = { nota: 1 }
     else if (notaParam === '2') notaFilter = { nota: 2 }
     else if (notaParam === '45') notaFilter = { nota: { in: [4, 5] } }
+    
+    const statusFilter = statusParam ? { status: statusParam } : {}
 
     const teachers = await prisma.teacher.findMany({
-      where: { ...searchFilter, ...notaFilter },
+      where: { ...searchFilter, ...notaFilter, ...statusFilter },
+      ...(limit ? { take: limit } : {}),
       include: {
         user: {
           select: {

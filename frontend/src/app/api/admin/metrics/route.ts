@@ -102,6 +102,16 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar alunos sem aula:', err)
     }
 
+    // Novos alunos matriculados (pelo formulário, pendentes de "já adicionei aulas")
+    let novosMatriculadosCount = 0
+    try {
+      novosMatriculadosCount = await prisma.enrollment.count({
+        where: { pendenteAdicionarAulas: true },
+      })
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar novos matriculados:', err)
+    }
+
     // Professores com problemas: avaliação 1 estrela (nota === 1)
     let teachersWithProblems = 0
     try {
@@ -180,6 +190,7 @@ export async function GET(request: NextRequest) {
           total: teachers.total,
         },
         studentsWithoutLesson,
+        novosMatriculadosCount,
         teachersWithProblems,
         absences: {
           studentsWeek: studentsAbsencesWeek,

@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
         assignedTo: c.assignedTo ? { id: c.assignedTo.id, nome: c.assignedTo.nome } : null,
         column: c.column,
         orderIndex: c.orderIndex,
+        prioridade: c.prioridade ?? null,
         criadoEm: c.criadoEm.toISOString(),
       })),
     })
@@ -55,8 +56,9 @@ export async function POST(request: NextRequest) {
         { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
       )
     }
+    const PRIORIDADES = ['EMERGENCIA', 'PODE_ESPERAR', 'FIQUE_ATENTO'] as const
     const body = await request.json()
-    const { title, setor, assignedToId, column } = body
+    const { title, setor, assignedToId, column, prioridade } = body
     const titleStr = typeof title === 'string' ? title.trim() : ''
     if (!titleStr) {
       return NextResponse.json(
@@ -65,6 +67,7 @@ export async function POST(request: NextRequest) {
       )
     }
     const col = column && COLUMNS.includes(column) ? column : 'TODO'
+    const prio = prioridade && PRIORIDADES.includes(prioridade) ? prioridade : null
     const maxOrder = await prisma.kanbanCard
       .aggregate({ where: { column: col }, _max: { orderIndex: true } })
       .then((r) => (r._max.orderIndex ?? -1) + 1)
@@ -76,6 +79,7 @@ export async function POST(request: NextRequest) {
         assignedToId: assignedToId || null,
         column: col,
         orderIndex: maxOrder,
+        prioridade: prio,
       },
       include: {
         assignedTo: { select: { id: true, nome: true } },
@@ -101,6 +105,7 @@ export async function POST(request: NextRequest) {
         assignedTo: card.assignedTo ? { id: card.assignedTo.id, nome: card.assignedTo.nome } : null,
         column: card.column,
         orderIndex: card.orderIndex,
+        prioridade: card.prioridade ?? null,
         criadoEm: card.criadoEm.toISOString(),
       },
     }, { status: 201 })

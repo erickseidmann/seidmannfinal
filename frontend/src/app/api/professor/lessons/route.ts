@@ -66,6 +66,16 @@ export async function GET(request: NextRequest) {
         },
         teacher: { select: { id: true, nome: true } },
         record: { select: { id: true } },
+        requests: {
+          where: {
+            status: { in: ['PENDING', 'TEACHER_APPROVED'] },
+          },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+          },
+        },
       },
       orderBy: { startAt: 'asc' },
     })

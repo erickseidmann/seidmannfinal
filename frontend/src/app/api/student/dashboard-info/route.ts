@@ -63,6 +63,52 @@ export async function GET(request: NextRequest) {
       record?: { book: string | null; lastPage: string | null; notesForStudent: string | null }
     } | null = null
 
+    // Buscar registros de aula do aluno
+    const lessonRecords: Array<{
+      id: string
+      lessonId: string
+      startAt: string
+      teacherName: string
+      assignedHomework: string | null
+      lastPage: string | null
+      notesForStudent: string | null
+      book: string | null
+      criadoEm: string
+    }> = []
+
+    if (enrollmentIds.length > 0) {
+      const records = await prisma.lessonRecord.findMany({
+        where: {
+          lesson: {
+            enrollmentId: { in: enrollmentIds },
+          },
+        },
+        include: {
+          lesson: {
+            include: {
+              teacher: { select: { nome: true } },
+            },
+          },
+        },
+        orderBy: { criadoEm: 'desc' },
+        take: 20, // Limitar a 20 registros mais recentes
+      })
+
+      records.forEach((r) => {
+        lessonRecords.push({
+          id: r.id,
+          lessonId: r.lessonId,
+          startAt: r.lesson.startAt.toISOString(),
+          teacherName: r.lesson.teacher.nome,
+          assignedHomework: r.assignedHomework,
+          lastPage: r.lastPage,
+          notesForStudent: r.notesForStudent,
+          book: r.book,
+          criadoEm: r.criadoEm.toISOString(),
+        })
+      })
+    }
+
     if (enrollmentIds.length > 0) {
       const [next, last] = await Promise.all([
         prisma.lesson.findFirst({
@@ -113,7 +159,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      data: { alerts, nextLesson, lastLesson },
+      data: { alerts, nextLesson, lastLesson, lessonRecords },
     })
   } catch (error) {
     console.error('[api/student/dashboard-info GET]', error)

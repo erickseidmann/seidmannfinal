@@ -46,6 +46,8 @@ export async function GET(request: NextRequest) {
     const statusParam = searchParams.get('status') // Pode ser null (todos)
     const searchParam = searchParams.get('search')?.trim() || ''
     const weekStartParam = searchParams.get('weekStart') // Opcional: segunda-feira ISO para professor da semana
+    const limitParam = searchParams.get('limit')
+    const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
 
     // Construir filtro de status
     const statusFilter: any = statusParam
@@ -89,6 +91,7 @@ export async function GET(request: NextRequest) {
     // Buscar enrollments
     const enrollments = await prisma.enrollment.findMany({
       where: whereClause,
+      ...(limit ? { take: limit } : {}),
       include: {
         user: {
           select: {
@@ -112,15 +115,22 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Professor da semana: se weekStart informado, buscar aulas da semana (seg–sáb) e mapear enrollmentId -> nome do professor
-    let teacherNameByEnrollment: Record<string, string> = {}
-    if (weekStartParam && prisma.lesson) {
+    // Agenda (dias/horários) e todos os professores por matrícula: aulas a partir de hoje nas próximas 12 semanas
+    const enrollmentIds = enrollments.map((e) => e.id)
+    const agendaByEnrollment: Record<string, string> = {}
+    const teacherNamesByEnrollment: Record<string, string> = {}
+    const DAY_NAMES = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+    if (prisma.lesson && enrollmentIds.length > 0) {
       try {
-        const monday = getMonday(new Date(weekStartParam))
-        const saturdayEnd = getSaturdayEnd(monday)
+        const startFrom = new Date()
+        startFrom.setHours(0, 0, 0, 0)
+        const endAt = new Date(startFrom)
+        endAt.setDate(endAt.getDate() + 7 * 12)
         const lessons = await prisma.lesson.findMany({
           where: {
-            startAt: { gte: monday, lte: saturdayEnd },
+            enrollmentId: { in: enrollmentIds },
+            startAt: { gte: startFrom, lte: endAt },
+            status: { not: 'CANCELLED' },
           },
           select: {
             enrollmentId: true,
@@ -128,14 +138,40 @@ export async function GET(request: NextRequest) {
             teacher: { select: { nome: true } },
           },
           orderBy: { startAt: 'asc' },
+          take: 2000,
         })
+        const agendaSlotsByEnrollment: Record<string, Set<string>> = {}
+        const teachersSetByEnrollment: Record<string, Set<string>> = {}
         for (const l of lessons) {
+          const eid = l.enrollmentId
+          const d = new Date(l.startAt)
+          const dayName = DAY_NAMES[d.getDay()]
+          const slot = `${dayName} ${d.getHours().toString().padStart(2, '0')}h${d.getMinutes() ? d.getMinutes().toString().padStart(2, '0') : ''}`
+          if (!agendaSlotsByEnrollment[eid]) agendaSlotsByEnrollment[eid] = new Set()
+          agendaSlotsByEnrollment[eid].add(slot)
           const teacherName = (l as { teacher?: { nome: string } }).teacher?.nome
-          if (!teacherNameByEnrollment[l.enrollmentId] && teacherName) {
-            teacherNameByEnrollment[l.enrollmentId] = teacherName
+          if (teacherName) {
+            if (!teachersSetByEnrollment[eid]) teachersSetByEnrollment[eid] = new Set()
+            teachersSetByEnrollment[eid].add(teacherName)
           }
         }
-        // Replicar professor para todos os integrantes do mesmo grupo (quem tem aula na semana repassa o professor para o grupo)
+        for (const eid of enrollmentIds) {
+          const slots = agendaSlotsByEnrollment[eid]
+          if (slots && slots.size > 0) {
+            const sorted = [...slots].sort((a, b) => {
+              const dayA = DAY_NAMES.indexOf(a.split(' ')[0])
+              const dayB = DAY_NAMES.indexOf(b.split(' ')[0])
+              if (dayA !== dayB) return dayA - dayB
+              return a.localeCompare(b)
+            })
+            agendaByEnrollment[eid] = sorted.join(', ')
+          }
+          const names = teachersSetByEnrollment[eid]
+          if (names && names.size > 0) {
+            teacherNamesByEnrollment[eid] = [...names].sort().join(', ')
+          }
+        }
+        // Replicar agenda e professores para integrantes do mesmo grupo (grupo compartilha a mesma agenda)
         const groupByNomeGrupo: Record<string, string[]> = {}
         for (const e of enrollments) {
           const tipoAula = (e as any).tipoAula
@@ -146,15 +182,17 @@ export async function GET(request: NextRequest) {
           }
         }
         for (const ids of Object.values(groupByNomeGrupo)) {
-          const teacherName = ids.map((id) => teacherNameByEnrollment[id]).find(Boolean)
-          if (teacherName) {
+          const agendaVal = ids.map((id) => agendaByEnrollment[id]).find(Boolean)
+          const teachersVal = ids.map((id) => teacherNamesByEnrollment[id]).find(Boolean)
+          if (agendaVal || teachersVal) {
             for (const id of ids) {
-              teacherNameByEnrollment[id] = teacherName
+              if (agendaVal) agendaByEnrollment[id] = agendaVal
+              if (teachersVal) teacherNamesByEnrollment[id] = teachersVal
             }
           }
         }
       } catch (_) {
-        // ignora erro de semana inválida
+        // ignora erro
       }
     }
 
@@ -187,7 +225,8 @@ export async function GET(request: NextRequest) {
             tempoAulaMinutos: (e as any).tempoAulaMinutos ?? null,
             tipoAula: (e as any).tipoAula ?? null,
             nomeGrupo: (e as any).nomeGrupo ?? null,
-            teacherNameForWeek: teacherNameByEnrollment[e.id] ?? null,
+            teacherNameForWeek: teacherNamesByEnrollment[e.id] ?? null,
+            agenda: agendaByEnrollment[e.id] ?? null,
             cep: (e as any).cep ?? null,
             rua: (e as any).rua ?? null,
             cidade: (e as any).cidade ?? null,
@@ -290,6 +329,7 @@ export async function POST(request: NextRequest) {
       escolaMatriculaOutro,
       observacoes,
       status,
+      couponId,
     } = body
 
     if (!nome || !email || !whatsapp) {
@@ -359,6 +399,8 @@ export async function POST(request: NextRequest) {
             : null,
         escolaMatriculaOutro: escolaMatricula === 'OUTRO' ? (escolaMatriculaOutro?.trim() || null) : null,
         observacoes: observacoes?.trim() || null,
+        pendenteAdicionarAulas: false,
+        couponId: couponId && typeof couponId === 'string' ? couponId : null,
       },
     })
 

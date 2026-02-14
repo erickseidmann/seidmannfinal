@@ -12,6 +12,7 @@ import Toast from '@/components/admin/Toast'
 import { Plus, GripVertical, Trash2, Loader2 } from 'lucide-react'
 
 type ColumnId = 'TODO' | 'DOING' | 'DONE'
+type PrioridadeId = 'EMERGENCIA' | 'PODE_ESPERAR' | 'FIQUE_ATENTO'
 
 interface KanbanUser {
   id: string
@@ -26,6 +27,7 @@ interface KanbanCard {
   assignedTo: { id: string; nome: string } | null
   column: string
   orderIndex: number
+  prioridade: string | null
   criadoEm: string
 }
 
@@ -35,17 +37,40 @@ const COLUMN_LABELS: Record<ColumnId, string> = {
   DONE: 'Feito',
 }
 
+const PRIORIDADE_OPCOES: { value: PrioridadeId; label: string }[] = [
+  { value: 'EMERGENCIA', label: 'Emergência' },
+  { value: 'FIQUE_ATENTO', label: 'Fique atento' },
+  { value: 'PODE_ESPERAR', label: 'Pode esperar' },
+]
+
+function getPrioridadeCardClass(prioridade: string | null): string {
+  switch (prioridade) {
+    case 'EMERGENCIA':
+      return 'border-l-4 border-l-red-500 bg-red-50/80'
+    case 'FIQUE_ATENTO':
+      return 'border-l-4 border-l-amber-500 bg-amber-50/80'
+    case 'PODE_ESPERAR':
+      return 'border-l-4 border-l-green-500 bg-green-50/80'
+    default:
+      return 'border-l-4 border-l-transparent'
+  }
+}
+
 export default function AdminKanbanPage() {
   const [cards, setCards] = useState<KanbanCard[]>([])
   const [users, setUsers] = useState<KanbanUser[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
-  const [addForm, setAddForm] = useState({ title: '', setor: '', assignedToId: '', column: 'TODO' as ColumnId })
+  const [addForm, setAddForm] = useState({ title: '', setor: '', assignedToId: '', column: 'TODO' as ColumnId, prioridade: '' as PrioridadeId | '' })
   const [addSaving, setAddSaving] = useState(false)
   const [editingCard, setEditingCard] = useState<KanbanCard | null>(null)
-  const [editForm, setEditForm] = useState({ title: '', setor: '', assignedToId: '', column: 'TODO' as ColumnId })
+  const [editForm, setEditForm] = useState({ title: '', setor: '', assignedToId: '', column: 'TODO' as ColumnId, prioridade: '' as PrioridadeId | '' })
   const [editSaving, setEditSaving] = useState(false)
+  const [filterAssignedToMe, setFilterAssignedToMe] = useState(false)
+  const [filterSetor, setFilterSetor] = useState<string>('')
+  const [filterColumn, setFilterColumn] = useState<ColumnId | ''>('')
 
   const fetchCards = useCallback(async () => {
     try {
@@ -74,6 +99,15 @@ export default function AdminKanbanPage() {
   useEffect(() => {
     fetchCards()
     fetchUsers()
+    // Buscar ID do usuário atual
+    fetch('/api/admin/me', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.id) {
+          setCurrentUserId(json.data.id)
+        }
+      })
+      .catch(() => {})
   }, [fetchCards, fetchUsers])
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -90,12 +124,13 @@ export default function AdminKanbanPage() {
           setor: addForm.setor.trim() || null,
           assignedToId: addForm.assignedToId || null,
           column: addForm.column,
+          prioridade: addForm.prioridade || null,
         }),
       })
       const json = await res.json()
       if (res.ok && json.ok) {
         setCards((prev) => [...prev, json.data])
-        setAddForm({ title: '', setor: '', assignedToId: '', column: 'TODO' })
+        setAddForm({ title: '', setor: '', assignedToId: '', column: 'TODO', prioridade: '' })
         setAddModalOpen(false)
         setToast({ message: 'Bloco adicionado.', type: 'success' })
       } else {
@@ -143,6 +178,7 @@ export default function AdminKanbanPage() {
           setor: editForm.setor.trim() || null,
           assignedToId: editForm.assignedToId || null,
           column: editForm.column,
+          prioridade: editForm.prioridade || null,
         }),
       })
       const json = await res.json()
@@ -183,10 +219,28 @@ export default function AdminKanbanPage() {
       setor: card.setor || '',
       assignedToId: card.assignedToId || '',
       column: card.column as ColumnId,
+      prioridade: (card.prioridade as PrioridadeId) || '',
     })
   }
 
   const columns: ColumnId[] = ['TODO', 'DOING', 'DONE']
+
+  // Filtrar cards baseado nos filtros ativos
+  const filteredCards = cards.filter((card) => {
+    if (filterAssignedToMe && currentUserId && card.assignedToId !== currentUserId) {
+      return false
+    }
+    if (filterSetor && card.setor !== filterSetor) {
+      return false
+    }
+    if (filterColumn && card.column !== filterColumn) {
+      return false
+    }
+    return true
+  })
+
+  // Obter setores únicos para o filtro
+  const setores = Array.from(new Set(cards.map((c) => c.setor).filter((s): s is string => !!s))).sort()
 
   if (loading) {
     return (
@@ -201,7 +255,7 @@ export default function AdminKanbanPage() {
   return (
     <AdminLayout>
       <div>
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Kanban</h1>
             <p className="text-sm text-gray-600 mt-1">Para fazer, Fazendo, Feito. Atribua setor e responsável.</p>
@@ -209,9 +263,9 @@ export default function AdminKanbanPage() {
           <Button
             variant="primary"
             size="md"
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 w-full sm:w-auto justify-center"
             onClick={() => {
-              setAddForm({ title: '', setor: '', assignedToId: '', column: 'TODO' })
+              setAddForm({ title: '', setor: '', assignedToId: '', column: 'TODO', prioridade: '' })
               setAddModalOpen(true)
             }}
           >
@@ -220,9 +274,65 @@ export default function AdminKanbanPage() {
           </Button>
         </div>
 
+        {/* Filtros */}
+        <div className="mb-6 p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="filter-assigned-to-me"
+                checked={filterAssignedToMe}
+                onChange={(e) => setFilterAssignedToMe(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+              />
+              <label htmlFor="filter-assigned-to-me" className="text-sm font-medium text-gray-700 cursor-pointer">
+                Exibir blocos direcionados para mim
+              </label>
+            </div>
+            <div className="flex-1 sm:max-w-xs">
+              <select
+                value={filterSetor}
+                onChange={(e) => setFilterSetor(e.target.value)}
+                className="input w-full text-sm"
+              >
+                <option value="">Todos os setores</option>
+                {setores.map((setor) => (
+                  <option key={setor} value={setor}>{setor}</option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:max-w-xs">
+              <select
+                value={filterColumn}
+                onChange={(e) => setFilterColumn(e.target.value as ColumnId | '')}
+                className="input w-full text-sm"
+              >
+                <option value="">Todas as colunas</option>
+                {columns.map((col) => (
+                  <option key={col} value={col}>{COLUMN_LABELS[col]}</option>
+                ))}
+              </select>
+            </div>
+            {(filterAssignedToMe || filterSetor || filterColumn) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setFilterAssignedToMe(false)
+                  setFilterSetor('')
+                  setFilterColumn('')
+                }}
+                className="shrink-0"
+              >
+                Limpar filtros
+              </Button>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {columns.map((colId) => {
-            const colCards = cards.filter((c) => c.column === colId)
+            const colCards = filteredCards.filter((c) => c.column === colId)
             return (
               <div
                 key={colId}
@@ -236,7 +346,7 @@ export default function AdminKanbanPage() {
                   {colCards.map((card) => (
                     <div
                       key={card.id}
-                      className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow"
+                      className={`rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow ${getPrioridadeCardClass(card.prioridade)}`}
                     >
                       <div className="flex items-start gap-2">
                         <GripVertical className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
@@ -337,6 +447,19 @@ export default function AdminKanbanPage() {
               </select>
             </div>
             <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Prioridade</label>
+              <select
+                value={addForm.prioridade}
+                onChange={(e) => setAddForm((f) => ({ ...f, prioridade: e.target.value as PrioridadeId | '' }))}
+                className="input w-full"
+              >
+                <option value="">— Nenhuma</option>
+                {PRIORIDADE_OPCOES.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Coluna</label>
               <select
                 value={addForm.column}
@@ -397,6 +520,19 @@ export default function AdminKanbanPage() {
                   <option value="">— Não atribuído</option>
                   {users.map((u) => (
                     <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Prioridade</label>
+                <select
+                  value={editForm.prioridade}
+                  onChange={(e) => setEditForm((f) => ({ ...f, prioridade: e.target.value as PrioridadeId | '' }))}
+                  className="input w-full"
+                >
+                  <option value="">— Nenhuma</option>
+                  {PRIORIDADE_OPCOES.map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
                   ))}
                 </select>
               </div>

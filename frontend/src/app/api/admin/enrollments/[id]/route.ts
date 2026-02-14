@@ -46,6 +46,7 @@ function buildUpdateData(body: Record<string, unknown>) {
     nomeEmpresaOuIndicador,
     escolaMatricula,
     escolaMatriculaOutro,
+    cancelamentoAntecedenciaHoras,
     observacoes,
     status,
     activationDate,
@@ -89,6 +90,12 @@ function buildUpdateData(body: Record<string, unknown>) {
   }
   if (escolaMatriculaOutro !== undefined) {
     update.escolaMatriculaOutro = escolaMatriculaOutro ? String(escolaMatriculaOutro).trim() : null
+  }
+  if (cancelamentoAntecedenciaHoras !== undefined && cancelamentoAntecedenciaHoras !== '') {
+    const horas = Number(cancelamentoAntecedenciaHoras)
+    if (!isNaN(horas) && horas >= 0) {
+      update.cancelamentoAntecedenciaHoras = horas
+    }
   }
   if (observacoes !== undefined) update.observacoes = observacoes ? String(observacoes).trim() : null
   if (status !== undefined && VALID_STATUSES.includes(String(status))) update.status = status
@@ -238,6 +245,52 @@ export async function PATCH(
     console.error('[api/admin/enrollments/[id]] Erro ao processar ação:', error)
     return NextResponse.json(
       { ok: false, message: 'Erro ao processar ação no enrollment' },
+      { status: 500 }
+    )
+  }
+}
+
+/** DELETE: excluir matrícula (aluno). Só é permitido se não houver nenhuma aula registrada. */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const auth = await requireAdmin(_request)
+    if (!auth.authorized) {
+      return NextResponse.json(
+        { ok: false, message: auth.message || 'Não autorizado' },
+        { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
+      )
+    }
+
+    const { id } = params
+    const existing = await prisma.enrollment.findUnique({ where: { id } })
+    if (!existing) {
+      return NextResponse.json(
+        { ok: false, message: 'Matrícula não encontrada' },
+        { status: 404 }
+      )
+    }
+
+    const lessonCount = await prisma.lesson.count({ where: { enrollmentId: id } })
+    if (lessonCount > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            'Não é possível excluir o aluno pois existem aulas registradas. Cancele ou exclua todas as aulas antes de excluir a matrícula.',
+        },
+        { status: 400 }
+      )
+    }
+
+    await prisma.enrollment.delete({ where: { id } })
+    return NextResponse.json({ ok: true, data: { deleted: id } })
+  } catch (error) {
+    console.error('[api/admin/enrollments/[id] DELETE] Erro ao excluir matrícula:', error)
+    return NextResponse.json(
+      { ok: false, message: 'Erro ao excluir matrícula' },
       { status: 500 }
     )
   }

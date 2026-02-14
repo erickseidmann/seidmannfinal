@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
+import Toast from '@/components/admin/Toast'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { MessageCircle, Send, Users, BookOpen, Calendar, Wallet, GraduationCap, ArrowLeft } from 'lucide-react'
 
@@ -109,6 +110,7 @@ export default function ProfessorChatPage() {
   const [subjectTab, setSubjectTab] = useState<string | null>(null)
   const [subjectUsers, setSubjectUsers] = useState<ChatUser[]>([])
   const [subjectLoading, setSubjectLoading] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const fetchConversations = useCallback(async () => {
@@ -223,7 +225,7 @@ export default function ProfessorChatPage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        alert(json.message || 'Erro ao criar conversa')
+        setToast({ message: json.message || 'Erro ao criar conversa', type: 'error' })
         return
       }
       const conv = json.data.conversation
@@ -542,6 +544,11 @@ export default function ProfessorChatPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Toast de notificação */}
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      )}
     </div>
   )
 }
