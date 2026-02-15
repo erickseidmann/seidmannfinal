@@ -28,7 +28,7 @@ export async function createUniqueEnrollmentCode(): Promise<string> {
     
     // Verificar se já existe
     const existing = await prisma.enrollment.findUnique({
-      where: { code },
+      where: { trackingCode: code },
     })
 
     if (!existing) {

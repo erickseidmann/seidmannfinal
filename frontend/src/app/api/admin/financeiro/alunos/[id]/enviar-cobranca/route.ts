@@ -20,12 +20,25 @@ function nextDueDateFromDay(dayOfMonth: number, afterDate?: Date): Date {
   return new Date(year, month + 1, nextSafe)
 }
 
-function buildTemplate(enrollment: {
+type TemplateEnrollment = {
   nome: string
   valorMensalidade: number | null
   diaPagamento: number | null
   paymentInfo: { valorMensal: unknown; dueDate: Date | null; dueDay: number | null; paidAt: Date | null } | null
-}) {
+}
+
+function toTemplateEnrollment(enrollment: { nome: string; valorMensalidade: unknown; diaPagamento: number | null; paymentInfo: { valorMensal: unknown; dueDate: Date | null; dueDay: number | null; paidAt: Date | null } | null }): TemplateEnrollment {
+  return {
+    nome: enrollment.nome,
+    valorMensalidade: enrollment.valorMensalidade != null ? Number(enrollment.valorMensalidade) : null,
+    diaPagamento: enrollment.diaPagamento,
+    paymentInfo: enrollment.paymentInfo
+      ? { valorMensal: enrollment.paymentInfo.valorMensal, dueDate: enrollment.paymentInfo.dueDate, dueDay: enrollment.paymentInfo.dueDay, paidAt: enrollment.paymentInfo.paidAt }
+      : null,
+  }
+}
+
+function buildTemplate(enrollment: TemplateEnrollment) {
   const valorMensal = enrollment.valorMensalidade ?? (enrollment.paymentInfo?.valorMensal as number | null)
   const valorStr = valorMensal != null ? `R$ ${Number(valorMensal).toFixed(2).replace('.', ',')}` : 'conforme combinado'
   const pi = enrollment.paymentInfo
@@ -84,7 +97,7 @@ export async function GET(
         { status: 400 }
       )
     }
-    const { subject, text } = buildTemplate(enrollment)
+    const { subject, text } = buildTemplate(toTemplateEnrollment(enrollment))
     return NextResponse.json({ ok: true, data: { to: email, subject, text } })
   } catch (error) {
     console.error('[api/admin/financeiro/alunos/[id]/enviar-cobranca GET]', error)
@@ -136,12 +149,12 @@ export async function POST(
         subject = String(body.subject).trim()
         text = String(body.text).trim()
       } else {
-        const t = buildTemplate(enrollment)
+        const t = buildTemplate(toTemplateEnrollment(enrollment))
         subject = t.subject
         text = t.text
       }
     } catch {
-      const t = buildTemplate(enrollment)
+      const t = buildTemplate(toTemplateEnrollment(enrollment))
       subject = t.subject
       text = t.text
     }

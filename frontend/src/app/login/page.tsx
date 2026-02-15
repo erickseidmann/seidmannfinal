@@ -73,13 +73,22 @@ export default function LoginPage() {
         }),
       })
 
-      const json: ApiResponse<any> = await response.json()
+      let json: ApiResponse<any>
+      try {
+        const text = await response.text()
+        json = text ? (JSON.parse(text) as ApiResponse<any>) : { ok: false, message: 'Resposta vazia' }
+      } catch {
+        setLoginError(response.status >= 500 ? 'Erro no servidor. Verifique se o banco de dados está ativo e tente novamente.' : 'Erro ao processar resposta.')
+        setIsSubmitting(false)
+        return
+      }
 
       if (!response.ok || !json.ok) {
+        const msg = (json as { message?: string }).message
         if (response.status === 403) {
-          setLoginError(json.message || 'Acesso ainda não liberado. Finalize contrato/pagamento ou aguarde confirmação.')
+          setLoginError(msg || 'Acesso ainda não liberado. Finalize contrato/pagamento ou aguarde confirmação.')
         } else {
-          setLoginError(json.message || 'Erro ao fazer login')
+          setLoginError(msg || 'Erro ao fazer login')
         }
         setIsSubmitting(false)
         return

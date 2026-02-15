@@ -45,10 +45,12 @@ export async function GET(request: NextRequest) {
     else if (notaParam === '2') notaFilter = { nota: 2 }
     else if (notaParam === '45') notaFilter = { nota: { in: [4, 5] } }
     
-    const statusFilter = statusParam ? { status: statusParam } : {}
+    const statusFilter = statusParam && (statusParam === 'ACTIVE' || statusParam === 'INACTIVE' || statusParam === 'PENDING' || statusParam === 'BLOCKED')
+      ? { status: statusParam as 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'BLOCKED' }
+      : {}
 
     const teachers = await prisma.teacher.findMany({
-      where: { ...searchFilter, ...notaFilter, ...statusFilter },
+      where: { ...searchFilter, ...notaFilter, ...statusFilter } as import('@prisma/client').Prisma.TeacherWhereInput,
       ...(limit ? { take: limit } : {}),
       include: {
         user: {
@@ -183,8 +185,8 @@ export async function POST(request: NextRequest) {
         infosPagamento: infosPagamento?.trim() || null,
         nota: nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null,
         status: status || 'ACTIVE',
-        idiomasFala: arrFala.length > 0 ? arrFala : null,
-        idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : null,
+        idiomasFala: arrFala.length > 0 ? arrFala : undefined,
+        idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : undefined,
       },
     })
 

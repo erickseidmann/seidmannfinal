@@ -105,25 +105,46 @@ const CURSO_LABELS: Record<string, string> = {
   INGLES_E_ESPANHOL: 'Inglês e Espanhol',
 }
 
-const emptyForm = {
+type FormState = {
+  lessonId: string
+  status: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  presence: string
+  lessonType: string
+  curso: string
+  tempoAulaMinutos: string | number
+  book: string
+  lastPage: string
+  assignedHomework: string
+  homeworkDone: string
+  conversationDescription: string
+  notes: string
+  notesForStudent: string
+  notesForParents: string
+  gradeGrammar: string | number
+  gradeSpeaking: string | number
+  gradeListening: string | number
+  gradeUnderstanding: string | number
+}
+
+const emptyForm: FormState = {
   lessonId: '',
-  status: 'CONFIRMED' as const,
-  presence: 'PRESENTE' as const,
-  lessonType: 'NORMAL' as const,
-  curso: '' as string,
-  tempoAulaMinutos: '' as string | number,
+  status: 'CONFIRMED',
+  presence: 'PRESENTE',
+  lessonType: 'NORMAL',
+  curso: '',
+  tempoAulaMinutos: '',
   book: '',
   lastPage: '',
   assignedHomework: '',
-  homeworkDone: '' as string,
+  homeworkDone: '',
   conversationDescription: '',
   notes: '',
   notesForStudent: '',
   notesForParents: '',
-  gradeGrammar: '' as string | number,
-  gradeSpeaking: '' as string | number,
-  gradeListening: '' as string | number,
-  gradeUnderstanding: '' as string | number,
+  gradeGrammar: '',
+  gradeSpeaking: '',
+  gradeListening: '',
+  gradeUnderstanding: '',
 }
 
 /** Rótulo da aula no select: grupo = nome do grupo, particular = nome do aluno */
@@ -143,7 +164,7 @@ export default function AdminRegistrosAulasPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState(emptyForm)
+  const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [studentsPresence, setStudentsPresence] = useState<{ enrollmentId: string; presence: string }[]>([])
@@ -256,7 +277,7 @@ export default function AdminRegistrosAulasPage() {
     setEditingId(record.id)
     setForm({
       lessonId: record.lessonId,
-      status: record.status,
+      status: (record.status === 'CANCELLED' || record.status === 'REPOSICAO' ? record.status : 'CONFIRMED'),
       presence: record.presence,
       lessonType: record.lessonType,
       curso: record.curso || '',
@@ -444,7 +465,7 @@ export default function AdminRegistrosAulasPage() {
             <Button variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button variant="primary" onClick={handleSubmit} disabled={saving}>
+            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving}>
               {saving ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />

@@ -99,7 +99,8 @@ export default function CadastroPage() {
       const json: ApiResponse<CadastroResponse['data']> = await response.json()
 
       if (!response.ok || !json.ok) {
-        throw new Error(json.message || 'Erro ao criar conta')
+        const msg = (json as { message?: string }).message
+        throw new Error(msg || 'Erro ao criar conta')
       }
 
       // Sucesso - redirecionar para /contrato

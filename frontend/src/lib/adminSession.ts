@@ -28,7 +28,7 @@ export interface AdminTokenPayload {
 async function signAdminToken(payload: AdminTokenPayload): Promise<string> {
   const secret = new TextEncoder().encode(SECRET_KEY)
   
-  const token = await new SignJWT(payload)
+  const token = await new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${TOKEN_EXPIRY_DAYS}d`)

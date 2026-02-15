@@ -16,6 +16,7 @@ import {
   isSameDayInTZ,
   getDateInTZ,
   getTimeInTZ,
+  ymdInTZ,
   formatWeekdayInTZ,
   formatMonthInTZ,
 } from '@/lib/datetime'
@@ -107,6 +108,13 @@ function isToday(d: Date): boolean {
   return isSameDayInTZ(d, new Date())
 }
 
+function toDateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function getLessonStudentLabel(l: Lesson): string {
   const enr = l.enrollment
   if (enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()) {
@@ -151,16 +159,20 @@ export default function CalendarioProfessorPage() {
   const [teacherSlots, setTeacherSlots] = useState<Array<{ dayOfWeek: number; startMinutes: number; endMinutes: number }>>([])
   const [currentTeacherId, setCurrentTeacherId] = useState<string | null>(null)
 
+  const [holidays, setHolidays] = useState<Set<string>>(new Set())
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null)
   const [modalStep, setModalStep] = useState<ModalStep>('choose')
   const [ultimaRecord, setUltimaRecord] = useState<UltimaRecord | null>(null)
   const [ultimaLoading, setUltimaLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
+  type FormStatus = 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  type FormPresence = 'PRESENTE' | 'NAO_COMPARECEU' | 'ATRASADO'
+  type FormLessonType = 'NORMAL' | 'CONVERSAÇÃO' | 'REVISAO' | 'AVALIACAO'
   const emptyForm = {
-    status: 'CONFIRMED' as const,
-    presence: 'PRESENTE' as const,
-    lessonType: 'NORMAL' as const,
+    status: 'CONFIRMED' as FormStatus,
+    presence: 'PRESENTE' as FormPresence,
+    lessonType: 'NORMAL' as FormLessonType,
     curso: '' as string,
     tempoAulaMinutos: '' as string | number,
     book: '',
@@ -282,6 +294,62 @@ export default function CalendarioProfessorPage() {
     fetchLessons()
   }, [fetchLessons])
 
+  const getHolidaysRange = useCallback(() => {
+    let start: Date
+    let end: Date
+    if (view === 'month') {
+      start = getStartOfMonth(currentDate)
+      const nextMonth = addMonths(currentDate, 1)
+      end = addDays(nextMonth, -1)
+    } else if (view === 'week') {
+      start = getStartOfWeek(currentDate)
+      end = addDays(start, 6)
+    } else {
+      start = new Date(currentDate)
+      start.setHours(0, 0, 0, 0)
+      end = new Date(currentDate)
+      end.setHours(23, 59, 59, 999)
+    }
+    return { start: toDateKey(start), end: toDateKey(end) }
+  }, [view, currentDate])
+
+  const fetchHolidays = useCallback(async () => {
+    const { start, end } = getHolidaysRange()
+    try {
+      const res = await fetch(`/api/professor/holidays?start=${start}&end=${end}`, { credentials: 'include' })
+      if (res.status === 401 || res.status === 403) return
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.holidays)) {
+        setHolidays(new Set(json.data.holidays))
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, [getHolidaysRange])
+
+  useEffect(() => {
+    fetchHolidays()
+  }, [fetchHolidays])
+
+  const selectedLessonIsHoliday = useMemo(() => {
+    if (!selectedLesson) return false
+    const lessonDate = new Date(selectedLesson.startAt)
+    return holidays.has(toDateKey(lessonDate))
+  }, [selectedLesson, holidays])
+
+  // Aula futura = dia futuro OU (hoje e horário ainda não chegou) — horário São Paulo
+  const selectedLessonIsFuture = useMemo(() => {
+    if (!selectedLesson) return false
+    const lessonDay = ymdInTZ(selectedLesson.startAt)
+    const today = ymdInTZ(new Date())
+    if (lessonDay > today) return true
+    if (lessonDay < today) return false
+    const lessonTime = getTimeInTZ(selectedLesson.startAt)
+    const nowTime = getTimeInTZ(new Date().toISOString())
+    // Só permitir a partir de 1 minuto após o início (ex.: aula 17:00 → a partir de 17:01)
+    return nowTime.hour < lessonTime.hour || (nowTime.hour === lessonTime.hour && nowTime.minute <= lessonTime.minute)
+  }, [selectedLesson])
+
   // Ouvir evento de atualização de aulas (quando solicitação é aprovada)
   useEffect(() => {
     const handleLessonsUpdated = () => {
@@ -344,9 +412,9 @@ export default function CalendarioProfessorPage() {
   const handlePreencherUltima = () => {
     if (!ultimaRecord) return
     setForm({
-      status: ultimaRecord.status as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
-      presence: ultimaRecord.presence as 'PRESENTE' | 'NAO_COMPARECEU' | 'ATRASADO',
-      lessonType: ultimaRecord.lessonType as 'NORMAL' | 'CONVERSAÇÃO' | 'REVISAO' | 'AVALIACAO',
+      status: (['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(ultimaRecord.status) ? ultimaRecord.status : 'CONFIRMED') as FormStatus,
+      presence: (['PRESENTE', 'NAO_COMPARECEU', 'ATRASADO'].includes(ultimaRecord.presence) ? ultimaRecord.presence : 'PRESENTE') as FormPresence,
+      lessonType: (['NORMAL', 'CONVERSAÇÃO', 'REVISAO', 'AVALIACAO'].includes(ultimaRecord.lessonType) ? ultimaRecord.lessonType : 'NORMAL') as FormLessonType,
       curso: ultimaRecord.curso || '',
       tempoAulaMinutos: ultimaRecord.tempoAulaMinutos ?? selectedLesson?.durationMinutes ?? '',
       book: ultimaRecord.book || '',
@@ -373,6 +441,14 @@ export default function CalendarioProfessorPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedLesson) return
+    if (selectedLessonIsHoliday) {
+      setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
+      return
+    }
+    if (selectedLessonIsFuture) {
+      setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
+      return
+    }
     setSaving(true)
     try {
       const payload = {
@@ -588,16 +664,17 @@ export default function CalendarioProfessorPage() {
               week.map((day, di) => {
                 const otherMonth = !isSameMonth(day, currentDate)
                 const dayLessons = getLessonsForDay(day)
+                const isHoliday = holidays.has(toDateKey(day))
                 return (
                   <div
                     key={`${wi}-${di}`}
                     className={`min-h-[72px] sm:min-h-[100px] md:min-h-[120px] border-b border-r border-gray-100 p-1 sm:p-2 ${
-                      otherMonth ? 'bg-gray-50/50' : di === 0 ? 'bg-red-50' : 'bg-white'
+                      otherMonth ? 'bg-gray-50/50' : isHoliday ? 'bg-amber-50/80' : di === 0 ? 'bg-red-50' : 'bg-white'
                     } ${di === 6 ? 'border-r-0' : ''}`}
                   >
                     <span
                       className={`inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm ${
-                        isToday(day) ? 'bg-brand-orange text-white font-semibold' : otherMonth ? 'text-gray-400' : di === 0 ? 'text-red-700' : 'text-gray-800'
+                        isToday(day) ? 'bg-brand-orange text-white font-semibold' : otherMonth ? 'text-gray-400' : isHoliday ? 'text-amber-700' : di === 0 ? 'text-red-700' : 'text-gray-800'
                       }`}
                     >
                       {day.getDate()}
@@ -629,12 +706,15 @@ export default function CalendarioProfessorPage() {
           <div className="min-w-[600px] sm:min-w-0">
             <div className="grid grid-cols-8 border-b border-gray-200 bg-gray-50">
               <div className="py-2 text-xs font-semibold text-gray-500 border-r border-gray-200 pl-2 w-12 sm:w-14 shrink-0">{t('professor.calendar.time')}</div>
-              {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => (
-                <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold min-w-0 ${d.getDay() === 0 ? 'text-red-700 bg-red-50' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
+              {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => {
+                const isHoliday = holidays.has(toDateKey(d))
+                return (
+                <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold min-w-0 ${d.getDay() === 0 ? 'text-red-700 bg-red-50' : isHoliday ? 'text-amber-700 bg-amber-50/80' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
                   <div className="truncate">{DIAS_SEMANA[d.getDay()]}</div>
                   <div className="font-normal">{d.getDate()}</div>
                 </div>
-              ))}
+              )
+              })}
             </div>
             <div className="max-h-[60vh] sm:max-h-[70vh] overflow-y-auto overflow-x-auto">
               {timeSlots.map((slot) => (
@@ -644,8 +724,9 @@ export default function CalendarioProfessorPage() {
                     const d = addDays(weekStart, i)
                     const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
                     const isAvailable = isTeacherAvailableAtSlot(d, slot.hour, slot.minute)
+                    const dayIsHoliday = holidays.has(toDateKey(d))
                     return (
-                      <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${d.getDay() === 0 ? 'bg-red-50' : ''}`}>
+                      <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${d.getDay() === 0 ? 'bg-red-50' : dayIsHoliday ? 'bg-amber-50/50' : ''}`}>
                         {!isAvailable && d.getDay() !== 0 && (
                           <span className="text-[10px] text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
                         )}
@@ -671,10 +752,10 @@ export default function CalendarioProfessorPage() {
 
       {view === 'day' && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-w-0">
-          <div className={`border-b border-gray-200 px-3 sm:px-4 py-2 text-sm font-semibold ${currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-700'}`}>
+          <div className={`border-b border-gray-200 px-3 sm:px-4 py-2 text-sm font-semibold ${currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/80 text-amber-800' : 'bg-gray-50 text-gray-700'}`}>
             {DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}
           </div>
-          <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${currentDate.getDay() === 0 ? 'bg-red-50/30' : ''}`}>
+          <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${currentDate.getDay() === 0 ? 'bg-red-50/30' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/20' : ''}`}>
             {timeSlots.map((slot) => {
               const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
               const isAvailable = isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute)
@@ -721,12 +802,17 @@ export default function CalendarioProfessorPage() {
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                 {t('professor.calendar.viewLastClass')}
               </Button>
-              {!selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
+              {!selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && !selectedLessonIsHoliday && !selectedLessonIsFuture && (
                 <Button variant="primary" onClick={handleRegistrar} className="flex-1">
                   <ClipboardList className="w-4 h-4 mr-2" />
                   {t('professor.calendar.registerClass')}
                 </Button>
               )}
+            {selectedLessonIsFuture && !selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800 w-full">
+                {t('professor.calendar.noFutureLessonRecord')}
+              </div>
+            )}
             </div>
           ) : modalStep === 'ver-ultima' ? (
             <Button variant="outline" onClick={() => setModalStep('choose')}>
@@ -743,7 +829,7 @@ export default function CalendarioProfessorPage() {
                   {t('professor.calendar.fillFromLast')}
                 </Button>
               )}
-              <Button variant="primary" onClick={handleSubmit} disabled={saving}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonIsHoliday || selectedLessonIsFuture}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 {saving ? t('professor.calendar.saving') : t('professor.calendar.createRecord')}
               </Button>
@@ -765,6 +851,11 @@ export default function CalendarioProfessorPage() {
             {selectedLesson.record && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                 {t('professor.calendar.hasRecordNotice')}
+              </div>
+            )}
+            {selectedLessonIsHoliday && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+                {t('professor.calendar.noWorkOnHolidays')}
               </div>
             )}
           </div>
@@ -803,6 +894,16 @@ export default function CalendarioProfessorPage() {
 
         {modalStep === 'registrar' && selectedLesson && (
           <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+            {selectedLessonIsHoliday && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+                {t('professor.calendar.noWorkOnHolidays')}
+              </div>
+            )}
+            {selectedLessonIsFuture && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+                {t('professor.calendar.noFutureLessonRecord')}
+              </div>
+            )}
             <p className="text-sm text-gray-600">
               {t('professor.calendar.modalClass')}: <strong>{formatDateTimeInTZ(selectedLesson.startAt, dateLocale)}</strong> — {getLessonStudentLabel(selectedLesson)}
             </p>

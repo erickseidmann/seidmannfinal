@@ -14,7 +14,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 interface StudentAlertItem {
@@ -240,6 +240,7 @@ export default function AdminAlunosPage() {
   const [createAlertModalStudent, setCreateAlertModalStudent] = useState<Student | null>(null)
   const [newAlertForm, setNewAlertForm] = useState({ message: '', level: 'INFO' })
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; variant?: 'danger'; confirmLabel?: string } | null>(null)
+  const [sendAccessLoading, setSendAccessLoading] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importLoading, setImportLoading] = useState(false)
@@ -757,6 +758,41 @@ export default function AdminAlunosPage() {
     })
   }
 
+  const handleSendAccessToAll = () => {
+    setConfirmModal({
+      title: 'Liberar acesso para alunos sem conta',
+      message:
+        'Será enviado um e-mail apenas para os alunos que ainda não têm conta na plataforma (login e senha padrão). Quem já tem acesso não receberá e-mail. Para cada aluno sem conta, o acesso será criado e o e-mail enviado. Deseja continuar?',
+      confirmLabel: 'Enviar e-mails',
+      onConfirm: () => {
+        setSendAccessLoading(true)
+        ;(async () => {
+          try {
+            const res = await fetch('/api/admin/enrollments/send-access-emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+            })
+            const json = await res.json()
+            if (res.ok && json.ok) {
+              const data = json.data
+              let msg = data?.message ?? `E-mails enviados: ${data?.sent ?? 0} de ${data?.total ?? 0}.`
+              if (data?.errors?.length) msg += ` Erros: ${data.errors.slice(0, 3).join('; ')}${data.errors.length > 3 ? '...' : ''}`
+              setToast({ message: msg, type: 'success' })
+              fetchStudents()
+            } else {
+              setToast({ message: json.message || 'Erro ao enviar e-mails', type: 'error' })
+            }
+          } catch {
+            setToast({ message: 'Erro ao enviar e-mails de acesso', type: 'error' })
+          } finally {
+            setSendAccessLoading(false)
+          }
+        })()
+      },
+    })
+  }
+
   const handleDeleteLast10Min = () => {
     setConfirmModal({
       title: 'Excluir alunos dos últimos 10 minutos',
@@ -958,7 +994,7 @@ export default function AdminAlunosPage() {
       case 'criadoEm':
         return s.criadoEm ?? ''
       default:
-        return (s as Record<string, unknown>)[key] as string | number ?? ''
+        return (s as unknown as Record<string, unknown>)[key] as string | number ?? ''
     }
   }
 
@@ -1370,6 +1406,17 @@ export default function AdminAlunosPage() {
             <p className="text-sm text-gray-600 mt-1">Lista de alunos e matrículas do instituto</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={handleSendAccessToAll}
+              variant="outline"
+              size="md"
+              className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
+              title="Enviar e-mail de acesso (login e senha padrão) para todos os alunos"
+              disabled={sendAccessLoading}
+            >
+              {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              Liberar acesso para todos alunos
+            </Button>
             <Button
               onClick={handleDeleteLast10Min}
               variant="outline"
@@ -1798,7 +1845,7 @@ export default function AdminAlunosPage() {
               <Button variant="outline" onClick={() => { setIsModalOpen(false); setEditingStudent(null) }}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSubmit} disabled={submitLoading}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={submitLoading}>
                 {submitLoading ? 'Salvando...' : editingStudent ? 'Salvar' : 'Adicionar'}
               </Button>
             </>
@@ -2391,7 +2438,7 @@ export default function AdminAlunosPage() {
                 </Button>
                 <Button
                   variant="primary"
-                  onClick={(e) => handleCreateAlertSubmit(e as unknown as React.FormEvent)}
+                  onClick={() => void handleCreateAlertSubmit({ preventDefault: () => {} } as React.FormEvent)}
                 >
                   Criar
                 </Button>
@@ -2444,7 +2491,7 @@ export default function AdminAlunosPage() {
               {importFile && (
                 <Button
                   variant="primary"
-                  onClick={(e) => handleImportSubmit(e)}
+                  onClick={() => void handleImportSubmit({ preventDefault: () => {} } as React.FormEvent)}
                   disabled={importLoading}
                   className="flex items-center gap-2"
                 >

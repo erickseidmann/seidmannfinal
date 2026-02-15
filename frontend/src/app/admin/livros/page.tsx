@@ -712,8 +712,8 @@ export default function AdminLivrosPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={handleCreateBook}
-                disabled={createBookLoading || !createBookForm.nome.trim()}
+onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormEvent)}
+                  disabled={createBookLoading || !createBookForm.nome.trim()}
               >
                 {createBookLoading ? 'Salvando...' : 'Cadastrar'}
               </Button>
@@ -828,8 +828,8 @@ export default function AdminLivrosPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={handleEditBook}
-                disabled={editBookLoading || !editBookForm.nome.trim()}
+onClick={() => void handleEditBook({ preventDefault: () => {} } as React.FormEvent)}
+                 disabled={editBookLoading || !editBookForm.nome.trim()}
               >
                 {editBookLoading ? 'Salvando...' : 'Salvar'}
               </Button>
@@ -967,7 +967,7 @@ export default function AdminLivrosPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={handleRelease}
+                onClick={() => void handleRelease({ preventDefault: () => {} } as React.FormEvent)}
                 disabled={
                   releaseLoading ||
                   releaseForm.selectedUserIds.length === 0 ||
@@ -1096,7 +1096,7 @@ export default function AdminLivrosPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={handleBulkRelease}
+                onClick={() => void handleBulkRelease({ preventDefault: () => {} } as React.FormEvent)}
                 disabled={
                   bulkReleaseLoading ||
                   bulkReleaseForm.selectedUserIds.length === 0 ||

@@ -404,7 +404,7 @@ export default function AdminKanbanPage() {
           footer={
             <>
               <Button variant="outline" onClick={() => setAddModalOpen(false)}>Cancelar</Button>
-              <Button variant="primary" onClick={handleAdd} disabled={!addForm.title.trim() || addSaving}>
+              <Button variant="primary" onClick={() => void handleAdd({ preventDefault: () => {} } as React.FormEvent)} disabled={!addForm.title.trim() || addSaving}>
                 {addSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Adicionar
               </Button>
@@ -482,7 +482,7 @@ export default function AdminKanbanPage() {
           footer={
             <>
               <Button variant="outline" onClick={() => setEditingCard(null)}>Cancelar</Button>
-              <Button variant="primary" onClick={updateCard} disabled={!editForm.title.trim() || editSaving}>
+              <Button variant="primary" onClick={() => void updateCard({ preventDefault: () => {} } as React.FormEvent)} disabled={!editForm.title.trim() || editSaving}>
                 {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Salvar
               </Button>

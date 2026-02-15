@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
         role: user.role,
         status: user.status,
       })
-      const adminPages = Array.isArray(user.adminPages) ? user.adminPages : undefined
+      const adminPages: string[] | undefined = Array.isArray(user.adminPages) ? (user.adminPages as string[]) : undefined
       await setSessionCookie(response, {
         sub: user.id,
         role: 'ADMIN',

@@ -16,6 +16,7 @@ import {
   isSameDayInTZ,
   getDateInTZ,
   getTimeInTZ,
+  ymdInTZ,
 } from '@/lib/datetime'
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -86,6 +87,10 @@ function isSameMonth(a: Date, b: Date): boolean {
 
 function isToday(d: Date): boolean {
   return isSameDayInTZ(d, new Date())
+}
+
+function toDateKey(d: Date): string {
+  return ymdInTZ(d, 'America/Sao_Paulo')
 }
 
 const statusLabel: Record<string, string> = {
@@ -221,34 +226,40 @@ export default function CalendarioAlunoPage() {
     return () => window.removeEventListener('lessons-updated', handleLessonsUpdated)
   }, [fetchLessons, fetchLessonRequests])
 
-  // Buscar feriados quando abrir modal e inicializar calendário
+  // Buscar feriados para um intervalo (calendário principal e modal de troca)
+  const fetchHolidays = useCallback(async (start: Date, end: Date) => {
+    const startStr = start.toISOString().split('T')[0]
+    const endStr = end.toISOString().split('T')[0]
+    try {
+      const res = await fetch(`/api/student/holidays?start=${startStr}&end=${endStr}`, {
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.holidays)) {
+        setHolidays(new Set(json.data.holidays))
+      }
+    } catch {
+      setHolidays(new Set())
+    }
+  }, [])
+
+  // Feriados no calendário principal (período do mês exibido)
+  useEffect(() => {
+    fetchHolidays(periodStart, periodEnd)
+  }, [periodStart, periodEnd, fetchHolidays])
+
+  // Ao abrir modal de troca: definir mês do calendário e feriados do intervalo de seleção
   useEffect(() => {
     if (showRequestModal && selectedLesson) {
+      setCalendarMonth(new Date(selectedLesson.startAt))
       const lessonDate = new Date(selectedLesson.startAt)
-      // Inicializar calendário no mês da aula original
-      setCalendarMonth(new Date(lessonDate))
-      
       const start = new Date(lessonDate)
       start.setMonth(start.getMonth() - 1)
       const end = new Date(lessonDate)
       end.setMonth(end.getMonth() + 4)
-      // Formatar datas como YYYY-MM-DD
-      const startStr = start.toISOString().split('T')[0]
-      const endStr = end.toISOString().split('T')[0]
-      fetch(`/api/admin/holidays?start=${startStr}&end=${endStr}`, {
-        credentials: 'include',
-      })
-        .then((res) => res.json())
-        .then((json) => {
-          if (json.ok && Array.isArray(json.data?.holidays)) {
-            setHolidays(new Set(json.data.holidays))
-          }
-        })
-        .catch(() => {})
-    } else {
-      setHolidays(new Set())
+      fetchHolidays(start, end)
     }
-  }, [showRequestModal, selectedLesson])
+  }, [showRequestModal, selectedLesson, fetchHolidays])
 
   // Buscar datas disponíveis do professor quando abrir modal de troca
   useEffect(() => {
@@ -520,11 +531,12 @@ export default function CalendarioAlunoPage() {
             week.map((day, di) => {
               const otherMonth = !isSameMonth(day, currentDate)
               const dayLessons = getLessonsForDay(day)
+              const isHoliday = holidays.has(toDateKey(day))
               return (
                 <div
                   key={`${wi}-${di}`}
                   className={`min-h-[100px] sm:min-h-[120px] border-b border-r border-gray-100 p-2 ${
-                    otherMonth ? 'bg-gray-50/50' : day.getDay() === 0 ? 'bg-red-50' : 'bg-white'
+                    otherMonth ? 'bg-gray-50/50' : isHoliday ? 'bg-amber-50/80' : day.getDay() === 0 ? 'bg-red-50' : 'bg-white'
                   } ${di === 6 ? 'border-r-0' : ''}`}
                 >
                   <span
@@ -533,13 +545,18 @@ export default function CalendarioAlunoPage() {
                         ? 'bg-brand-orange text-white font-semibold'
                         : otherMonth
                           ? 'text-gray-400'
-                          : day.getDay() === 0
-                            ? 'text-red-700'
-                            : 'text-gray-800'
+                          : isHoliday
+                            ? 'text-amber-700'
+                            : day.getDay() === 0
+                              ? 'text-red-700'
+                              : 'text-gray-800'
                     }`}
                   >
                     {day.getDate()}
                   </span>
+                  {isHoliday && !otherMonth && (
+                    <p className="text-[10px] sm:text-xs font-medium text-amber-700 mt-0.5">Feriado</p>
+                  )}
                   <div className="mt-1 space-y-0.5">
                     {dayLessons.slice(0, 4).map((l) => (
                       <button
@@ -603,6 +620,15 @@ export default function CalendarioAlunoPage() {
                 }
                 
                 const podeReagendar = diffHoras >= horasAntecedencia
+                const aulaEmFeriado = holidays.has(toDateKey(new Date(selectedLesson.startAt)))
+                
+                if (aulaEmFeriado) {
+                  return (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                      Esta aula está em um feriado e não pode ser reagendada.
+                    </div>
+                  )
+                }
                 
                 if (!podeReagendar) {
                   return (
@@ -745,7 +771,7 @@ export default function CalendarioAlunoPage() {
             <div className="p-3 bg-blue-50 rounded-lg text-sm">
               <p><strong>Aula atual:</strong> {formatDateTimeInTZ(selectedLesson.startAt, 'pt-BR')}</p>
               <p><strong>Professor:</strong> {selectedLesson.teacher.nome}</p>
-              {holidays.has(new Date(selectedLesson.startAt).toISOString().split('T')[0]) && (
+              {holidays.has(toDateKey(new Date(selectedLesson.startAt))) && (
                 <p className="text-amber-700 font-semibold mt-2">
                   ⚠️ Esta aula está em um feriado e não pode ser reagendada
                 </p>
@@ -770,7 +796,7 @@ export default function CalendarioAlunoPage() {
                     ) : availableDates.length === 0 ? (
                       <div className="text-sm text-gray-500 space-y-1">
                         <p>Professor não possui horários disponíveis nos próximos 3 meses</p>
-                        {holidays.has(new Date(selectedLesson.startAt).toISOString().split('T')[0]) && (
+                        {holidays.has(toDateKey(new Date(selectedLesson.startAt))) && (
                           <p className="text-amber-700 font-semibold">⚠️ Esta aula está em um feriado e não pode ser reagendada</p>
                         )}
                       </div>
@@ -830,11 +856,12 @@ export default function CalendarioAlunoPage() {
                             
                             return days.map((day, idx) => {
                               const dateStr = day.toISOString().split('T')[0]
+                              const dateKey = toDateKey(day)
                               const isAvailable = availableDates.includes(dateStr)
                               const isCurrentMonth = day.getMonth() === calendarMonth.getMonth()
                               const isTodayDate = isToday(day)
                               const isSelected = selectedDate === dateStr
-                              const isHoliday = holidays.has(dateStr)
+                              const isHoliday = holidays.has(dateKey)
                               
                               // Verificar se é anterior à aula original
                               const lessonDate = selectedLesson ? new Date(selectedLesson.startAt) : null

@@ -303,16 +303,18 @@ Equipe Seidmann Institute`
       })
     } else {
         // Se negado, notificar aluno e enviar para gestão
-      const { diaSemana, data, horario } = formatarDataHora(new Date(lesson.startAt))
+      const originalLesson = lessonRequest.lesson
+      const enrollmentDenied = originalLesson.enrollment
+      const { diaSemana, data, horario } = formatarDataHora(new Date(originalLesson.startAt))
       
       const subject = 'Solicitação de alteração negada pelo professor'
-      const text = `Olá ${enrollment.nome || 'Aluno'},
+      const text = `Olá ${enrollmentDenied.nome || 'Aluno'},
 
 Infelizmente, sua solicitação de alteração de aula foi negada pelo professor.
 
 Aula original:
 ${diaSemana}, ${data} às ${horario}
-Professor: ${lesson.teacher.nome || 'N/A'}
+Professor: ${originalLesson.teacher.nome || 'N/A'}
 
 Sua solicitação foi encaminhada para a gestão, que entrará em contato para encontrar uma solução alternativa.
 
@@ -321,9 +323,9 @@ Sua solicitação foi encaminhada para a gestão, que entrará em contato para e
 Atenciosamente,
 Equipe Seidmann Institute`
 
-      if (enrollment.email) {
+      if (enrollmentDenied.email) {
         await sendEmail({
-          to: enrollment.email,
+          to: enrollmentDenied.email,
           subject,
           text,
         })

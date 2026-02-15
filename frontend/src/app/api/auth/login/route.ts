@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Comparar senha
-    const passwordMatch = await bcrypt.compare(password, user.passwordHash)
+    const passwordMatch = await bcrypt.compare(password, user.senha)
 
     if (!passwordMatch) {
       return NextResponse.json(
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       user: {
         id: user.id,
-        name: user.name,
+        name: user.nome,
         email: user.email,
         whatsapp: user.whatsapp,
       },

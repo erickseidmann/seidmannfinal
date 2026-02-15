@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const currentUserId = auth.session.userId
     const search = request.nextUrl.searchParams.get('search')?.trim() || ''
 
-    const where: { id?: { not: string }; role: unknown; status?: string } = {
+    const where: Prisma.UserWhereInput = {
       id: { not: currentUserId },
       role: { in: ['ADMIN', 'STUDENT'] }, // Professores não podem conversar com outros professores
     }
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
       where.OR = [
         { nome: { contains: search } },
         { email: { contains: search } },
-      ] as unknown[]
+      ]
     }
 
     const users = await prisma.user.findMany({

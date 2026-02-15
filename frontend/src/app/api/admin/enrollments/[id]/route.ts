@@ -156,6 +156,36 @@ export async function PATCH(
         )
       }
       const updateData = buildUpdateData(body) as any
+      const newEmail = updateData.email != null ? String(updateData.email).trim().toLowerCase() : null
+      const currentEmail = (enrollment.email || '').trim().toLowerCase()
+
+      // Um e-mail só pode estar vinculado a um aluno: não permitir e-mail já usado por outra matrícula ou por outro usuário (admin/professor)
+      if (newEmail && newEmail !== currentEmail) {
+        const outroAluno = await prisma.enrollment.findFirst({
+          where: {
+            email: newEmail,
+            id: { not: id },
+          },
+          select: { id: true },
+        })
+        if (outroAluno) {
+          return NextResponse.json(
+            { ok: false, message: 'Este e-mail já está vinculado a outro aluno. Um e-mail só pode estar conectado a um aluno.' },
+            { status: 400 }
+          )
+        }
+        const outroUser = await prisma.user.findUnique({
+          where: { email: newEmail },
+          select: { id: true },
+        })
+        if (outroUser && outroUser.id !== enrollment.userId) {
+          return NextResponse.json(
+            { ok: false, message: 'Este e-mail já está em uso por outro usuário (admin, professor ou outro aluno).' },
+            { status: 400 }
+          )
+        }
+      }
+
       const oldStatus = enrollment.status
       const newStatus = updateData.status
 
@@ -200,6 +230,15 @@ export async function PATCH(
         where: { id },
         data: updateData,
       })
+
+      // Se o aluno tem conta (userId) e o e-mail foi alterado, atualizar também o e-mail de login do User
+      if (enrollment.userId && newEmail && newEmail !== currentEmail) {
+        await prisma.user.update({
+          where: { id: enrollment.userId },
+          data: { email: newEmail },
+        })
+      }
+
       return NextResponse.json({
         ok: true,
         data: { enrollment: updatedEnrollment, message: 'Aluno atualizado com sucesso' },

@@ -316,7 +316,7 @@ export default function FinanceiroCuponsPage() {
             <Button variant="outline" onClick={closeModal} disabled={saving}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} disabled={saving}>
+            <Button onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving}>
               {saving ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />

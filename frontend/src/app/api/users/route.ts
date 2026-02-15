@@ -67,13 +67,13 @@ export async function POST(request: NextRequest) {
     const normalizedEmail = email.trim().toLowerCase()
     const normalizedWhatsapp = normalizePhone(whatsapp)
 
-    // Criar user
+    // Criar user (schema: nome, senha)
     const user = await prisma.user.create({
       data: {
-        name: name.trim(),
+        nome: name.trim(),
         email: normalizedEmail,
         whatsapp: normalizedWhatsapp,
-        passwordHash,
+        senha: passwordHash,
       },
     })
 
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
           },
         ],
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { criadoEm: 'desc' },
     })
 
     // Se encontrou, vincular e atualizar status
@@ -104,14 +104,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Retornar resposta (sem passwordHash)
+    // Retornar resposta (sem senha; nomes da API para o frontend)
     return NextResponse.json(
       {
         id: user.id,
-        name: user.name,
+        name: user.nome,
         email: user.email,
         whatsapp: user.whatsapp,
-        createdAt: user.createdAt,
+        createdAt: user.criadoEm,
       },
       { status: 201 }
     )

@@ -178,7 +178,8 @@ export async function GET(request: NextRequest) {
       })
 
       // Filtrar manualmente aulas de alunos pausados (a partir da data pausedAt)
-      const filteredRecords = recordsInRange.filter((r: { lesson: { startAt: Date; enrollment: { status: string; pausedAt: Date | null } } }) => {
+      type RecordItem = { lesson: { startAt: Date; enrollment: { status: string; pausedAt: Date | null } } }
+      const filteredRecords = (recordsInRange as RecordItem[]).filter((r) => {
         const enrollment = r.lesson.enrollment
         if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
           const pausedAt = new Date(enrollment.pausedAt)
@@ -199,10 +200,10 @@ export async function GET(request: NextRequest) {
 
         let totalMinutos = 0
         for (const r of filteredRecords) {
-          const lesson = r.lesson as { teacherId: string; startAt: Date; durationMinutes: number }
+          const lesson = r.lesson as unknown as { teacherId: string; startAt: Date; durationMinutes: number }
           if (lesson.teacherId !== pm.teacherId) continue
           if (holidaySet.has(toDateKey(new Date(lesson.startAt)))) continue
-          const mins = (r as { tempoAulaMinutos: number | null }).tempoAulaMinutos ?? lesson.durationMinutes ?? 60
+          const mins = (r as unknown as { tempoAulaMinutos: number | null }).tempoAulaMinutos ?? lesson.durationMinutes ?? 60
           totalMinutos += mins
         }
         const totalHoras = totalMinutos / 60 // horas registradas (LessonRecord)

@@ -15,7 +15,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 const IDIOMAS_OPCOES = [
@@ -80,6 +80,7 @@ export default function AdminProfessoresPage() {
   const [createAlertModalTeacher, setCreateAlertModalTeacher] = useState<Teacher | null>(null)
   const [newAlertForm, setNewAlertForm] = useState({ message: '', level: 'INFO' })
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; variant?: 'danger' | 'default'; confirmLabel?: string } | null>(null)
+  const [sendAccessLoading, setSendAccessLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [formData, setFormData] = useState({
     nome: '',
@@ -332,6 +333,41 @@ export default function AdminProfessoresPage() {
       idiomasEnsina: [],
     })
     setIsModalOpen(true)
+  }
+
+  const handleSendAccessToAll = () => {
+    setConfirmModal({
+      title: 'Liberar acesso para professores sem conta',
+      message:
+        'Será enviado um e-mail apenas para os professores que ainda não têm conta na plataforma (login e senha padrão). Quem já tem acesso não receberá e-mail. Para cada professor sem conta, o acesso será criado e o e-mail enviado. Deseja continuar?',
+      confirmLabel: 'Enviar e-mails',
+      onConfirm: () => {
+        setSendAccessLoading(true)
+        ;(async () => {
+          try {
+            const res = await fetch('/api/admin/teachers/send-access-emails', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+            })
+            const json = await res.json()
+            if (res.ok && json.ok) {
+              const data = json.data
+              let msg = data?.message ?? `E-mails enviados: ${data?.sent ?? 0} de ${data?.total ?? 0}.`
+              if (data?.errors?.length) msg += ` Erros: ${data.errors.slice(0, 3).join('; ')}${data.errors.length > 3 ? '...' : ''}`
+              setToast({ message: msg, type: 'success' })
+              fetchTeachers({ useCurrentFilters: true })
+            } else {
+              setToast({ message: json.message || 'Erro ao enviar e-mails', type: 'error' })
+            }
+          } catch {
+            setToast({ message: 'Erro ao enviar e-mails de acesso', type: 'error' })
+          } finally {
+            setSendAccessLoading(false)
+          }
+        })()
+      },
+    })
   }
 
   const handleEdit = (teacher: Teacher) => {
@@ -1128,6 +1164,17 @@ export default function AdminProfessoresPage() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <Button
+              onClick={handleSendAccessToAll}
+              variant="outline"
+              size="md"
+              className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
+              title="Enviar e-mail de acesso (login e senha padrão) para professores sem conta"
+              disabled={sendAccessLoading}
+            >
+              {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              Liberar acesso para todos professores
+            </Button>
+            <Button
               variant="outline"
               size="md"
               className="flex items-center gap-2"
@@ -1443,7 +1490,7 @@ export default function AdminProfessoresPage() {
                 <Button
                   type="button"
                   variant="primary"
-                  onClick={(e) => handleCreateAlertSubmit(e as unknown as React.FormEvent)}
+                  onClick={() => void handleCreateAlertSubmit({ preventDefault: () => {} } as React.FormEvent)}
                 >
                   Criar
                 </Button>
@@ -1795,7 +1842,7 @@ export default function AdminProfessoresPage() {
               {importFile && (
                 <Button
                   variant="primary"
-                  onClick={handleImportSubmit}
+                  onClick={() => void handleImportSubmit({ preventDefault: () => {} } as React.FormEvent)}
                   disabled={importLoading}
                   className="flex items-center gap-2"
                 >
@@ -1887,7 +1934,7 @@ export default function AdminProfessoresPage() {
               <Button variant="outline" onClick={() => setIsModalOpen(false)}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSubmit}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)}>
                 {editingTeacher ? 'Salvar' : 'Criar'}
               </Button>
             </>

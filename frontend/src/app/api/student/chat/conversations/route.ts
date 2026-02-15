@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     const currentUserId = auth.session.userId
     const body = await request.json().catch(() => ({}))
     const participantIds = Array.isArray(body.participantIds) ? body.participantIds : []
-    const ids = participantIds.filter((id): id is string => typeof id === 'string').slice(0, 1)
+    const ids = participantIds.filter((id: unknown): id is string => typeof id === 'string').slice(0, 1)
 
     if (ids.length !== 1) {
       return NextResponse.json(

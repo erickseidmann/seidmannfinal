@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import type { EnrollmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -87,7 +88,7 @@ export async function PATCH(
     }
 
     // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao marcar PAUSED grava pausedAt; ao voltar para ACTIVE limpa ambos
-    const updateData: { status: string; inactiveAt?: Date | null; pausedAt?: Date | null; activationDate?: Date | null } = { status: status as any }
+    const updateData: { status: EnrollmentStatus; inactiveAt?: Date | null; pausedAt?: Date | null; activationDate?: Date | null } = { status: status as EnrollmentStatus }
     if (status === 'INACTIVE') {
       updateData.inactiveAt = new Date()
       updateData.pausedAt = null

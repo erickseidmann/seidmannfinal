@@ -246,14 +246,14 @@ function MatriculaPageContent() {
       const json: ApiResponse<MatriculaResponse['data']> = await response.json()
 
       if (!response.ok || !json.ok) {
-        // Melhorar mensagem de erro no UI
+        const msg = (json as { message?: string }).message
         const errorMessage = response.status === 400 
-          ? json.message || 'Erro ao criar matrícula'
+          ? msg || 'Erro ao criar matrícula'
           : response.status === 503
-          ? json.message || 'Banco de dados não está preparado. Verifique as configurações.'
+          ? msg || 'Banco de dados não está preparado. Verifique as configurações.'
           : response.status === 500
           ? 'Erro interno. Tente novamente em instantes.'
-          : json.message || 'Erro ao criar matrícula'
+          : msg || 'Erro ao criar matrícula'
         throw new Error(errorMessage)
       }
 

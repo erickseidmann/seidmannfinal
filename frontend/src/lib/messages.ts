@@ -75,6 +75,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.nav.calendar': 'Calendário',
     'professor.nav.financial': 'Financeiro',
     'professor.nav.books': 'Livros',
+    'professor.nav.material': 'Material',
     'professor.nav.chat': 'Chat',
     'professor.home.welcome': 'Olá, {name}!',
     'professor.home.subtitle': 'Bem-vindo ao seu painel. Use o menu ao lado para acessar seus dados pessoais, calendário de aulas e outras seções.',
@@ -190,6 +191,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.calendar.courseSpanish': 'Espanhol',
     'professor.calendar.courseBoth': 'Inglês e Espanhol',
     'professor.calendar.clickToView': '(clique para ver opções)',
+    'professor.calendar.holiday': 'Feriado',
+    'professor.calendar.noWorkOnHolidays': 'Não trabalhamos nos feriados nacionais',
+    'professor.calendar.noFutureLessonRecord': 'Não é possível realizar o registro de aulas futuras.',
   },
   en: {
     'nav.login': 'Login',
@@ -255,6 +259,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.nav.calendar': 'Calendar',
     'professor.nav.financial': 'Financial',
     'professor.nav.books': 'Books',
+    'professor.nav.material': 'Material',
     'professor.nav.chat': 'Chat',
     'professor.home.welcome': 'Hello, {name}!',
     'professor.home.subtitle': 'Welcome to your dashboard. Use the menu to access your personal data, class calendar and other sections.',
@@ -369,6 +374,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.calendar.courseSpanish': 'Spanish',
     'professor.calendar.courseBoth': 'English and Spanish',
     'professor.calendar.clickToView': '(click to view options)',
+    'professor.calendar.holiday': 'Holiday',
+    'professor.calendar.noWorkOnHolidays': 'We do not work on national holidays',
+    'professor.calendar.noFutureLessonRecord': 'It is not possible to register future lessons.',
   },
   es: {
     'nav.login': 'Iniciar sesión',
@@ -434,6 +442,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.nav.calendar': 'Calendario',
     'professor.nav.financial': 'Financiero',
     'professor.nav.books': 'Libros',
+    'professor.nav.material': 'Material',
     'professor.nav.chat': 'Chat',
     'professor.home.welcome': '¡Hola, {name}!',
     'professor.home.subtitle': 'Bienvenido a tu panel. Use el menú para acceder a sus datos personales, calendario de clases y otras secciones.',
@@ -548,6 +557,9 @@ export const messages: Record<Locale, Record<string, string>> = {
     'professor.calendar.courseSpanish': 'Español',
     'professor.calendar.courseBoth': 'Inglés y Español',
     'professor.calendar.clickToView': '(clic para ver opciones)',
+    'professor.calendar.holiday': 'Festivo',
+    'professor.calendar.noWorkOnHolidays': 'No trabajamos en festivos nacionales',
+    'professor.calendar.noFutureLessonRecord': 'No es posible realizar el registro de clases futuras.',
   },
 }
 

@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma, type UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -23,12 +24,8 @@ export async function GET(request: NextRequest) {
     const excludeBookId = (searchParams.get('excludeBookId') || '').trim()
     const includeTeachers = searchParams.get('includeTeachers') === 'true'
 
-    const roleFilter = includeTeachers
-      ? { in: ['STUDENT', 'TEACHER'] as const }
-      : 'STUDENT'
-
-    const where: { role: typeof roleFilter; OR?: unknown[]; id?: { notIn: string[] } } = {
-      role: roleFilter,
+    const where: Prisma.UserWhereInput = {
+      role: includeTeachers ? { in: ['STUDENT', 'TEACHER'] as UserRole[] } : 'STUDENT',
     }
     if (search) {
       where.OR = [
@@ -43,7 +40,7 @@ export async function GET(request: NextRequest) {
         where: { bookCode: excludeBookId },
         select: { userId: true },
       })
-      const userIdsWithAccess = releases.map((r) => r.userId)
+      const userIdsWithAccess = releases.map((r) => r.userId).filter((id): id is string => id != null)
       if (userIdsWithAccess.length > 0) {
         where.id = { notIn: userIdsWithAccess }
       }

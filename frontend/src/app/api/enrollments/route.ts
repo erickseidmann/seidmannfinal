@@ -53,40 +53,40 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Gerar código único
-    const code = await createUniqueEnrollmentCode()
+    // Gerar código único (schema usa trackingCode)
+    const trackingCode = await createUniqueEnrollmentCode()
 
     // Normalizar whatsapp
     const normalizedWhatsapp = normalizePhone(whatsapp)
 
-    // Criar enrollment
+    // Criar enrollment (schema: nome, idioma, nivel, objetivo, disponibilidade)
     const enrollment = await prisma.enrollment.create({
       data: {
-        code,
+        trackingCode,
         status: 'LEAD',
-        fullName: fullName.trim(),
+        nome: fullName.trim(),
         email: email.trim().toLowerCase(),
         whatsapp: normalizedWhatsapp,
-        language: language as 'ENGLISH' | 'SPANISH',
-        level: level.trim(),
-        goal: goal?.trim() || null,
-        availability: availability?.trim() || null,
+        idioma: language as 'ENGLISH' | 'SPANISH',
+        nivel: level.trim(),
+        objetivo: goal?.trim() ?? undefined,
+        disponibilidade: availability?.trim() ?? undefined,
       },
     })
 
-    // Retornar resposta (sem dados sensíveis)
+    // Retornar resposta (sem dados sensíveis; expõe nomes da API para o frontend)
     return NextResponse.json(
       {
         id: enrollment.id,
-        code: enrollment.code,
-        fullName: enrollment.fullName,
+        code: enrollment.trackingCode ?? undefined,
+        fullName: enrollment.nome,
         email: enrollment.email,
         whatsapp: enrollment.whatsapp,
-        language: enrollment.language,
-        level: enrollment.level,
-        goal: enrollment.goal,
-        availability: enrollment.availability,
-        createdAt: enrollment.createdAt,
+        language: enrollment.idioma ?? undefined,
+        level: enrollment.nivel ?? undefined,
+        goal: enrollment.objetivo ?? undefined,
+        availability: enrollment.disponibilidade ?? undefined,
+        createdAt: enrollment.criadoEm,
       },
       { status: 201 }
     )

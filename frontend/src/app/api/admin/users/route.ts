@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireSuperAdmin } from '@/lib/auth'
 import bcrypt from 'bcryptjs'
@@ -26,10 +27,10 @@ export async function GET(request: NextRequest) {
     const statusFilter = searchParams.get('status')
     const searchQuery = searchParams.get('search')?.trim() || ''
 
-    const where: { email?: { endsWith: string }; status?: string; OR?: unknown[] } = {
+    const where: Prisma.UserWhereInput = {
       email: { endsWith: SEIDMANN_SUFFIX },
     }
-    if (statusFilter) where.status = statusFilter
+    if (statusFilter && (statusFilter === 'ACTIVE' || statusFilter === 'PENDING' || statusFilter === 'BLOCKED')) where.status = statusFilter
     if (searchQuery) {
       where.OR = [
         { nome: { contains: searchQuery } },
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
         status: 'ACTIVE',
         funcao: (funcao || '').trim() || null,
         emailPessoal: (emailPessoal || '').trim() || null,
-        adminPages: pages.length ? pages : null,
+        adminPages: pages.length ? pages : undefined,
       },
       select: {
         id: true,

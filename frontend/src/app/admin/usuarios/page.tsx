@@ -429,7 +429,7 @@ export default function AdminUsuariosPage() {
               <Button variant="outline" onClick={() => setIsModalOpen(false)}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSubmit}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)}>
                 {editingUser ? 'Salvar' : 'Criar'}
               </Button>
             </>

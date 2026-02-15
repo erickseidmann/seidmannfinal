@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const lessonRecord = (prisma as { lessonRecord?: unknown }).lessonRecord
+    const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
     if (!lessonRecord || typeof lessonRecord.findMany !== 'function') {
       return NextResponse.json(
         { ok: false, message: 'Modelo LessonRecord não disponível. Rode: npx prisma generate && npx prisma migrate dev' },
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const lessonRecord = (prisma as { lessonRecord?: unknown }).lessonRecord
+    const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]>; create: (args: unknown) => Promise<unknown>; findUnique: (args: unknown) => Promise<unknown> } }).lessonRecord
     if (!lessonRecord || typeof lessonRecord.create !== 'function') {
       return NextResponse.json(
         { ok: false, message: 'Modelo LessonRecord não disponível. Rode: npx prisma generate && npx prisma migrate dev' },

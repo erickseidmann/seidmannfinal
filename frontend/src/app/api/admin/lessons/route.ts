@@ -418,7 +418,7 @@ export async function POST(request: NextRequest) {
     // Notificar o professor: tem um novo aluno (primeira aula com esse aluno) – aparece no Início
     if (isFirstLessonForTeacherAndEnrollment && prisma.teacherAlert && lessonsCreated.length > 0) {
       const first = lessonsCreated[0]
-      const nomeAluno = (first.enrollment as { nome?: string })?.nome ?? 'Aluno'
+      const nomeAluno = (first as unknown as { enrollment?: { nome?: string } }).enrollment?.nome ?? 'Aluno'
       await prisma.teacherAlert.create({
         data: {
           teacherId,
@@ -432,7 +432,7 @@ export async function POST(request: NextRequest) {
 
     // E-mail: aula(s) confirmada(s) para aluno e professor
     if (validStatus === 'CONFIRMED' && lessonsCreated.length > 0) {
-      const first = lessonsCreated[0]
+      const first = lessonsCreated[0] as unknown as { enrollment: { nome: string; email: string | null }; teacher: { nome: string; email: string | null }; startAt: Date }
       const nomeAluno = first.enrollment.nome
       const nomeProfessor = first.teacher.nome
       const emailAluno = first.enrollment.email
@@ -464,7 +464,7 @@ export async function POST(request: NextRequest) {
 
     // E-mail: reposição agendada (criar aula com status Reposição)
     if (validStatus === 'REPOSICAO' && lessonsCreated.length > 0) {
-      const first = lessonsCreated[0]
+      const first = lessonsCreated[0] as unknown as { enrollment: { nome: string; email: string | null }; teacher: { nome: string; email: string | null }; startAt: Date }
       const nomeAluno = first.enrollment.nome
       const nomeProfessorReposicao = first.teacher.nome
       const emailAluno = first.enrollment.email

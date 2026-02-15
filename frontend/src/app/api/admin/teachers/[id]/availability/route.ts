@@ -190,38 +190,40 @@ export async function PUT(
       })
 
       // Verificar se alguma aula está fora dos slots marcados
-      const conflicts: Array<{ aluno: string; dia: string; horario: string }> = []
-      
+      const allOutside: Array<{ lesson: typeof lessons[0]; dayOfWeek: number; startMinutes: number; endMinutes: number }> = []
       for (const lesson of lessons) {
         const lessonStart = new Date(lesson.startAt)
         const dayOfWeek = lessonStart.getDay()
         const startMinutes = lessonStart.getHours() * 60 + lessonStart.getMinutes()
         const durationMinutes = lesson.durationMinutes ?? 60
         const endMinutes = startMinutes + durationMinutes
-
-        // Verificar se a aula está dentro de algum slot
         const isWithinSlot = slots.some(
-          (slot) =>
+          (slot: { dayOfWeek: number; startMinutes: number; endMinutes: number }) =>
             slot.dayOfWeek === dayOfWeek &&
             startMinutes >= slot.startMinutes &&
             endMinutes <= slot.endMinutes
         )
-
         if (!isWithinSlot) {
-          const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
-          const hora = Math.floor(startMinutes / 60)
-            .toString()
-            .padStart(2, '0')
-          const minuto = (startMinutes % 60).toString().padStart(2, '0')
-          conflicts.push({
-            aluno: lesson.enrollment?.nome ?? 'Aluno desconhecido',
-            dia: diasSemana[dayOfWeek],
-            horario: `${hora}:${minuto}`,
-          })
+          allOutside.push({ lesson, dayOfWeek, startMinutes, endMinutes })
         }
       }
 
-      if (conflicts.length > 0) {
+      if (allOutside.length > 0) {
+        // Exibir na mensagem só as aulas das próximas duas semanas
+        const twoWeeksEnd = new Date(hoje)
+        twoWeeksEnd.setDate(twoWeeksEnd.getDate() + 14)
+        twoWeeksEnd.setHours(23, 59, 59, 999)
+        const conflictsForDisplay = allOutside.filter((o) => new Date(o.lesson.startAt) <= twoWeeksEnd)
+        const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+        const conflicts = conflictsForDisplay.map((o) => {
+          const hora = Math.floor(o.startMinutes / 60).toString().padStart(2, '0')
+          const minuto = (o.startMinutes % 60).toString().padStart(2, '0')
+          return {
+            aluno: o.lesson.enrollment?.nome ?? 'Aluno desconhecido',
+            dia: diasSemana[o.dayOfWeek],
+            horario: `${hora}:${minuto}`,
+          }
+        })
         return NextResponse.json(
           {
             ok: false,

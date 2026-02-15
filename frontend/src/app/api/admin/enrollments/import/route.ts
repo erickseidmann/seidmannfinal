@@ -254,6 +254,30 @@ export async function POST(request: NextRequest) {
         if (!Number.isNaN(n)) diaPagamento = Math.min(31, Math.max(1, Math.round(n)))
       }
 
+      const normalizedEmail = email.trim().toLowerCase()
+      const outroAluno = await prisma.enrollment.findFirst({
+        where: { email: normalizedEmail },
+        select: { id: true },
+      })
+      if (outroAluno) {
+        errors.push({
+          row: rowNum,
+          message: 'Este e-mail já está vinculado a outro aluno. Um e-mail só pode estar conectado a um aluno.',
+        })
+        continue
+      }
+      const usuarioComEmail = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, role: true },
+      })
+      if (usuarioComEmail && usuarioComEmail.role !== 'STUDENT') {
+        errors.push({
+          row: rowNum,
+          message: 'Este e-mail já está em uso por outro usuário (admin ou professor).',
+        })
+        continue
+      }
+
       let trackingCode = generateTrackingCode()
       let attempts = 0
       while (attempts < 10) {
@@ -267,7 +291,7 @@ export async function POST(request: NextRequest) {
         const enrollment = await prisma.enrollment.create({
           data: {
             nome,
-            email,
+            email: normalizedEmail,
             whatsapp,
             status: status as any,
             trackingCode,
@@ -301,7 +325,6 @@ export async function POST(request: NextRequest) {
             pendenteAdicionarAulas: true,
           },
         })
-        const normalizedEmail = email.trim().toLowerCase()
         const existingUser = await prisma.user.findUnique({
           where: { email: normalizedEmail },
           select: { id: true, role: true },

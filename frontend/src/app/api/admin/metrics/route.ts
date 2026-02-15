@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     
     if (prisma.teacher) {
       try {
-        teachersByStatus = await prisma.teacher.groupBy({
+        teachersByStatus = await (prisma.teacher as any).groupBy({
           by: ['status'],
           _count: {
             id: true,
@@ -84,14 +84,14 @@ export async function GET(request: NextRequest) {
     let studentsWithoutLesson = 0
     try {
       const now = new Date()
-      const activeStatuses = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
+      const activeStatuses: import('@prisma/client').EnrollmentStatus[] = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
       const enrollmentsWithFuture = await prisma.lesson.findMany({
         where: { startAt: { gt: now } },
         select: { enrollmentId: true },
         distinct: ['enrollmentId'],
       })
       const idsWithFuture = new Set(enrollmentsWithFuture.map((l) => l.enrollmentId))
-      const where: { status: { in: string[] }; id?: { notIn: string[] } } = {
+      const where: import('@prisma/client').Prisma.EnrollmentWhereInput = {
         status: { in: activeStatuses },
       }
       if (idsWithFuture.size > 0) {

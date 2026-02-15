@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import type { EnrollmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'studentsWithoutLesson') {
-      const activeStatuses = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
+      const activeStatuses: EnrollmentStatus[] = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
       const enrollments = await prisma.enrollment.findMany({
         where: { status: { in: activeStatuses } },
         select: {

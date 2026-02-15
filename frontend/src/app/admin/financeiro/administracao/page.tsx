@@ -195,7 +195,7 @@ export default function FinanceiroAdministracaoPage() {
     if (!editValorUser) return
     const v = modalValor.replace(',', '.')
     const num = v === '' ? null : Number(v)
-    if (v !== '' && (Number.isNaN(num) || num < 0)) {
+    if (v !== '' && num != null && (Number.isNaN(num) || num < 0)) {
       setToast({ message: 'Valor inválido.', type: 'error' })
       return
     }

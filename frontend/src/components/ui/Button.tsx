@@ -10,13 +10,14 @@ import { cn } from '@/lib/utils'
 
 interface ButtonProps {
   children: ReactNode
-  variant?: 'primary' | 'secondary' | 'outline'
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost'
   size?: 'sm' | 'md' | 'lg'
   href?: string
   onClick?: () => void
   type?: 'button' | 'submit'
   className?: string
   disabled?: boolean
+  title?: string
 }
 
 export default function Button({
@@ -28,6 +29,7 @@ export default function Button({
   type = 'button',
   className = '',
   disabled = false,
+  title,
 }: ButtonProps) {
   const baseStyles = 'font-semibold rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 inline-flex items-center justify-center'
   
@@ -35,6 +37,7 @@ export default function Button({
     primary: 'bg-gradient-to-r from-brand-orange to-brand-yellow text-white hover:shadow-lg hover:scale-105 focus:ring-brand-orange',
     secondary: 'bg-brand-text text-white hover:bg-gray-800 focus:ring-brand-text',
     outline: 'border-2 border-brand-orange text-brand-orange hover:bg-brand-orange hover:text-white focus:ring-brand-orange',
+    ghost: 'bg-transparent hover:bg-gray-100 focus:ring-gray-300',
   }
 
   const sizes = {
@@ -57,6 +60,7 @@ export default function Button({
           target={href.startsWith('http') ? '_blank' : undefined}
           rel={href.startsWith('http') ? 'noopener noreferrer' : undefined}
           className={classes}
+          title={title}
         >
           {children}
         </a>
@@ -64,14 +68,14 @@ export default function Button({
     }
     
     return (
-      <Link href={href} className={classes}>
+      <Link href={href} className={classes} title={title}>
         {children}
       </Link>
     )
   }
 
   return (
-    <button type={type} onClick={onClick} className={classes} disabled={disabled}>
+    <button type={type} onClick={onClick} className={classes} disabled={disabled} title={title}>
       {children}
     </button>
   )

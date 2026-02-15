@@ -339,6 +339,28 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase()
+    const outroAluno = await prisma.enrollment.findFirst({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    })
+    if (outroAluno) {
+      return NextResponse.json(
+        { ok: false, message: 'Este e-mail já está vinculado a outro aluno. Um e-mail só pode estar conectado a um aluno.' },
+        { status: 400 }
+      )
+    }
+    const usuarioComEmail = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, role: true },
+    })
+    if (usuarioComEmail && usuarioComEmail.role !== 'STUDENT') {
+      return NextResponse.json(
+        { ok: false, message: 'Este e-mail já está em uso por outro usuário (admin ou professor).' },
+        { status: 400 }
+      )
+    }
+
     let trackingCode = generateTrackingCode()
     let attempts = 0
     while (attempts < 10) {
@@ -351,7 +373,7 @@ export async function POST(request: NextRequest) {
     const enrollment = await prisma.enrollment.create({
       data: {
         nome: String(nome).trim(),
-        email: String(email).trim().toLowerCase(),
+        email: normalizedEmail,
         whatsapp: String(whatsapp).trim(),
         status: status || 'LEAD',
         trackingCode,
@@ -405,7 +427,6 @@ export async function POST(request: NextRequest) {
     })
 
     // Criar ou vincular User para login do aluno (senha padrão 123456, obrigar alteração no 1º login)
-    const normalizedEmail = enrollment.email.trim().toLowerCase()
     const existingUser = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: { id: true, role: true },

@@ -2018,7 +2018,7 @@ export default function AdminCalendarioPage() {
               >
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSaveLesson} disabled={savingLesson}>
+              <Button variant="primary" onClick={() => void handleSaveLesson({ preventDefault: () => {} } as React.FormEvent)} disabled={savingLesson}>
                 {savingLesson ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />

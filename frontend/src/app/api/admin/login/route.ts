@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const adminPages = Array.isArray(admin.adminPages) ? admin.adminPages : undefined
+    const adminPages = Array.isArray(admin.adminPages) ? (admin.adminPages as string[]) : undefined
 
     const response = NextResponse.json({
       ok: true,

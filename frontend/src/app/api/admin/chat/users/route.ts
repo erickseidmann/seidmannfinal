@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma, type UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -20,15 +21,15 @@ export async function GET(request: NextRequest) {
     const currentUserId = auth.session.sub
     const search = request.nextUrl.searchParams.get('search')?.trim() || ''
 
-    const where: { id?: { not: string }; role: unknown; status?: string } = {
+    const where: Prisma.UserWhereInput = {
       id: { not: currentUserId },
-      role: { in: ['ADMIN', 'TEACHER', 'STUDENT'] },
+      role: { in: ['ADMIN', 'TEACHER', 'STUDENT'] as UserRole[] },
     }
     if (search) {
       where.OR = [
         { nome: { contains: search } },
         { email: { contains: search } },
-      ] as unknown[]
+      ]
     }
 
     const users = await prisma.user.findMany({

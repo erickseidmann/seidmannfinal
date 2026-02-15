@@ -93,7 +93,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const lessonRecord = (prisma as { lessonRecord?: unknown }).lessonRecord
+    type LessonRecordDelegate = { create: (args: unknown) => Promise<unknown> }
+    const lessonRecord = (prisma as { lessonRecord?: LessonRecordDelegate }).lessonRecord
     if (!lessonRecord || typeof lessonRecord.create !== 'function') {
       return NextResponse.json(
         { ok: false, message: 'Modelo LessonRecord não disponível' },
@@ -146,6 +147,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: 'Esta aula não é sua. Só é possível registrar suas próprias aulas.' },
         { status: 403 }
+      )
+    }
+
+    // Só permitir registro no dia atual (São Paulo) e a partir do horário de início da aula
+    const BRAZIL_TZ = 'America/Sao_Paulo'
+    const getPartsInTZ = (date: Date) => {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: BRAZIL_TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      })
+      const parts = formatter.formatToParts(date)
+      const get = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10)
+      return {
+        year: get('year'),
+        month: get('month'),
+        day: get('day'),
+        hour: get('hour'),
+        minute: get('minute'),
+        second: get('second'),
+      }
+    }
+    const now = new Date()
+    const nowParts = getPartsInTZ(now)
+    const lessonStart = new Date(lesson.startAt)
+    const lessonParts = getPartsInTZ(lessonStart)
+    const lessonDateKey = `${lessonParts.year}-${String(lessonParts.month).padStart(2, '0')}-${String(lessonParts.day).padStart(2, '0')}`
+    const nowDateKey = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`
+    const lessonMinutes = lessonParts.hour * 60 + lessonParts.minute
+    const nowMinutes = nowParts.hour * 60 + nowParts.minute
+    if (lessonDateKey > nowDateKey) {
+      return NextResponse.json(
+        { ok: false, message: 'Não é possível realizar o registro de aulas futuras.' },
+        { status: 400 }
+      )
+    }
+    // No mesmo dia: só permitir a partir de 1 minuto após o horário de início (ex.: aula 17:00 → registrar a partir de 17:01)
+    if (lessonDateKey === nowDateKey && nowMinutes <= lessonMinutes) {
+      return NextResponse.json(
+        { ok: false, message: 'Não é possível realizar o registro de aulas futuras.' },
+        { status: 400 }
+      )
+    }
+
+    // Verificar se a aula está em feriado nacional — não permitir registro
+    const lessonDate = new Date(lesson.startAt)
+    const dateKey = `${lessonDate.getFullYear()}-${String(lessonDate.getMonth() + 1).padStart(2, '0')}-${String(lessonDate.getDate()).padStart(2, '0')}`
+    const holiday = await prisma.holiday.findUnique({
+      where: { dateKey },
+    })
+    if (holiday) {
+      return NextResponse.json(
+        { ok: false, message: 'Não trabalhamos nos feriados nacionais' },
+        { status: 400 }
       )
     }
 

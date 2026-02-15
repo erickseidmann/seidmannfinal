@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
 
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
     const currentUserId = auth.session.userId
     const search = request.nextUrl.searchParams.get('search')?.trim() || ''
 
-    const where: { id?: { not: string }; role: unknown; OR?: unknown[] } = {
+    const where: Prisma.UserWhereInput = {
       id: { not: currentUserId },
       role: { in: ['ADMIN', 'TEACHER'] },
     }

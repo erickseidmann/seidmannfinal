@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireSuperAdmin } from '@/lib/auth'
 import bcrypt from 'bcryptjs'
@@ -51,7 +52,7 @@ export async function PATCH(
       status?: string
       funcao?: string | null
       emailPessoal?: string | null
-      adminPages?: string[] | null
+      adminPages?: string[] | undefined
       senha?: string
     } = {}
     if (nome != null) updateData.nome = String(nome).trim()
@@ -80,7 +81,7 @@ export async function PATCH(
     if (funcao !== undefined) updateData.funcao = (funcao || '').trim() || null
     if (emailPessoal !== undefined) updateData.emailPessoal = (emailPessoal || '').trim() || null
     if (adminPages !== undefined) {
-      updateData.adminPages = Array.isArray(adminPages) ? adminPages : null
+      updateData.adminPages = Array.isArray(adminPages) ? adminPages : undefined
     }
     if (senha && String(senha).trim().length >= 6) {
       updateData.senha = await bcrypt.hash(String(senha).trim(), 10)
@@ -88,7 +89,7 @@ export async function PATCH(
 
     const user = await prisma.user.update({
       where: { id },
-      data: updateData,
+      data: updateData as Prisma.UserUpdateInput,
       select: {
         id: true,
         nome: true,

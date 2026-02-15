@@ -25,7 +25,7 @@ const NAV = [
   { href: '/dashboard-professores/dados-pessoais', labelKey: 'professor.nav.personalData', icon: User },
   { href: '/dashboard-professores/calendario', labelKey: 'professor.nav.calendar', icon: Calendar },
   { href: '/dashboard-professores/financeiro', labelKey: 'professor.nav.financial', icon: Wallet },
-  { href: '/dashboard-professores/livros', labelKey: 'professor.nav.books', icon: BookOpen },
+  { href: '/dashboard-professores/material', labelKey: 'professor.nav.material', icon: BookOpen },
   { href: '/dashboard-professores/chat', labelKey: 'professor.nav.chat', icon: MessageCircle, showChatDot: true },
 ] as const
 
@@ -126,7 +126,10 @@ export default function DashboardProfessoresMainLayout({
           <p className="text-sm text-gray-500 mt-0.5">{displayName}</p>
         </div>
         <nav className="p-2 space-y-0.5">
-          {NAV.map(({ href, labelKey, icon: Icon, showUnreadDot, showChatDot }) => {
+          {NAV.map((item) => {
+            const { href, labelKey, icon: Icon } = item
+            const showUnreadDot = 'showUnreadDot' in item ? item.showUnreadDot : undefined
+            const showChatDot = 'showChatDot' in item ? item.showChatDot : undefined
             const isActive = href === '/dashboard-professores' ? pathname === href : pathname.startsWith(href)
             const showDot = (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
             const label = t(labelKey)

@@ -233,6 +233,78 @@ const CURSO_LABEL: Record<string, string> = {
   INGLES_E_ESPANHOL: 'Inglês e Espanhol',
 }
 
+/** Mensagem: acesso à plataforma – login e senha padrão para o aluno */
+export function mensagemAcessoPlataforma(opcoes: {
+  nomeAluno: string
+  email: string
+  senhaProvisoria: string
+}): { subject: string; text: string } {
+  const { nomeAluno, email, senhaProvisoria } = opcoes
+  const linkAcesso = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.seidmannapi.com'
+  const subject = 'Seu acesso à Plataforma Seidmann já está disponível 🚀'
+  const text = `Olá, ${nomeAluno},
+
+Seja muito bem-vindo(a) ao Seidmann Institute!
+
+Seu acesso à nossa plataforma já foi criado com sucesso. A partir de agora, você poderá acompanhar suas aulas, acessar materiais exclusivos e gerenciar suas informações diretamente pelo sistema.
+
+🔐 Seus dados de acesso:
+
+Link de acesso:
+👉 ${linkAcesso}/
+
+Login (e-mail): ${email}
+Senha: ${senhaProvisoria}
+
+⚠️ Importante:
+
+Recomendamos que você altere sua senha no primeiro acesso.
+
+Caso tenha qualquer dificuldade para entrar na plataforma, entre em contato conosco respondendo este e-mail ou pelo WhatsApp da escola.
+
+Estamos muito felizes em ter você conosco e desejamos uma excelente jornada de aprendizado! 🚀
+
+Atenciosamente,
+Equipe Seidmann Institute`
+  return { subject, text }
+}
+
+/** Mensagem: acesso ao Dashboard do Professor – login e senha padrão */
+export function mensagemAcessoPlataformaProfessor(opcoes: {
+  nomeProfessor: string
+  email: string
+  senhaProvisoria: string
+}): { subject: string; text: string } {
+  const { nomeProfessor, email, senhaProvisoria } = opcoes
+  const linkAcesso = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.seidmannapi.com'
+  const subject = 'Seu acesso ao Dashboard do Professor já está disponível 🚀'
+  const text = `Olá, ${nomeProfessor},
+
+Seja muito bem-vindo(a) ao Seidmann Institute!
+
+Seu acesso ao Dashboard do Professor já foi criado com sucesso. A partir de agora, você poderá gerenciar sua agenda, registrar aulas e acessar as ferramentas do instituto.
+
+🔐 Seus dados de acesso:
+
+Link de acesso:
+👉 ${linkAcesso}/
+
+Login (e-mail): ${email}
+Senha: ${senhaProvisoria}
+
+⚠️ Importante:
+
+Recomendamos que você altere sua senha no primeiro acesso.
+
+Caso tenha qualquer dificuldade para entrar na plataforma, entre em contato conosco respondendo este e-mail ou pelo WhatsApp da escola.
+
+Estamos muito felizes em ter você conosco!
+
+Atenciosamente,
+Equipe Seidmann Institute`
+  return { subject, text }
+}
+
 /** Mensagem: registro de aula criado – envia para o aluno com as infos da aula registrada */
 export function mensagemAulaRegistrada(opcoes: {
   nomeAluno: string

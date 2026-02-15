@@ -318,10 +318,10 @@ export default function FinanceiroAlunosPage() {
   const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
   const toggleFinanceColumn = (key: string) => {
     const fixed = FINANCE_COLUMNS.filter((c) => c.fixed).map((c) => c.key)
-    if (fixed.includes(key)) return
+    if ((fixed as readonly string[]).includes(key)) return
     setVisibleFinanceKeys((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-      return [...fixed, ...next.filter((k) => !fixed.includes(k))]
+      return [...fixed, ...next.filter((k) => !(fixed as readonly string[]).includes(k))]
     })
   }
   const [sendingCobrancaTodos, setSendingCobrancaTodos] = useState(false)
@@ -545,7 +545,7 @@ export default function FinanceiroAlunosPage() {
 
   const startEditCell = (a: AlunoFinanceiro, field: string) => {
     setEditingCell({ id: a.id, field })
-    const v = (a as Record<string, unknown>)[field === 'paymentStatus' ? 'status' : field]
+    const v = (a as unknown as Record<string, unknown>)[field === 'paymentStatus' ? 'status' : field]
     if (field === 'notaFiscalEmitida') setCellValue(Boolean(v))
     else setCellValue((v ?? '') as string | number)
   }
@@ -1122,7 +1122,7 @@ export default function FinanceiroAlunosPage() {
                           step="0.01"
                           min="0"
                           className="input w-full py-1 text-sm text-right"
-                          value={cellValue === '' ? '' : cellValue}
+                          value={cellValue === '' || typeof cellValue === 'boolean' ? '' : cellValue}
                           onChange={(e) => setCellValue(e.target.value === '' ? '' : e.target.value)}
                           onBlur={saveCell}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditingCell(null) }}
@@ -1300,7 +1300,7 @@ export default function FinanceiroAlunosPage() {
           footer={
             <>
               <Button variant="outline" onClick={() => setEditId(null)} disabled={saving}>Cancelar</Button>
-              <Button variant="primary" onClick={handleSave} disabled={saving}>
+              <Button variant="primary" onClick={() => void handleSave({ preventDefault: () => {} } as React.FormEvent)} disabled={saving}>
                 {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                 Salvar
               </Button>

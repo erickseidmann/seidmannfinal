@@ -101,9 +101,9 @@ export async function PATCH(request: NextRequest) {
       )
     }
 
-    const updateData: { nome?: string; whatsapp?: string | null } = {}
+    const updateData: { nome?: string; whatsapp?: string } = {}
     if (nome !== undefined) updateData.nome = nome
-    if (whatsapp !== undefined) updateData.whatsapp = whatsapp
+    if (whatsapp !== undefined && whatsapp !== null) updateData.whatsapp = whatsapp
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(

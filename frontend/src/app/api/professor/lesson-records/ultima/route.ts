@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const lessonRecord = (prisma as { lessonRecord?: unknown }).lessonRecord
+    type LessonRecordDelegate = { findFirst: (args: unknown) => Promise<unknown>; findMany: (args: unknown) => Promise<unknown> }
+    const lessonRecord = (prisma as { lessonRecord?: LessonRecordDelegate }).lessonRecord
     if (!lessonRecord || typeof lessonRecord.findFirst !== 'function') {
       return NextResponse.json(
         { ok: false, message: 'Modelo LessonRecord não disponível' },

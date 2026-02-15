@@ -10,8 +10,9 @@ const LOCALES: Locale[] = ['pt-BR', 'en', 'es']
 
 function getStoredLocale(): Locale {
   if (typeof window === 'undefined') return 'pt-BR'
-  const stored = localStorage.getItem(STORAGE_KEY) as Locale | null
-  return LOCALES.includes(stored ?? '') ? (stored as Locale) : 'pt-BR'
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (!stored || !(LOCALES as readonly string[]).includes(stored)) return 'pt-BR'
+  return stored as Locale
 }
 
 function setStoredLocale(locale: Locale) {

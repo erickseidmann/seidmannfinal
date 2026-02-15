@@ -27,16 +27,16 @@ export async function PUT(
       )
     }
 
-    // Preparar dados para atualização (apenas campos permitidos)
-    const updateData: any = {}
+    // Preparar dados para atualização (apenas campos permitidos; schema usa nome, idioma, etc.)
+    const updateData: Record<string, unknown> = {}
 
-    if (body.fullName !== undefined) updateData.fullName = body.fullName
+    if (body.fullName !== undefined) updateData.nome = body.fullName
     if (body.email !== undefined) updateData.email = body.email
     if (body.whatsapp !== undefined) updateData.whatsapp = body.whatsapp
-    if (body.language !== undefined) updateData.language = body.language
-    if (body.level !== undefined) updateData.level = body.level
-    if (body.goal !== undefined) updateData.goal = body.goal
-    if (body.availability !== undefined) updateData.availability = body.availability
+    if (body.language !== undefined) updateData.idioma = body.language
+    if (body.level !== undefined) updateData.nivel = body.level
+    if (body.goal !== undefined) updateData.objetivo = body.goal
+    if (body.availability !== undefined) updateData.disponibilidade = body.availability
     if (body.status !== undefined) updateData.status = body.status
     if (body.userId !== undefined) updateData.userId = body.userId
 
@@ -48,7 +48,7 @@ export async function PUT(
         user: {
           select: {
             id: true,
-            name: true,
+            nome: true,
             email: true,
             whatsapp: true,
           },
@@ -56,20 +56,20 @@ export async function PUT(
       },
     })
 
-    // Retornar resposta (sem dados sensíveis)
-    const response: any = {
+    // Retornar resposta (sem dados sensíveis; expõe nomes da API para o frontend)
+    const response: Record<string, unknown> = {
       id: updated.id,
-      code: updated.code,
+      code: updated.trackingCode ?? undefined,
       status: updated.status,
-      fullName: updated.fullName,
+      fullName: updated.nome,
       email: updated.email,
       whatsapp: updated.whatsapp,
-      language: updated.language,
-      level: updated.level,
-      goal: updated.goal,
-      availability: updated.availability,
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt,
+      language: updated.idioma ?? undefined,
+      level: updated.nivel ?? undefined,
+      goal: updated.objetivo ?? undefined,
+      availability: updated.disponibilidade ?? undefined,
+      createdAt: updated.criadoEm,
+      updatedAt: updated.atualizadoEm,
     }
 
     if (updated.user) {

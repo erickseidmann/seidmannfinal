@@ -7,7 +7,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, Search, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Search, Loader2, ZoomIn, ZoomOut } from 'lucide-react'
 
 interface PdfViewerProps {
   url: string
@@ -25,7 +25,23 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }:
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [goToInput, setGoToInput] = useState('')
-  const [scale, setScale] = useState(1.5)
+  const [autoScale, setAutoScale] = useState(1.5)
+  const [manualScale, setManualScale] = useState<number | null>(null)
+  const scale = manualScale ?? autoScale
+
+  const ZOOM_MIN = 0.5
+  const ZOOM_MAX = 3
+  const ZOOM_STEP = 0.25
+
+  const handleZoomIn = () => {
+    setManualScale((s) => Math.min(ZOOM_MAX, (s ?? autoScale) + ZOOM_STEP))
+  }
+  const handleZoomOut = () => {
+    setManualScale((s) => Math.max(ZOOM_MIN, (s ?? autoScale) - ZOOM_STEP))
+  }
+  const handleZoomReset = () => {
+    setManualScale(null)
+  }
 
   const renderPage = useCallback(
     async (pageNum: number, pdfDoc: { getPage: (n: number) => Promise<unknown> }) => {
@@ -98,22 +114,22 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }:
     }
   }, [pdf, currentPage, numPages, renderPage])
 
-  // Ajustar escala responsiva
+  // Escala automática conforme largura (usada quando manualScale é null)
   useEffect(() => {
-    const updateScale = () => {
+    const updateAutoScale = () => {
       const w = containerRef.current?.clientWidth ?? window.innerWidth
-      if (w < 400) setScale(1)
-      else if (w < 640) setScale(1.2)
-      else if (w < 768) setScale(1.3)
-      else setScale(1.5)
+      if (w < 400) setAutoScale(1)
+      else if (w < 640) setAutoScale(1.2)
+      else if (w < 768) setAutoScale(1.3)
+      else setAutoScale(1.5)
     }
-    updateScale()
-    const ro = new ResizeObserver(updateScale)
+    updateAutoScale()
+    const ro = new ResizeObserver(updateAutoScale)
     if (containerRef.current) ro.observe(containerRef.current)
-    window.addEventListener('resize', updateScale)
+    window.addEventListener('resize', updateAutoScale)
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', updateScale)
+      window.removeEventListener('resize', updateAutoScale)
     }
   }, [])
 
@@ -198,15 +214,51 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }:
             Ir
           </button>
         </form>
+
+        {/* Zoom */}
+        <div className="flex items-center gap-1 border-l border-gray-300 pl-2 sm:pl-3 ml-1">
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            disabled={scale <= ZOOM_MIN}
+            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Diminuir zoom"
+            title="Diminuir zoom"
+          >
+            <ZoomOut className="w-5 h-5 text-gray-700" />
+          </button>
+          <span className="min-w-[3rem] text-center text-sm text-gray-600" title="Zoom">
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            disabled={scale >= ZOOM_MAX}
+            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Aumentar zoom"
+            title="Aumentar zoom"
+          >
+            <ZoomIn className="w-5 h-5 text-gray-700" />
+          </button>
+          {manualScale !== null && (
+            <button
+              type="button"
+              onClick={handleZoomReset}
+              className="px-2 py-1 text-xs text-gray-600 hover:text-brand-orange border border-gray-200 rounded-lg hover:border-brand-orange/50"
+              title="Ajustar à tela"
+            >
+              Ajustar
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Área do PDF - scrollável, responsiva */}
+      {/* Área do PDF - scrollável; canvas centralizado (horizontal e vertical) */}
       <div className="flex-1 overflow-auto p-2 sm:p-4 bg-gray-200 min-h-0">
-        <div className="flex justify-center">
+        <div className="flex items-center justify-center min-h-full min-w-full">
           <canvas
             ref={canvasRef}
-            className="max-w-full shadow-lg rounded bg-white"
-            style={{ maxHeight: 'calc(100vh - 220px)' }}
+            className="shadow-lg rounded bg-white block"
           />
         </div>
       </div>

@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -52,7 +53,7 @@ export async function PATCH(
     const month = bodyMonth != null ? Number(bodyMonth) : null
     const hasMonthContext = year != null && month != null && month >= 1 && month <= 12
 
-    const updateEnrollment: { metodoPagamento?: string | null; valorMensalidade?: unknown } = {}
+    const updateEnrollment: Prisma.EnrollmentUpdateInput = {}
     if (metodoPagamento !== undefined) updateEnrollment.metodoPagamento = typeof metodoPagamento === 'string' ? metodoPagamento.trim() || null : null
     if (valorMensal !== undefined) updateEnrollment.valorMensalidade = valorMensal != null && valorMensal !== '' ? Number(valorMensal) : null
 
