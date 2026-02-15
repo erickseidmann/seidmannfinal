@@ -47,20 +47,9 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       )
     }
-
-    const teacher = await prisma.teacher.findFirst({
-      where: { id: teacherId.trim(), status: 'ACTIVE' },
-      select: { id: true },
-    })
-    if (!teacher) {
-      return NextResponse.json(
-        { ok: false, message: 'Professor não encontrado ou inativo' },
-        { status: 404 }
-      )
-    }
-
     // Interpretar o horário sempre no fuso de Campinas (America/Sao_Paulo)
     const TZ = 'America/Sao_Paulo'
+
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: TZ,
       weekday: 'short',
@@ -68,9 +57,11 @@ export async function GET(request: NextRequest) {
       minute: '2-digit',
       hour12: false,
     }).formatToParts(dt)
+
     const weekday = parts.find((p) => p.type === 'weekday')?.value
     const hourStr = parts.find((p) => p.type === 'hour')?.value ?? '0'
     const minuteStr = parts.find((p) => p.type === 'minute')?.value ?? '0'
+
     const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
     const dayOfWeek = dayMap[weekday ?? ''] ?? 0
     const minutesOfDay = parseInt(hourStr, 10) * 60 + parseInt(minuteStr, 10)
