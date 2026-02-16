@@ -7,12 +7,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
-import StatCard from '@/components/admin/StatCard'
 import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2 } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Search, Bell } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -130,6 +129,18 @@ export default function FinanceiroProfessoresPage() {
   const [obsNewMessage, setObsNewMessage] = useState('')
   const [obsLoading, setObsLoading] = useState(false)
   const [obsSaving, setObsSaving] = useState(false)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
+  const [showPeriodo, setShowPeriodo] = useState(false)
+  // Modal Enviar notificação de pagamento (e-mail + anexo)
+  const [notifyTeacher, setNotifyTeacher] = useState<ProfessorFinanceiro | null>(null)
+  const [notifyMessage, setNotifyMessage] = useState('')
+  const [notifyFile, setNotifyFile] = useState<File | null>(null)
+  const [sendingNotify, setSendingNotify] = useState(false)
+  const [filterBusca, setFilterBusca] = useState('')
+  const [filterValorMin, setFilterValorMin] = useState('')
+  const [filterValorMax, setFilterValorMax] = useState('')
+  const [filterProximosDias, setFilterProximosDias] = useState(false)
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const COLUMN_KEYS_FINANCEIRO_PROF = [
     'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
@@ -180,10 +191,50 @@ export default function FinanceiroProfessoresPage() {
   }, [professores])
 
   const tabelaData = useMemo(() => {
-    if (filterAlerta === 'proximo') return proximoPagamento
-    if (filterAlerta === 'atrasados') return atrasados
-    return professores
-  }, [professores, filterAlerta, proximoPagamento, atrasados])
+    let list = professores
+    if (filterAlerta === 'proximo') list = proximoPagamento
+    else if (filterAlerta === 'atrasados') list = atrasados
+
+    // Filtro por busca (nome)
+    const busca = filterBusca.trim().toLowerCase()
+    if (busca) {
+      list = list.filter((p) => p.nome.toLowerCase().includes(busca))
+    }
+
+    // Filtro por valor
+    if (filterValorMin) {
+      const min = Number(filterValorMin)
+      if (!isNaN(min)) {
+        list = list.filter((p) => p.valorAPagar >= min)
+      }
+    }
+    if (filterValorMax) {
+      const max = Number(filterValorMax)
+      if (!isNaN(max)) {
+        list = list.filter((p) => p.valorAPagar <= max)
+      }
+    }
+
+    // Filtro por data de término (próximos dias)
+    if (filterProximosDias) {
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      const em7 = new Date(hoje)
+      em7.setDate(em7.getDate() + 7)
+      list = list.filter((p) => {
+        const termino = new Date(p.dataTermino + 'T12:00:00')
+        termino.setHours(0, 0, 0, 0)
+        return termino.getTime() >= hoje.getTime() && termino.getTime() <= em7.getTime()
+      })
+    }
+
+    return list
+  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterValorMin, filterValorMax, filterProximosDias])
+
+  const displayedData = useMemo(
+    () => tabelaData.slice(0, itemsPerPage),
+    [tabelaData, itemsPerPage]
+  )
 
   const openEditPeriodo = (row: ProfessorFinanceiro) => {
     setEditPeriodo(row)
@@ -266,6 +317,52 @@ export default function FinanceiroProfessoresPage() {
       }
     } catch {
       setToast({ message: 'Erro ao remover', type: 'error' })
+    }
+  }
+
+  const openNotifyModal = (row: ProfessorFinanceiro) => {
+    const mesNome = MESES_LABELS[selectedMes] ?? String(selectedMes)
+    const valorStr = formatMoney(row.valorAPagar)
+    const defaultMessage = `Olá,
+
+Informamos que o pagamento referente à prestação de serviços de ${mesNome} de ${selectedAno} foi confirmado.
+O valor é de ${valorStr}.
+
+Em caso de dúvidas, entre em contato com a gestão financeira.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+    setNotifyTeacher(row)
+    setNotifyMessage(defaultMessage)
+    setNotifyFile(null)
+  }
+
+  const submitNotifyPayment = async () => {
+    if (!notifyTeacher) return
+    setSendingNotify(true)
+    setToast(null)
+    try {
+      const formData = new FormData()
+      formData.set('year', String(selectedAno))
+      formData.set('month', String(selectedMes))
+      formData.set('message', notifyMessage)
+      if (notifyFile) formData.set('attachment', notifyFile)
+      const res = await fetch(`/api/admin/financeiro/professores/${notifyTeacher.id}/notify-payment`, {
+        method: 'POST',
+        body: formData,
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao enviar notificação.', type: 'error' })
+        return
+      }
+      setToast({ message: json.message || 'Notificação enviada.', type: 'success' })
+      await fetchData(selectedAno, selectedMes)
+      setNotifyTeacher(null)
+    } catch {
+      setToast({ message: 'Erro ao enviar notificação.', type: 'error' })
+    } finally {
+      setSendingNotify(false)
     }
   }
 
@@ -459,7 +556,7 @@ export default function FinanceiroProfessoresPage() {
       key: 'acoes',
       label: '',
       render: (row) => (
-        <div className="inline-flex items-center gap-1">
+        <div className="inline-flex items-center gap-1 flex-wrap">
           <button
             type="button"
             onClick={() => setObsModal({ teacherId: row.id, nome: row.nome })}
@@ -477,6 +574,15 @@ export default function FinanceiroProfessoresPage() {
             <Calendar className="w-4 h-4" />
             Editar mês
           </button>
+          <button
+            type="button"
+            onClick={() => openNotifyModal(row)}
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-green-700 hover:bg-green-50"
+            title="Abrir preview e enviar e-mail de notificação de pagamento"
+          >
+            <Bell className="w-4 h-4" />
+            Notificar pagamento
+          </button>
         </div>
       ),
     },
@@ -490,148 +596,245 @@ export default function FinanceiroProfessoresPage() {
           Gestão financeira relacionada aos professores (pagamento de aulas, etc.). Selecione ano e mês; status e valores são independentes por mês (como no financeiro dos alunos).
         </p>
 
-        {/* Seletor ano e mês (igual ao financeiro alunos) */}
-        <div className="mt-6 space-y-4">
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Selecione o ano</p>
-            <div className="flex flex-wrap gap-2">
-              {ANOS_DISPONIVEIS.map((ano) => (
-                <button
-                  key={ano}
-                  type="button"
-                  onClick={() => setSelectedAno(ano)}
-                  className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
-                    selectedAno === ano
-                      ? 'bg-orange-600 text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {ano}
-                </button>
-              ))}
+        {/* Seção: Período (ano e mês) - Recolhível */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-6">
+          <button
+            type="button"
+            onClick={() => setShowPeriodo((v) => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+          >
+            <Calendar className="w-5 h-5 text-brand-orange shrink-0" />
+            <span className="flex-1">Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}</span>
+            {showPeriodo ? <ChevronDown className="w-5 h-5 shrink-0" /> : <ChevronRight className="w-5 h-5 shrink-0" />}
+          </button>
+          {showPeriodo && (
+            <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4">
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ano</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ANOS_DISPONIVEIS.map((ano) => (
+                      <button
+                        key={ano}
+                        type="button"
+                        onClick={() => setSelectedAno(ano)}
+                        className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                          selectedAno === ano ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {ano}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-4">Mês</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setSelectedMes(m)}
+                        className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
+                          selectedMes === m ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {MESES_ABREV[m]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-lg font-semibold text-gray-800 border-l-4 border-brand-orange pl-4">
+                  Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
+                </p>
+              </div>
             </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Mês</p>
-            <div className="flex flex-wrap gap-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setSelectedMes(m)}
-                  className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
-                    selectedMes === m
-                      ? 'bg-orange-600 text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {MESES_ABREV[m]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <p className="mt-4 text-sm font-medium text-gray-700">
-          Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
-        </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mt-6">
-          <StatCard
-            title="Total a pagar (estimado)"
-            value={loading ? '—' : formatMoney(cubos.totalAPagar)}
-            icon={<Wallet className="w-6 h-6" />}
-            color="orange"
-          />
-          <StatCard
-            title="Valores pagos"
-            value={loading ? '—' : formatMoney(cubos.valoresPagos)}
-            icon={<CheckCircle className="w-6 h-6" />}
-            color="green"
-          />
-          <StatCard
-            title="Total de professores ativos"
-            value={loading ? '—' : cubos.totalProfessoresAtivos}
-            icon={<Users className="w-6 h-6" />}
-            color="blue"
-          />
-          <button
-            type="button"
-            onClick={() => proximoPagamento.length > 0 && setFilterAlerta(filterAlerta === 'proximo' ? 'todos' : 'proximo')}
-            disabled={loading || proximoPagamento.length === 0}
-            className={`text-left rounded-xl border-2 transition-colors ${
-              filterAlerta === 'proximo'
-                ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-300'
-                : proximoPagamento.length > 0
-                  ? 'border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50/50'
-                  : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-            }`}
-          >
-            <StatCard
-              title="Próximo do pagamento"
-              value={loading ? '—' : proximoPagamento.length}
-              icon={<Clock className="w-6 h-6" />}
-              color="orange"
-              subtitle="Venc. próximos 7 dias • clique para filtrar"
-            />
-          </button>
-          <button
-            type="button"
-            onClick={() => atrasados.length > 0 && setFilterAlerta(filterAlerta === 'atrasados' ? 'todos' : 'atrasados')}
-            disabled={loading || atrasados.length === 0}
-            className={`text-left rounded-xl border-2 transition-colors ${
-              filterAlerta === 'atrasados'
-                ? 'border-red-500 bg-red-50 ring-2 ring-red-300'
-                : atrasados.length > 0
-                  ? 'border-red-200 bg-white hover:border-red-400 hover:bg-red-50/50'
-                  : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-            }`}
-          >
-            <StatCard
-              title="Atrasados"
-              value={loading ? '—' : atrasados.length}
-              icon={<AlertTriangle className="w-6 h-6" />}
-              color="red"
-              subtitle="Venc. já passou • clique para filtrar"
-            />
-          </button>
-        </div>
-
-        <div className="mt-6 flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => fetchData(selectedAno, selectedMes)}
-            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
-          >
-            Atualizar lista
-          </button>
-          {filterAlerta !== 'todos' && (
-            <button
-              type="button"
-              onClick={() => setFilterAlerta('todos')}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Limpar filtro • Ver todos
-            </button>
           )}
         </div>
 
-        <div className="mt-6 w-full max-w-full overflow-hidden">
-          <Table<ProfessorFinanceiro>
-            columns={columns}
-            data={tabelaData}
-            loading={loading}
-            visibleColumnKeys={visibleColumnKeys}
-            onVisibleColumnsChange={setVisibleColumnKeys}
-            emptyMessage={
-              filterAlerta === 'proximo'
-                ? 'Nenhum professor com vencimento nos próximos 7 dias (não pagos).'
-                : filterAlerta === 'atrasados'
-                  ? 'Nenhum professor atrasado (não pago com vencimento já passado).'
-                  : 'Nenhum professor ativo.'
-            }
-          />
-        </div>
+        {/* Seção: Resumo do mês (cubos) */}
+        <section className="mt-6">
+          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total a pagar (estimado)</p>
+              <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.totalAPagar)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-green-800 uppercase tracking-wide">Valores pagos</p>
+              <p className="mt-1 text-xl font-bold text-green-900">{loading ? '—' : formatMoney(cubos.valoresPagos)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Total de professores ativos</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{loading ? '—' : cubos.totalProfessoresAtivos}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => proximoPagamento.length > 0 && setFilterAlerta(filterAlerta === 'proximo' ? 'todos' : 'proximo')}
+              disabled={loading || proximoPagamento.length === 0}
+              className={`text-left rounded-xl border-2 transition-colors ${
+                filterAlerta === 'proximo'
+                  ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-300'
+                  : proximoPagamento.length > 0
+                    ? 'border-amber-200 bg-white hover:border-amber-400 hover:bg-amber-50/50'
+                    : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+              }`}
+            >
+              <div className="p-4">
+                <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Próximo do pagamento</p>
+                <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : proximoPagamento.length}</p>
+                <p className="mt-1 text-xs text-amber-700">Venc. próximos 7 dias • clique para filtrar</p>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => atrasados.length > 0 && setFilterAlerta(filterAlerta === 'atrasados' ? 'todos' : 'atrasados')}
+              disabled={loading || atrasados.length === 0}
+              className={`text-left rounded-xl border-2 transition-colors ${
+                filterAlerta === 'atrasados'
+                  ? 'border-red-500 bg-red-50 ring-2 ring-red-300'
+                  : atrasados.length > 0
+                    ? 'border-red-200 bg-white hover:border-red-400 hover:bg-red-50/50'
+                    : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+              }`}
+            >
+              <div className="p-4">
+                <p className="text-xs font-semibold text-red-800 uppercase tracking-wide">Atrasados</p>
+                <p className="mt-1 text-xl font-bold text-red-900">{loading ? '—' : atrasados.length}</p>
+                <p className="mt-1 text-xs text-red-700">Venc. já passou • clique para filtrar</p>
+              </div>
+            </button>
+          </div>
+        </section>
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
+          </div>
+        ) : (
+          <>
+            {/* Seção: Buscar e filtros (recolhível) */}
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden mt-6">
+              <button
+                type="button"
+                onClick={() => setShowBuscarFiltros((v) => !v)}
+                className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+              >
+                <Search className="w-5 h-5 text-brand-orange shrink-0" />
+                <span>Buscar e filtros</span>
+                {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
+              </button>
+              {showBuscarFiltros && (
+                <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+                  <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Nome do professor</label>
+                      <input
+                        type="text"
+                        value={filterBusca}
+                        onChange={(e) => setFilterBusca(e.target.value)}
+                        placeholder="Digite para filtrar..."
+                        className="input w-full"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-6">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={filterProximosDias}
+                          onChange={(e) => setFilterProximosDias(e.target.checked)}
+                          className="rounded border-gray-300 text-amber-600"
+                        />
+                        <span className="text-sm text-gray-700">Venc. próximos 7 dias</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-gray-100">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Valor mínimo (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={filterValorMin}
+                        onChange={(e) => setFilterValorMin(e.target.value)}
+                        placeholder="0,00"
+                        className="input min-w-[140px] text-sm py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Valor máximo (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={filterValorMax}
+                        onChange={(e) => setFilterValorMax(e.target.value)}
+                        placeholder="0,00"
+                        className="input min-w-[140px] text-sm py-2"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Seção: Lista de professores */}
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-6">
+              <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
+                <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de professores</h2>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Itens por página</label>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                    className="input min-w-[72px] text-sm py-1.5"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={50}>50</option>
+                    <option value={500}>500</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fetchData(selectedAno, selectedMes)}
+                  className="rounded-lg bg-brand-orange px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                >
+                  Atualizar lista
+                </button>
+                {filterAlerta !== 'todos' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterAlerta('todos')}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Limpar filtro • Ver todos
+                  </button>
+                )}
+                {tabelaData.length > itemsPerPage && (
+                  <span className="text-sm text-gray-500 ml-auto">
+                    Mostrando {displayedData.length} de {tabelaData.length} professores
+                  </span>
+                )}
+              </div>
+              <div className="w-full max-w-full overflow-hidden">
+                <Table<ProfessorFinanceiro>
+                  columns={columns}
+                  data={displayedData}
+                  loading={false}
+                  visibleColumnKeys={visibleColumnKeys}
+                  onVisibleColumnsChange={setVisibleColumnKeys}
+                  emptyMessage={
+                    filterAlerta === 'proximo'
+                      ? 'Nenhum professor com vencimento nos próximos 7 dias (não pagos).'
+                      : filterAlerta === 'atrasados'
+                        ? 'Nenhum professor atrasado (não pago com vencimento já passado).'
+                        : 'Nenhum professor ativo.'
+                  }
+                />
+              </div>
+            </section>
+          </>
+        )}
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </div>
@@ -720,6 +923,71 @@ export default function FinanceiroProfessoresPage() {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               />
               <p className="text-xs text-gray-500 mt-0.5">Salvo no cadastro do professor.</p>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Enviar notificação de pagamento (e-mail + anexo) */}
+      <Modal
+        isOpen={!!notifyTeacher}
+        onClose={() => setNotifyTeacher(null)}
+        title={notifyTeacher ? `Enviar notificação de pagamento – ${notifyTeacher.nome}` : 'Enviar notificação'}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setNotifyTeacher(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={submitNotifyPayment} disabled={sendingNotify}>
+              {sendingNotify ? 'Enviando...' : 'Enviar notificação'}
+            </Button>
+          </>
+        }
+      >
+        {notifyTeacher && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Revise o e-mail abaixo antes de enviar. Você pode editar a mensagem e anexar um arquivo. Ao clicar em &quot;Enviar notificação&quot;, o pagamento será marcado como pago e a notificação in-app também será registrada.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Para (e-mail)</label>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800">
+                {notifyTeacher.nome}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Notificação será enviada ao e-mail cadastrado do professor.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Assunto</label>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800">
+                Pagamento confirmado – {MESES_LABELS[selectedMes]} de {selectedAno}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Mensagem</label>
+              <textarea
+                rows={8}
+                value={notifyMessage}
+                onChange={(e) => setNotifyMessage(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                placeholder="Texto do e-mail..."
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Anexo (opcional)</label>
+              <input
+                type="file"
+                accept="*/*"
+                onChange={(e) => setNotifyFile(e.target.files?.[0] ?? null)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-orange-50 file:px-3 file:py-1 file:text-orange-700 focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              />
+              {notifyFile && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Arquivo selecionado: {notifyFile.name} ({(notifyFile.size / 1024).toFixed(1)} KB)
+                </p>
+              )}
             </div>
           </div>
         )}

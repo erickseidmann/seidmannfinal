@@ -70,13 +70,13 @@ export async function GET(request: NextRequest) {
     const endAt = new Date(dt.getTime() + durationMinutes * 60 * 1000)
 
     const slots = await prisma.teacherAvailabilitySlot.findMany({
-      where: { teacherId: teacher.id },
+      where: { teacherId },
       select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
     })
 
     const existingLessons = await prisma.lesson.findMany({
       where: {
-        teacherId: teacher.id,
+        teacherId,
         status: { not: 'CANCELLED' },
         ...(excludeLessonId ? { id: { not: excludeLessonId } } : {}),
       },
