@@ -110,11 +110,13 @@ export default function CalendarioProfessorPage() {
   const { locale, t } = useLanguage()
   const dateLocale = DATE_LOCALE_MAP[locale] ?? 'pt-BR'
   const DIAS_SEMANA = useMemo(
-    () => [0, 1, 2, 3, 4, 5, 6].map((d) => formatWeekdayInTZ(new Date(2024, 0, d), dateLocale)),
+    () => [0, 1, 2, 3, 4, 5, 6].map((d) => 
+      formatWeekdayInTZ(new Date(Date.UTC(2024, 0, 7 + d, 12, 0, 0)), dateLocale)
+    ),
     [dateLocale]
   )
   const MESES = useMemo(
-    () => [...Array(12)].map((_, i) => formatMonthInTZ(new Date(2024, i, 1), dateLocale)),
+    () => [...Array(12)].map((_, i) => formatMonthInTZ(new Date(Date.UTC(2024, i, 15, 12, 0, 0)), dateLocale)),
     [dateLocale]
   )
   const statusLabel = (s: string) =>
