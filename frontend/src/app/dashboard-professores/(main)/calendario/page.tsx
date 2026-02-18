@@ -539,14 +539,14 @@ export default function CalendarioProfessorPage() {
     return slots
   }, [])
 
-  const getLessonsForDay = (day: Date) => lessons.filter((l) => isSameDayInTZ(l.startAt, day))
+  const getLessonsForDay = (day: Date) => lessons.filter((l) => toDateKeyInTZ(l.startAt) === toDateKeyInTZ(day))
   const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
     // Compare times in Brazil timezone
-    const dayInTZ = getDateInTZ(day)
+    const dayKey = toDateKeyInTZ(day)
     return lessons.filter((l) => {
       const lessonTime = getTimeInTZ(l.startAt)
-      const lessonDay = getDateInTZ(l.startAt)
-      if (!isSameDayInTZ(lessonDay, dayInTZ)) return false
+      const lessonDayKey = toDateKeyInTZ(l.startAt)
+      if (lessonDayKey !== dayKey) return false
       const slotEndHour = slotMinute === 30 ? slotHour + 1 : slotHour
       const slotEndMinute = slotMinute === 30 ? 0 : 30
       if (lessonTime.hour < slotHour) return false
