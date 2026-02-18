@@ -19,6 +19,13 @@ import {
   ymdInTZ,
   formatWeekdayInTZ,
   formatMonthInTZ,
+  getStartOfWeekInTZ,
+  getStartOfMonthInTZ,
+  toDateKeyInTZ,
+  addDaysInTZ,
+  addMonthsInTZ,
+  getDayOfWeekInTZ,
+  getDatePartsInTZ,
 } from '@/lib/datetime'
 
 type ViewType = 'month' | 'week' | 'day'
@@ -74,45 +81,12 @@ interface GroupMember {
 
 const DATE_LOCALE_MAP = { 'pt-BR': 'pt-BR', en: 'en-US', es: 'es' } as const
 
-function getStartOfWeek(d: Date): Date {
-  const date = new Date(d)
-  const day = date.getDay()
-  date.setDate(date.getDate() - day)
-  date.setHours(0, 0, 0, 0)
-  return date
-}
-
-function getStartOfMonth(d: Date): Date {
-  const date = new Date(d.getFullYear(), d.getMonth(), 1)
-  date.setHours(0, 0, 0, 0)
-  return date
-}
-
-function addDays(d: Date, n: number): Date {
-  const r = new Date(d)
-  r.setDate(r.getDate() + n)
-  return r
-}
-
-function addMonths(d: Date, n: number): Date {
-  const r = new Date(d)
-  r.setMonth(r.getMonth() + n)
-  return r
-}
-
-function isSameMonth(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+function isSameMonthInTZ(a: Date, b: Date): boolean {
+  return ymdInTZ(a).slice(0, 7) === ymdInTZ(b).slice(0, 7)
 }
 
 function isToday(d: Date): boolean {
   return isSameDayInTZ(d, new Date())
-}
-
-function toDateKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
 }
 
 function getLessonStudentLabel(l: Lesson): string {
@@ -215,19 +189,21 @@ export default function CalendarioProfessorPage() {
     let start: Date
     let end: Date
     if (view === 'month') {
-      start = getStartOfMonth(currentDate)
-      end = addMonths(start, 1)
-      end.setDate(0)
-      end.setHours(23, 59, 59, 999)
+      start = getStartOfMonthInTZ(currentDate)
+      const nextMonth = addMonthsInTZ(start, 1)
+      end = addDaysInTZ(nextMonth, -1)
+      const ymdEnd = ymdInTZ(end)
+      const [ye, me, de] = ymdEnd.split('-').map(Number)
+      end = new Date(Date.UTC(ye, me - 1, de + 1, 2, 59, 59, 999))
     } else if (view === 'week') {
-      start = getStartOfWeek(currentDate)
-      end = addDays(start, 7)
+      start = getStartOfWeekInTZ(currentDate)
+      end = addDaysInTZ(start, 7)
       end.setSeconds(-1)
     } else {
-      start = new Date(currentDate)
-      start.setHours(0, 0, 0, 0)
-      end = new Date(currentDate)
-      end.setHours(23, 59, 59, 999)
+      const ymd = ymdInTZ(currentDate)
+      const [y, m, d] = ymd.split('-').map(Number)
+      start = new Date(Date.UTC(y, m - 1, d, 3, 0, 0, 0))
+      end = new Date(Date.UTC(y, m - 1, d + 1, 2, 59, 59, 999))
     }
     setLoading(true)
     setError(null)
@@ -298,19 +274,19 @@ export default function CalendarioProfessorPage() {
     let start: Date
     let end: Date
     if (view === 'month') {
-      start = getStartOfMonth(currentDate)
-      const nextMonth = addMonths(currentDate, 1)
-      end = addDays(nextMonth, -1)
+      start = getStartOfMonthInTZ(currentDate)
+      const nextMonth = addMonthsInTZ(currentDate, 1)
+      end = addDaysInTZ(nextMonth, -1)
     } else if (view === 'week') {
-      start = getStartOfWeek(currentDate)
-      end = addDays(start, 6)
+      start = getStartOfWeekInTZ(currentDate)
+      end = addDaysInTZ(start, 6)
     } else {
-      start = new Date(currentDate)
-      start.setHours(0, 0, 0, 0)
-      end = new Date(currentDate)
-      end.setHours(23, 59, 59, 999)
+      const ymd = ymdInTZ(currentDate)
+      const [y, m, d] = ymd.split('-').map(Number)
+      start = new Date(Date.UTC(y, m - 1, d, 3, 0, 0, 0))
+      end = new Date(Date.UTC(y, m - 1, d + 1, 2, 59, 59, 999))
     }
-    return { start: toDateKey(start), end: toDateKey(end) }
+    return { start: toDateKeyInTZ(start), end: toDateKeyInTZ(end) }
   }, [view, currentDate])
 
   const fetchHolidays = useCallback(async () => {
@@ -333,8 +309,7 @@ export default function CalendarioProfessorPage() {
 
   const selectedLessonIsHoliday = useMemo(() => {
     if (!selectedLesson) return false
-    const lessonDate = new Date(selectedLesson.startAt)
-    return holidays.has(toDateKey(lessonDate))
+    return holidays.has(toDateKeyInTZ(selectedLesson.startAt))
   }, [selectedLesson, holidays])
 
   // Aula futura = dia futuro OU (hoje e horário ainda não chegou) — horário São Paulo
@@ -494,43 +469,46 @@ export default function CalendarioProfessorPage() {
   }
 
   const titleLabel = useMemo(() => {
-    if (view === 'month') return `${MESES[currentDate.getMonth()]} ${currentDate.getFullYear()}`
+    const parts = getDatePartsInTZ(currentDate)
+    if (view === 'month') return `${MESES[parts.month]} ${parts.year}`
     if (view === 'week') {
-      const start = getStartOfWeek(currentDate)
-      const end = addDays(start, 6)
-      return `${start.getDate()}/${start.getMonth() + 1} – ${end.getDate()}/${end.getMonth() + 1} ${currentDate.getFullYear()}`
+      const start = getStartOfWeekInTZ(currentDate)
+      const end = addDaysInTZ(start, 6)
+      const sp = getDatePartsInTZ(start)
+      const ep = getDatePartsInTZ(end)
+      return `${sp.day}/${sp.month + 1} – ${ep.day}/${ep.month + 1} ${parts.year}`
     }
-    return `${currentDate.getDate()} ${MESES[currentDate.getMonth()]} ${currentDate.getFullYear()}`
-  }, [view, currentDate])
+    return `${parts.day} ${MESES[parts.month]} ${parts.year}`
+  }, [view, currentDate, MESES])
 
   const goPrev = () => {
-    if (view === 'month') setCurrentDate((d) => addMonths(d, -1))
-    else if (view === 'week') setCurrentDate((d) => addDays(d, -7))
-    else setCurrentDate((d) => addDays(d, -1))
+    if (view === 'month') setCurrentDate((d) => addMonthsInTZ(d, -1))
+    else if (view === 'week') setCurrentDate((d) => addDaysInTZ(d, -7))
+    else setCurrentDate((d) => addDaysInTZ(d, -1))
   }
   const goNext = () => {
-    if (view === 'month') setCurrentDate((d) => addMonths(d, 1))
-    else if (view === 'week') setCurrentDate((d) => addDays(d, 7))
-    else setCurrentDate((d) => addDays(d, 1))
+    if (view === 'month') setCurrentDate((d) => addMonthsInTZ(d, 1))
+    else if (view === 'week') setCurrentDate((d) => addDaysInTZ(d, 7))
+    else setCurrentDate((d) => addDaysInTZ(d, 1))
   }
   const goToday = () => setCurrentDate(new Date())
 
   const monthGrid = useMemo(() => {
-    const start = getStartOfMonth(currentDate)
-    let cell = new Date(getStartOfWeek(start))
+    const monthStart = getStartOfMonthInTZ(currentDate)
+    let cell = new Date(getStartOfWeekInTZ(monthStart))
     const weeks: Date[][] = []
     for (let w = 0; w < 6; w++) {
       const row: Date[] = []
       for (let d = 0; d < 7; d++) {
         row.push(new Date(cell))
-        cell.setDate(cell.getDate() + 1)
+        cell = addDaysInTZ(cell, 1)
       }
       weeks.push(row)
     }
     return weeks
   }, [currentDate])
 
-  const weekStart = useMemo(() => getStartOfWeek(currentDate), [currentDate])
+  const weekStart = useMemo(() => getStartOfWeekInTZ(currentDate), [currentDate])
   
   // Verificar se o professor está disponível em um horário específico
   const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 60): boolean => {
@@ -539,7 +517,7 @@ export default function CalendarioProfessorPage() {
       return true
     }
 
-    const dayOfWeek = day.getDay()
+    const dayOfWeek = getDayOfWeekInTZ(day)
     const slotStartMinutes = slotHour * 60 + slotMinute
     const slotEndMinutes = slotStartMinutes + durationMinutes
 
@@ -662,22 +640,24 @@ export default function CalendarioProfessorPage() {
             ))}
             {monthGrid.map((week, wi) =>
               week.map((day, di) => {
-                const otherMonth = !isSameMonth(day, currentDate)
+                const otherMonth = !isSameMonthInTZ(day, currentDate)
                 const dayLessons = getLessonsForDay(day)
-                const isHoliday = holidays.has(toDateKey(day))
+                const isHoliday = holidays.has(toDateKeyInTZ(day))
+                const dow = getDayOfWeekInTZ(day)
+                const dayNum = getDatePartsInTZ(day).day
                 return (
                   <div
                     key={`${wi}-${di}`}
                     className={`min-h-[72px] sm:min-h-[100px] md:min-h-[120px] border-b border-r border-gray-100 p-1 sm:p-2 ${
-                      otherMonth ? 'bg-gray-50/50' : isHoliday ? 'bg-amber-50/80' : di === 0 ? 'bg-red-50' : 'bg-white'
+                      otherMonth ? 'bg-gray-50/50' : isHoliday ? 'bg-amber-50/80' : dow === 0 ? 'bg-red-50' : 'bg-white'
                     } ${di === 6 ? 'border-r-0' : ''}`}
                   >
                     <span
                       className={`inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm ${
-                        isToday(day) ? 'bg-brand-orange text-white font-semibold' : otherMonth ? 'text-gray-400' : isHoliday ? 'text-amber-700' : di === 0 ? 'text-red-700' : 'text-gray-800'
+                        isToday(day) ? 'bg-brand-orange text-white font-semibold' : otherMonth ? 'text-gray-400' : isHoliday ? 'text-amber-700' : dow === 0 ? 'text-red-700' : 'text-gray-800'
                       }`}
                     >
-                      {day.getDate()}
+                      {dayNum}
                     </span>
                     <div className="mt-0.5 sm:mt-1 space-y-0.5">
                       {dayLessons.slice(0, 3).map((l) => (
@@ -706,12 +686,14 @@ export default function CalendarioProfessorPage() {
           <div className="min-w-[600px] sm:min-w-0">
             <div className="grid grid-cols-8 border-b border-gray-200 bg-gray-50">
               <div className="py-2 text-xs font-semibold text-gray-500 border-r border-gray-200 pl-2 w-12 sm:w-14 shrink-0">{t('professor.calendar.time')}</div>
-              {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => {
-                const isHoliday = holidays.has(toDateKey(d))
+              {Array.from({ length: 7 }, (_, i) => addDaysInTZ(weekStart, i)).map((d) => {
+                const isHoliday = holidays.has(toDateKeyInTZ(d))
+                const dow = getDayOfWeekInTZ(d)
+                const dayNum = getDatePartsInTZ(d).day
                 return (
-                <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold min-w-0 ${d.getDay() === 0 ? 'text-red-700 bg-red-50' : isHoliday ? 'text-amber-700 bg-amber-50/80' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
-                  <div className="truncate">{DIAS_SEMANA[d.getDay()]}</div>
-                  <div className="font-normal">{d.getDate()}</div>
+                <div key={d.toISOString()} className={`py-2 text-center text-xs font-semibold min-w-0 ${dow === 0 ? 'text-red-700 bg-red-50' : isHoliday ? 'text-amber-700 bg-amber-50/80' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-gray-600'}`}>
+                  <div className="truncate">{DIAS_SEMANA[dow]}</div>
+                  <div className="font-normal">{dayNum}</div>
                 </div>
               )
               })}
@@ -721,13 +703,14 @@ export default function CalendarioProfessorPage() {
                 <div key={`${slot.hour}-${slot.minute}`} className="grid grid-cols-8 border-b border-gray-100 min-h-[40px]">
                   <div className="py-1 pl-2 text-xs text-gray-500 border-r border-gray-100 w-12 sm:w-14 shrink-0">{formatSlotLabel(slot)}</div>
                   {Array.from({ length: 7 }, (_, i) => {
-                    const d = addDays(weekStart, i)
+                    const d = addDaysInTZ(weekStart, i)
                     const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
                     const isAvailable = isTeacherAvailableAtSlot(d, slot.hour, slot.minute)
-                    const dayIsHoliday = holidays.has(toDateKey(d))
+                    const dayIsHoliday = holidays.has(toDateKeyInTZ(d))
+                    const dow = getDayOfWeekInTZ(d)
                     return (
-                      <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${d.getDay() === 0 ? 'bg-red-50' : dayIsHoliday ? 'bg-amber-50/50' : ''}`}>
-                        {!isAvailable && d.getDay() !== 0 && (
+                      <div key={i} className={`border-r border-gray-50 last:border-r-0 p-1 flex flex-col gap-0.5 min-w-0 ${dow === 0 ? 'bg-red-50' : dayIsHoliday ? 'bg-amber-50/50' : ''}`}>
+                        {!isAvailable && dow !== 0 && (
                           <span className="text-[10px] text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
                         )}
                         {slotLessons.map((l) => (
@@ -752,10 +735,10 @@ export default function CalendarioProfessorPage() {
 
       {view === 'day' && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-w-0">
-          <div className={`border-b border-gray-200 px-3 sm:px-4 py-2 text-sm font-semibold ${currentDate.getDay() === 0 ? 'bg-red-50 text-red-700' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/80 text-amber-800' : 'bg-gray-50 text-gray-700'}`}>
-            {DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}
+          <div className={`border-b border-gray-200 px-3 sm:px-4 py-2 text-sm font-semibold ${getDayOfWeekInTZ(currentDate) === 0 ? 'bg-red-50 text-red-700' : holidays.has(toDateKeyInTZ(currentDate)) ? 'bg-amber-50/80 text-amber-800' : 'bg-gray-50 text-gray-700'}`}>
+            {DIAS_SEMANA[getDayOfWeekInTZ(currentDate)]} – {getDatePartsInTZ(currentDate).day} {MESES[getDatePartsInTZ(currentDate).month]}
           </div>
-          <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${currentDate.getDay() === 0 ? 'bg-red-50/30' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/20' : ''}`}>
+          <div className={`max-h-[65vh] sm:max-h-[70vh] overflow-y-auto overflow-x-hidden ${getDayOfWeekInTZ(currentDate) === 0 ? 'bg-red-50/30' : holidays.has(toDateKeyInTZ(currentDate)) ? 'bg-amber-50/20' : ''}`}>
             {timeSlots.map((slot) => {
               const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
               const isAvailable = isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute)
@@ -763,7 +746,7 @@ export default function CalendarioProfessorPage() {
                 <div key={`${slot.hour}-${slot.minute}`} className="flex border-b border-gray-100 min-h-[52px] sm:min-h-[48px]">
                   <div className="w-14 sm:w-16 shrink-0 py-2 sm:py-1.5 pl-2 text-xs text-gray-500 border-r border-gray-100">{formatSlotLabel(slot)}</div>
                   <div className="flex-1 min-w-0 p-2 flex flex-col gap-1">
-                    {!isAvailable && currentDate.getDay() !== 0 && (
+                    {!isAvailable && getDayOfWeekInTZ(currentDate) !== 0 && (
                       <span className="text-xs text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
                     )}
                     {slotLessons.map((l) => (

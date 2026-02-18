@@ -227,14 +227,7 @@ export async function POST(request: NextRequest) {
     const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
     const repeatFrequencyWeeks = repeatFrequencyEnabled ? Math.min(52, Math.max(1, Number(repeatFrequencyWeeksParam) || 1)) : 0
 
-    function toDateKey(d: Date): string {
-      const y = d.getFullYear()
-      const m = String(d.getMonth() + 1).padStart(2, '0')
-      const day = String(d.getDate()).padStart(2, '0')
-      return `${y}-${m}-${day}`
-    }
-
-    // Calcular range de datas para verificar feriados
+    // Calcular range de datas para repetição
     const firstStart = new Date(startAt)
     let lastStart = new Date(startAt)
     
@@ -252,15 +245,6 @@ export async function POST(request: NextRequest) {
       lastStart.setDate(lastStart.getDate() + (repeatWeeks - 1) * 7)
     }
     
-    const startKey = toDateKey(firstStart)
-    const endKey = toDateKey(lastStart)
-
-    const holidayRows = await prisma.holiday.findMany({
-      where: { dateKey: { gte: startKey, lte: endKey } },
-      select: { dateKey: true },
-    })
-    const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
-
     const existingLessonCount = await prisma.lesson.count({
       where: { teacherId, enrollmentId },
     })
@@ -285,9 +269,7 @@ export async function POST(request: NextRequest) {
         // Aula inicial da semana
         const lessonStart = new Date(startAt)
         lessonStart.setDate(lessonStart.getDate() + w * 7)
-        const dateKey1 = toDateKey(lessonStart)
-        if (!holidaySet.has(dateKey1)) {
-          const lesson1 = await prisma.lesson.create({
+        const lesson1 = await prisma.lesson.create({
             data: {
               enrollmentId,
               teacherId,
@@ -304,15 +286,12 @@ export async function POST(request: NextRequest) {
             },
           })
           lessonsCreated.push(lesson1)
-        }
         
         // Aula da mesma semana (se configurada)
         if (repeatSameWeek && repeatSameWeekStartAt) {
           const sameWeekDate = new Date(repeatSameWeekStartAt)
           sameWeekDate.setDate(sameWeekDate.getDate() + w * 7)
-          const dateKey2 = toDateKey(sameWeekDate)
-          if (!holidaySet.has(dateKey2)) {
-            const lesson2 = await prisma.lesson.create({
+          const lesson2 = await prisma.lesson.create({
               data: {
                 enrollmentId,
                 teacherId,
@@ -329,7 +308,6 @@ export async function POST(request: NextRequest) {
               },
             })
             lessonsCreated.push(lesson2)
-          }
         }
       }
     } else {
@@ -338,8 +316,6 @@ export async function POST(request: NextRequest) {
         for (let w = 0; w < repeatWeeks; w++) {
           const lessonStart = new Date(startAt)
           lessonStart.setDate(lessonStart.getDate() + w * 7)
-          const dateKey = toDateKey(lessonStart)
-          if (holidaySet.has(dateKey)) continue
           const lesson = await prisma.lesson.create({
             data: {
               enrollmentId,
@@ -360,34 +336,29 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // Criar apenas a aula inicial
-        const dateKey = toDateKey(firstStart)
-        if (!holidaySet.has(dateKey)) {
-          const lesson = await prisma.lesson.create({
-            data: {
-              enrollmentId,
-              teacherId,
-              status: validStatus,
-              startAt: firstStart,
-              durationMinutes: duration,
-              notes: notesTrim,
-              createdById: auth.session?.sub || null,
-              createdByName,
-            },
-            include: {
-              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-              teacher: { select: { id: true, nome: true, email: true } },
-            },
-          })
-          lessonsCreated.push(lesson)
-        }
+        const lesson = await prisma.lesson.create({
+          data: {
+            enrollmentId,
+            teacherId,
+            status: validStatus,
+            startAt: firstStart,
+            durationMinutes: duration,
+            notes: notesTrim,
+            createdById: auth.session?.sub || null,
+            createdByName,
+          },
+          include: {
+            enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+            teacher: { select: { id: true, nome: true, email: true } },
+          },
+        })
+        lessonsCreated.push(lesson)
       }
       
       // Se há repetição na mesma semana (sem frequência), criar essa aula também
       if (repeatSameWeek && repeatSameWeekStartAt) {
         const sameWeekDate = new Date(repeatSameWeekStartAt)
-        const dateKey = toDateKey(sameWeekDate)
-        if (!holidaySet.has(dateKey)) {
-          const lesson = await prisma.lesson.create({
+        const lesson = await prisma.lesson.create({
             data: {
               enrollmentId,
               teacherId,
@@ -404,13 +375,12 @@ export async function POST(request: NextRequest) {
             },
           })
           lessonsCreated.push(lesson)
-        }
       }
     }
 
     if (lessonsCreated.length === 0) {
       return NextResponse.json(
-        { ok: false, message: 'Não é possível adicionar aula em dia de feriado. Remova o feriado ou escolha outra data.' },
+        { ok: false, message: 'Nenhuma aula foi criada.' },
         { status: 400 }
       )
     }

@@ -1735,7 +1735,7 @@ export default function AdminCalendarioPage() {
                         >
                           {day.getDate()}
                         </span>
-                        {showDayActions && !isHoliday && (
+                        {showDayActions && (
                           <button
                             type="button"
                             onClick={() => openNewLesson(day)}
@@ -1843,7 +1843,7 @@ export default function AdminCalendarioPage() {
                         key={i}
                         className={`border-r border-slate-100 last:border-r-0 p-1 flex flex-col gap-0.5 ${isSunday ? 'bg-red-50/50' : isHoliday ? 'bg-amber-50/50' : ''}`}
                       >
-                        {!isSunday && !isHoliday && (
+                        {!isSunday && (
                           <>
                             {selectedTeacherId && !isTeacherAvailableAtSlot(d, slot.hour, slot.minute) ? (
                               <span className="text-[10px] text-gray-400 italic">Não disponível</span>
@@ -1924,7 +1924,7 @@ export default function AdminCalendarioPage() {
                       {formatSlotLabel(slot)}
                     </div>
                     <div className="flex-1 p-2 flex flex-col gap-1">
-                      {!isSunday && !isHoliday && (
+                      {!isSunday && (
                         <>
                           {selectedTeacherId && !isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute) ? (
                             <span className="text-xs text-gray-400 italic">Não disponível</span>
