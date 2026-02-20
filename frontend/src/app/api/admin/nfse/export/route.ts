@@ -113,7 +113,6 @@ export async function GET(request: NextRequest) {
 
     // Tentar usar archiver se disponível, senão retornar JSON com instruções
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const archiver = require('archiver')
 
       return new Promise<NextResponse>((resolve, reject) => {

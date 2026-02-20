@@ -344,7 +344,7 @@ export default function FinanceiroAlunosPage() {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`
   }
 
-  const handleEditAluno = (aluno: typeof validacaoData.alunos[0]) => {
+  const handleEditAluno = (aluno: typeof validacaoData!.alunos[0]) => {
     setEditAlunoData({
       enrollmentId: aluno.enrollmentId,
       nome: aluno.nome,

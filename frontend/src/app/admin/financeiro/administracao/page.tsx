@@ -631,7 +631,7 @@ Equipe Seidmann Institute`
                 <option value={100}>100</option>
               </select>
             </div>
-            <Button variant="outline" size="sm" onClick={() => exportCsv(adminUsers, ['Nome', 'Função', 'Valor', 'Pagamento'], (r) => [r.nome, r.funcao ?? '', formatMoney(valorExibido(r as AdminUserRow)), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+            <Button variant="outline" size="sm" onClick={() => exportCsv(adminUsers as any[], ['Nome', 'Função', 'Valor', 'Pagamento'], (r: any) => [r.nome, r.funcao ?? '', formatMoney(valorExibido(r as AdminUserRow)), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
               <FileDown className="w-4 h-4 mr-2" />
               Exportar Excel
             </Button>
@@ -664,7 +664,7 @@ Equipe Seidmann Institute`
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses as any[], ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r: any) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
               </Button>
@@ -705,7 +705,7 @@ Equipe Seidmann Institute`
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses as any[], ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r: any) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
               </Button>
