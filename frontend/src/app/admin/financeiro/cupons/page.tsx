@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Tag, Plus, Loader2, Infinity as InfinityIcon, Users, FileDown } from 'lucide-react'
+import { Tag, Plus, Loader2, Infinity as InfinityIcon, Users, FileDown, Power, PowerOff, Trash2 } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -78,6 +78,10 @@ export default function FinanceiroCuponsPage() {
   const [filterAno, setFilterAno] = useState(new Date().getFullYear())
   const [filterStart, setFilterStart] = useState('')
   const [filterEnd, setFilterEnd] = useState('')
+
+  // Confirmação de exclusão
+  const [deleteConfirm, setDeleteConfirm] = useState<{ coupon: Coupon } | null>(null)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   // Modal criar cupom
   const [modalOpen, setModalOpen] = useState(false)
@@ -170,6 +174,53 @@ export default function FinanceiroCuponsPage() {
 
   const closeModal = () => {
     setModalOpen(false)
+  }
+
+  const handleToggleAtivo = async (c: Coupon) => {
+    setActionLoading(c.id)
+    try {
+      const res = await fetch(`/api/admin/coupons/${c.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ativo: !c.ativo }),
+      })
+      const json = await res.json()
+      if (res.ok && json.ok) {
+        setToast({ message: c.ativo ? 'Cupom inativado' : 'Cupom ativado', type: 'success' })
+        await fetchCoupons()
+        if (listModal?.coupon.id === c.id) setListModal(null)
+      } else {
+        setToast({ message: json.message || 'Erro ao atualizar cupom', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao atualizar cupom', type: 'error' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleDelete = async (c: Coupon) => {
+    setActionLoading(c.id)
+    try {
+      const res = await fetch(`/api/admin/coupons/${c.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (res.ok && json.ok) {
+        setToast({ message: 'Cupom excluído', type: 'success' })
+        setDeleteConfirm(null)
+        await fetchCoupons()
+        if (listModal?.coupon.id === c.id) setListModal(null)
+      } else {
+        setToast({ message: json.message || 'Erro ao excluir cupom', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao excluir cupom', type: 'error' })
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -265,8 +316,15 @@ export default function FinanceiroCuponsPage() {
             {coupons.map((c) => (
               <div
                 key={c.id}
-                className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm hover:bg-emerald-100 transition-colors"
+                className={`rounded-xl border-2 p-4 shadow-sm transition-colors ${
+                  c.ativo
+                    ? 'border-emerald-200 bg-emerald-50 hover:bg-emerald-100'
+                    : 'border-gray-200 bg-gray-100 opacity-80'
+                }`}
               >
+                {!c.ativo && (
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Inativo</p>
+                )}
                 <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">
                   {c.nome}
                 </p>
@@ -300,6 +358,33 @@ export default function FinanceiroCuponsPage() {
                     {Number(c.inscricoesCount ?? 0) > 0 ? ' (clique para ver)' : ''}
                   </span>
                 </button>
+
+                <div className="mt-3 pt-3 border-t border-emerald-200/60 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAtivo(c)}
+                    disabled={!!actionLoading}
+                    className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+                  >
+                    {actionLoading === c.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : c.ativo ? (
+                      <PowerOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Power className="w-3.5 h-3.5" />
+                    )}
+                    {c.ativo ? 'Inativar' : 'Ativar'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirm({ coupon: c })}
+                    disabled={!!actionLoading}
+                    className="flex items-center gap-1.5 text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Deletar
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -405,6 +490,49 @@ export default function FinanceiroCuponsPage() {
             </div>
           )}
         </form>
+      </Modal>
+
+      {/* Modal confirmação exclusão */}
+      <Modal
+        isOpen={!!deleteConfirm}
+        onClose={() => !actionLoading && setDeleteConfirm(null)}
+        title="Excluir cupom"
+        size="sm"
+        footer={
+          deleteConfirm && (
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteConfirm(null)}
+                disabled={!!actionLoading}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => deleteConfirm && handleDelete(deleteConfirm.coupon)}
+                disabled={!!actionLoading}
+                className="border-red-300 text-red-600 hover:bg-red-50"
+              >
+                {actionLoading === deleteConfirm.coupon.id ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Excluindo...
+                  </>
+                ) : (
+                  'Sim, excluir'
+                )}
+              </Button>
+            </div>
+          )
+        }
+      >
+        {deleteConfirm && (
+          <p className="text-gray-600">
+            Tem certeza que deseja excluir o cupom <strong>{deleteConfirm.coupon.nome}</strong>?
+            Esta ação não pode ser desfeita.
+          </p>
+        )}
       </Modal>
 
       {/* Modal lista de inscrições */}

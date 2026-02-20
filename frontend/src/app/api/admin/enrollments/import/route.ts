@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData()
     const file = formData.get('file') as File | null
-    if (!file || !(file instanceof File)) {
+    if (!file || !(file instanceof Blob)) {
       return NextResponse.json(
         { ok: false, message: 'Envie um arquivo CSV' },
         { status: 400 }
@@ -297,6 +297,7 @@ export async function POST(request: NextRequest) {
             trackingCode,
             dataNascimento,
             nomeResponsavel: get(row, 'nomeresponsavel') || null,
+            emailResponsavel: get(row, 'emailresponsavel')?.trim()?.toLowerCase().slice(0, 255) || null,
             cpf: get(row, 'cpf')?.replace(/\D/g, '').slice(0, 14) || null,
             cpfResponsavel: get(row, 'cpfresponsavel')?.replace(/\D/g, '').slice(0, 14) || null,
             curso,

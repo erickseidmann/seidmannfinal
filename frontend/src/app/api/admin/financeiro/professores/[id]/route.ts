@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { logFinanceAction, updateTeacherPaymentSchema } from '@/lib/finance'
 
 export async function PATCH(
   request: NextRequest,
@@ -34,9 +35,17 @@ export async function PATCH(
     }
 
     const body = await request.json().catch(() => ({}))
+    const parsed = updateTeacherPaymentSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, message: 'Dados inválidos', details: parsed.error.flatten() },
+        { status: 400 }
+      )
+    }
+    const data = parsed.data
     const {
-      year: bodyYear,
-      month: bodyMonth,
+      year,
+      month,
       paymentStatus,
       valorPorPeriodo,
       valorExtra,
@@ -44,16 +53,7 @@ export async function PATCH(
       periodoTermino,
       metodoPagamento,
       infosPagamento,
-    } = body
-
-    const year = bodyYear != null ? Number(bodyYear) : null
-    const month = bodyMonth != null ? Number(bodyMonth) : null
-    if (year == null || month == null || month < 1 || month > 12) {
-      return NextResponse.json(
-        { ok: false, message: 'year e month são obrigatórios (month 1-12)' },
-        { status: 400 }
-      )
-    }
+    } = data
 
     if (metodoPagamento !== undefined || infosPagamento !== undefined) {
       const teacherUpdate: { metodoPagamento?: string | null; infosPagamento?: string | null } = {}
@@ -82,10 +82,10 @@ export async function PATCH(
       updateData.paymentStatus = paymentStatus === 'PAGO' ? 'PAGO' : 'EM_ABERTO'
     }
     if (valorPorPeriodo !== undefined) {
-      updateData.valorPorPeriodo = valorPorPeriodo != null && valorPorPeriodo !== '' ? Number(valorPorPeriodo) : null
+      updateData.valorPorPeriodo = valorPorPeriodo ?? null
     }
     if (valorExtra !== undefined) {
-      updateData.valorExtra = valorExtra != null && valorExtra !== '' ? Number(valorExtra) : null
+      updateData.valorExtra = valorExtra ?? null
     }
     if (periodoInicio !== undefined) {
       updateData.periodoInicio = periodoInicio ? new Date(periodoInicio) : null
@@ -123,6 +123,17 @@ export async function PATCH(
         },
         update: updateData,
       })
+
+      if (updateData.paymentStatus !== undefined) {
+        logFinanceAction({
+          entityType: 'TEACHER',
+          entityId: teacherId,
+          action: 'PAYMENT_STATUS_CHANGED',
+          oldValue: { paymentStatus: previousStatus ?? null, year, month },
+          newValue: { paymentStatus: updateData.paymentStatus, year, month },
+          performedBy: auth.session?.sub ?? null,
+        })
+      }
 
       // Notificar o professor quando o pagamento for marcado como Pago
       if (wasMarkedAsPaid && previousStatus !== 'PAGO' && prisma.teacherAlert) {

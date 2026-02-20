@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    instrumentationHook: true,
+  },
   // Em dev usa dist/ em vez de .next/ para reduzir errno -4094 no Windows
   distDir: process.env.NODE_ENV === 'development' ? 'dist' : '.next',
   images: {

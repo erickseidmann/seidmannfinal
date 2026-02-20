@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2 } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -36,6 +36,7 @@ interface AlunoFinanceiro {
   diaPagamento: number | null
   notaFiscalEmitida: boolean | null
   email: string
+  escolaMatricula: string | null
   paymentInfoId: string | null
   hasFinanceObservations?: boolean
 }
@@ -77,7 +78,67 @@ function formatDate(iso: string | null): string {
 
 function formatMoney(n: number | null): string {
   if (n == null) return '—'
-  return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
+}
+
+/** Dados da cobrança Cora retornados pela API. */
+interface CobrancaCora {
+  coraInvoiceId: string | null
+  coraStatus: string | null
+  valorMensalidade?: number
+  dueDate?: string
+  pixQrCode?: string | null
+  boletoUrl?: string | null
+  paidAt?: string | null
+  paymentMethod?: string | null
+}
+
+type CobrancaStatusDisplay = 
+  | { type: 'pago'; label: string; variant: 'success' }
+  | { type: 'pago_pix'; label: string; variant: 'success' }
+  | { type: 'pago_boleto'; label: string; variant: 'success' }
+  | { type: 'aguardando'; label: string; variant: 'info' }
+  | { type: 'vencido'; label: string; variant: 'danger' }
+  | { type: 'atrasado'; label: string; variant: 'danger' }
+  | { type: 'pendente'; label: string; variant: 'neutral' }
+
+function getCobrancaStatusDisplay(
+  paymentStatus: string | null,
+  cobranca: CobrancaCora | null
+): CobrancaStatusDisplay {
+  // 1. Se EnrollmentPaymentMonth.paymentStatus === 'PAGO' → badge verde "Pago"
+  if (paymentStatus === 'PAGO') {
+    return { type: 'pago', label: 'Pago', variant: 'success' }
+  }
+  // 2. Se tem cobrança Cora e status Cora é 'PAID' → badge verde "Pago via PIX" ou "Pago via Boleto"
+  if (cobranca?.coraStatus === 'PAID') {
+    const method = (cobranca.paymentMethod ?? '').toLowerCase()
+    const viaBoleto = method.includes('bank_slip') || method.includes('boleto')
+    return viaBoleto
+      ? { type: 'pago_boleto', label: 'Pago via Boleto', variant: 'success' }
+      : { type: 'pago_pix', label: 'Pago via PIX', variant: 'success' }
+  }
+  // 3. Se tem cobrança Cora e status Cora é 'OPEN' → badge azul "Aguardando pagamento"
+  if (cobranca?.coraStatus === 'OPEN') {
+    return { type: 'aguardando', label: 'Aguardando pagamento', variant: 'info' }
+  }
+  // 4. Se tem cobrança Cora e status Cora é 'LATE' → badge vermelho "Vencido"
+  if (cobranca?.coraStatus === 'LATE') {
+    return { type: 'vencido', label: 'Vencido', variant: 'danger' }
+  }
+  // 5. Se paymentStatus === 'ATRASADO' (sem cobrança Cora) → badge vermelho "Atrasado"
+  if (paymentStatus === 'ATRASADO') {
+    return { type: 'atrasado', label: 'Atrasado', variant: 'danger' }
+  }
+  // 6. Se paymentStatus === 'PENDING' ou null → badge cinza "Pendente"
+  return { type: 'pendente', label: 'Pendente', variant: 'neutral' }
+}
+
+const BADGE_CLASSES: Record<CobrancaStatusDisplay['variant'], string> = {
+  success: 'bg-green-100 text-green-800',
+  info: 'bg-blue-100 text-blue-800',
+  danger: 'bg-red-100 text-red-800',
+  neutral: 'bg-gray-100 text-gray-700',
 }
 
 function CellWithCopy({
@@ -159,6 +220,34 @@ export default function FinanceiroAlunosPage() {
   const [obsNewMessage, setObsNewMessage] = useState('')
   const [obsLoading, setObsLoading] = useState(false)
   const [obsSaving, setObsSaving] = useState(false)
+  const [validacaoData, setValidacaoData] = useState<{
+    total: number
+    comProblema: number
+    semProblema: number
+    alunos: Array<{
+      enrollmentId: string
+      nome: string
+      email: string | null
+      cpf: string | null
+      valorMensalidade: number | null
+      dueDay: number | null
+      problemas: string[]
+    }>
+  } | null>(null)
+  const [validacaoLoading, setValidacaoLoading] = useState(false)
+  const [validacaoModalOpen, setValidacaoModalOpen] = useState(false)
+  const [editAlunoModalOpen, setEditAlunoModalOpen] = useState(false)
+  const [editAlunoData, setEditAlunoData] = useState<{
+    enrollmentId: string
+    nome: string
+    cpf: string
+    email: string
+    whatsapp: string
+    valorMensalidade: string
+    dueDay: string
+    problemas: string[]
+  } | null>(null)
+  const [editAlunoSaving, setEditAlunoSaving] = useState(false)
   const [form, setForm] = useState({
     quemPaga: '',
     paymentStatus: '',
@@ -169,7 +258,7 @@ export default function FinanceiroAlunosPage() {
     valorHora: '' as string | number,
     dataUltimoPagamento: '',
     dataProximoPagamento: '',
-    notaFiscalEmitida: false,
+    // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
   })
 
   const anoAtual = new Date().getFullYear()
@@ -196,9 +285,136 @@ export default function FinanceiroAlunosPage() {
     }
   }, [router])
 
+  const fetchCobrancas = useCallback(async (ano: number, mes: number) => {
+    try {
+      const res = await fetch(`/api/admin/financeiro/cobranca?year=${ano}&month=${mes}`, { credentials: 'include' })
+      const json = await res.json()
+      if (!res.ok || !json.ok) return
+      const data = (json.data || []) as Array<{
+        enrollmentId: string
+        coraInvoiceId: string | null
+        coraStatus: string | null
+        valorMensalidade?: number
+        dueDate?: string
+        pixQrCode?: string | null
+        boletoUrl?: string | null
+        paidAt?: string | null
+        paymentMethod?: string | null
+      }>
+      const map = new Map<string, CobrancaCora>()
+      data.forEach((d) => {
+        if (d.coraInvoiceId) {
+          map.set(d.enrollmentId, {
+            coraInvoiceId: d.coraInvoiceId,
+            coraStatus: d.coraStatus ?? null,
+            valorMensalidade: d.valorMensalidade,
+            dueDate: d.dueDate,
+            pixQrCode: d.pixQrCode,
+            boletoUrl: d.boletoUrl,
+            paidAt: d.paidAt,
+            paymentMethod: d.paymentMethod,
+          })
+        }
+      })
+      setCobrancasMap(map)
+    } catch {
+      setCobrancasMap(new Map())
+    }
+  }, [])
+
+  const fetchValidacao = useCallback(async () => {
+    setValidacaoLoading(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/validacao', { credentials: 'include' })
+      const json = await res.json()
+      if (res.ok && json.ok) {
+        setValidacaoData(json)
+      }
+    } catch {
+      // Ignora erros silenciosamente
+    } finally {
+      setValidacaoLoading(false)
+    }
+  }, [])
+
+  const formatCPF = (cpf: string | null): string => {
+    if (!cpf) return ''
+    const digits = cpf.replace(/\D/g, '')
+    if (digits.length !== 11) return digits
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`
+  }
+
+  const handleEditAluno = (aluno: typeof validacaoData.alunos[0]) => {
+    setEditAlunoData({
+      enrollmentId: aluno.enrollmentId,
+      nome: aluno.nome,
+      cpf: aluno.cpf || '',
+      email: aluno.email || '',
+      whatsapp: aluno.whatsapp || '',
+      valorMensalidade: aluno.valorMensalidade ? aluno.valorMensalidade.toString() : '',
+      dueDay: aluno.dueDay ? aluno.dueDay.toString() : '',
+      problemas: aluno.problemas,
+    })
+    setEditAlunoModalOpen(true)
+  }
+
+  const handleSaveAluno = async () => {
+    if (!editAlunoData) return
+    setEditAlunoSaving(true)
+    try {
+      // Atualizar enrollment (CPF, email, valorMensalidade, diaPagamento)
+      // O endpoint exige nome, email e whatsapp obrigatoriamente
+      const res = await fetch(`/api/admin/enrollments/${editAlunoData.enrollmentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'update',
+          nome: editAlunoData.nome, // Obrigatório
+          email: editAlunoData.email.trim(), // Obrigatório
+          whatsapp: editAlunoData.whatsapp || '', // Obrigatório
+          cpf: editAlunoData.cpf.replace(/\D/g, ''),
+          valorMensalidade: editAlunoData.valorMensalidade ? parseFloat(editAlunoData.valorMensalidade.replace(',', '.')) : null,
+          diaPagamento: editAlunoData.dueDay ? parseInt(editAlunoData.dueDay, 10) : null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao salvar dados', type: 'error' })
+        return
+      }
+      // Atualizar PaymentInfo.dueDay se necessário
+      if (editAlunoData.dueDay) {
+        const resPayment = await fetch(`/api/admin/financeiro/alunos/${editAlunoData.enrollmentId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            dueDay: parseInt(editAlunoData.dueDay, 10),
+          }),
+        })
+        await resPayment.json()
+      }
+      setToast({ message: 'Dados atualizados com sucesso', type: 'success' })
+      setEditAlunoModalOpen(false)
+      fetchValidacao()
+      fetchAlunos(selectedAno, selectedMes) // Recarregar lista de alunos
+    } catch (error) {
+      console.error('Erro ao salvar aluno:', error)
+      setToast({ message: 'Erro ao salvar dados', type: 'error' })
+    } finally {
+      setEditAlunoSaving(false)
+    }
+  }
+
   useEffect(() => {
     fetchAlunos(selectedAno, selectedMes)
-  }, [selectedAno, selectedMes, fetchAlunos])
+    fetchValidacao()
+  }, [selectedAno, selectedMes, fetchAlunos, fetchValidacao])
+
+  useEffect(() => {
+    fetchCobrancas(selectedAno, selectedMes)
+  }, [selectedAno, selectedMes, fetchCobrancas])
 
   const hoje = useMemo(() => {
     const d = new Date()
@@ -277,10 +493,16 @@ export default function FinanceiroAlunosPage() {
   const [filterPeriodo, setFilterPeriodo] = useState<string>('')
   const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterEscola, setFilterEscola] = useState<string>('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(30)
   const [showDicas, setShowDicas] = useState(false)
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const [showPeriodo, setShowPeriodo] = useState(false)
+
+  const [cobrancasMap, setCobrancasMap] = useState<Map<string, CobrancaCora>>(new Map())
+  const [refreshCobrancasLoading, setRefreshCobrancasLoading] = useState(false)
+  const [cobrancaPopoverOpen, setCobrancaPopoverOpen] = useState<string | null>(null)
+  const cobrancaPopoverRef = useRef<HTMLDivElement>(null)
 
   const FINANCE_COLUMNS = [
     { key: 'aluno', label: 'Aluno', fixed: true },
@@ -311,10 +533,35 @@ export default function FinanceiroAlunosPage() {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (columnsDropdownRef.current && !columnsDropdownRef.current.contains(e.target as Node)) setColumnsDropdownOpen(false)
+      if (cobrancaPopoverRef.current && !cobrancaPopoverRef.current.contains(e.target as Node)) setCobrancaPopoverOpen(null)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  const handleRefreshCobrancas = useCallback(async () => {
+    setRefreshCobrancasLoading(true)
+    try {
+      await fetchCobrancas(selectedAno, selectedMes)
+    } finally {
+      setRefreshCobrancasLoading(false)
+    }
+  }, [fetchCobrancas, selectedAno, selectedMes])
+
+  /** Polling: a cada 60s, se há cobranças OPEN ou LATE. */
+  const hasOpenOrLate = useMemo(() => {
+    if (!cobrancasMap || typeof cobrancasMap.values !== 'function') return false
+    for (const c of cobrancasMap.values()) {
+      if (c?.coraStatus === 'OPEN' || c?.coraStatus === 'LATE') return true
+    }
+    return false
+  }, [cobrancasMap])
+
+  useEffect(() => {
+    if (!hasOpenOrLate) return
+    const interval = setInterval(() => fetchCobrancas(selectedAno, selectedMes), 60_000)
+    return () => clearInterval(interval)
+  }, [hasOpenOrLate, selectedAno, selectedMes, fetchCobrancas])
   const visibleSet = new Set(visibleFinanceKeys)
   const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
   const toggleFinanceColumn = (key: string) => {
@@ -329,6 +576,10 @@ export default function FinanceiroAlunosPage() {
   const [cobrancaTodosModalOpen, setCobrancaTodosModalOpen] = useState(false)
   const [cobrancaTodosSubject, setCobrancaTodosSubject] = useState(COBRANCA_TODOS_DEFAULT_SUBJECT)
   const [cobrancaTodosText, setCobrancaTodosText] = useState(COBRANCA_TODOS_DEFAULT_TEXT)
+
+  const [gerarCobrancasModalOpen, setGerarCobrancasModalOpen] = useState(false)
+  const [gerarCobrancasLoading, setGerarCobrancasLoading] = useState(false)
+  const [gerarCobrancaIndividualLoading, setGerarCobrancaIndividualLoading] = useState<string | null>(null)
 
   const filteredAlunos = useMemo(() => {
     let list = [...alunosNoMes]
@@ -368,8 +619,15 @@ export default function FinanceiroAlunosPage() {
     } else if (filterNfEmitida === 'aberto') {
       list = list.filter((a) => a.notaFiscalEmitida !== true)
     }
+    if (filterEscola) {
+      if (filterEscola === 'OUTROS') {
+        list = list.filter((a) => !a.escolaMatricula || a.escolaMatricula === 'OUTRO')
+      } else {
+        list = list.filter((a) => a.escolaMatricula === filterEscola)
+      }
+    }
     return list
-  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados, filterStatus, filterPeriodo, filterNfEmitida])
+  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados, filterStatus, filterPeriodo, filterNfEmitida, filterEscola])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
@@ -458,7 +716,7 @@ export default function FinanceiroAlunosPage() {
       else if (field === 'periodoPagamento') body.periodoPagamento = value
       else if (field === 'dataUltimoPagamento') body.dataUltimoPagamento = value || null
       else if (field === 'dataProximoPagamento') body.dataProximoPagamento = value || null
-      else if (field === 'notaFiscalEmitida') body.notaFiscalEmitida = Boolean(value)
+      // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
       body.year = selectedAno
       body.month = selectedMes
       const res = await fetch(`/api/admin/financeiro/alunos/${id}`, {
@@ -490,20 +748,17 @@ export default function FinanceiroAlunosPage() {
     [fetchAlunos, selectedAno, selectedMes]
   )
 
-  const handlePagoAtrasadoCheck = useCallback(
-    async (a: AlunoFinanceiro, tipo: 'PAGO' | 'ATRASADO', checked: boolean) => {
+  const handlePagoCheck = useCallback(
+    async (a: AlunoFinanceiro, checked: boolean) => {
       setSaving(true)
       try {
-        if (tipo === 'PAGO' && checked) {
+        if (checked) {
           const hoje = new Date().toISOString().slice(0, 10)
           await patchCellBody(a.id, { paymentStatus: 'PAGO', dataUltimoPagamento: hoje })
           setToast({ message: 'Marcado como Pago. Data do último pagamento atualizada.', type: 'success' })
-        } else if (tipo === 'PAGO' && !checked) {
+        } else {
           await patchCellBody(a.id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
           setToast({ message: 'Status alterado para Pendente. Data do último pagamento removida.', type: 'success' })
-        } else if (tipo === 'ATRASADO') {
-          await patchCellBody(a.id, { paymentStatus: checked ? 'ATRASADO' : 'PENDING' })
-          setToast({ message: checked ? 'Marcado como Atrasado.' : 'Status alterado para Pendente.', type: 'success' })
         }
       } catch {
         setToast({ message: 'Erro ao atualizar status', type: 'error' })
@@ -514,41 +769,14 @@ export default function FinanceiroAlunosPage() {
     [patchCellBody, selectedAno, selectedMes]
   )
 
-  const handlePeriodoCheck = useCallback(
-    async (id: string, value: string) => {
-      setSaving(true)
-      try {
-        await patchCell(id, 'periodoPagamento', value || null)
-        setToast({ message: 'Período atualizado.', type: 'success' })
-      } catch {
-        setToast({ message: 'Erro ao atualizar período', type: 'error' })
-      } finally {
-        setSaving(false)
-      }
-    },
-    [patchCell]
-  )
-
-  const handleNFCheck = useCallback(
-    async (id: string, checked: boolean) => {
-      setSaving(true)
-      try {
-        await patchCell(id, 'notaFiscalEmitida', checked)
-        setToast({ message: checked ? 'NF marcada como emitida.' : 'NF desmarcada.', type: 'success' })
-      } catch {
-        setToast({ message: 'Erro ao atualizar NF', type: 'error' })
-      } finally {
-        setSaving(false)
-      }
-    },
-    [patchCell]
-  )
+  // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
 
   const startEditCell = (a: AlunoFinanceiro, field: string) => {
+    // notaFiscalEmitida não é editável (calculado automaticamente)
+    if (field === 'notaFiscalEmitida') return
     setEditingCell({ id: a.id, field })
     const v = (a as unknown as Record<string, unknown>)[field === 'paymentStatus' ? 'status' : field]
-    if (field === 'notaFiscalEmitida') setCellValue(Boolean(v))
-    else setCellValue((v ?? '') as string | number)
+    setCellValue((v ?? '') as string | number)
   }
 
   const saveCell = useCallback(async () => {
@@ -556,8 +784,9 @@ export default function FinanceiroAlunosPage() {
     setSaving(true)
     try {
       const field = editingCell.field
-      let value: string | number | boolean | null =
-        field === 'notaFiscalEmitida' ? Boolean(cellValue) : (cellValue as string | number) || null
+      // notaFiscalEmitida não é editável (calculado automaticamente)
+      if (field === 'notaFiscalEmitida') return
+      let value: string | number | boolean | null = (cellValue as string | number) || null
       if (field === 'valorMensal') value = cellValue === '' ? null : Number(cellValue)
       await patchCell(editingCell.id, field, value)
       setToast({ message: 'Salvo', type: 'success' })
@@ -581,7 +810,7 @@ export default function FinanceiroAlunosPage() {
       valorHora: '', // somente leitura (calculado na API)
       dataUltimoPagamento: a.dataUltimoPagamento ? a.dataUltimoPagamento.slice(0, 10) : '',
       dataProximoPagamento: a.dataProximoPagamento ? a.dataProximoPagamento.slice(0, 10) : '',
-      notaFiscalEmitida: a.notaFiscalEmitida ?? false,
+      // notaFiscalEmitida removido: agora é calculado automaticamente (read-only)
     })
   }
 
@@ -603,7 +832,7 @@ export default function FinanceiroAlunosPage() {
           valorMensal: form.valorMensal !== '' ? Number(form.valorMensal) : null,
           dataUltimoPagamento: form.dataUltimoPagamento || null,
           dataProximoPagamento: form.dataProximoPagamento || null,
-          notaFiscalEmitida: form.notaFiscalEmitida,
+          // notaFiscalEmitida removido: agora é calculado automaticamente (read-only)
           year: selectedAno,
           month: selectedMes,
         }),
@@ -722,6 +951,70 @@ export default function FinanceiroAlunosPage() {
     }
   }, [atrasadosComEmail, cobrancaTodosSubject, cobrancaTodosText])
 
+  const handleGerarCobrancasLote = useCallback(async () => {
+    setGerarCobrancasLoading(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/cobranca', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
+      })
+      const json = await res.json()
+      setGerarCobrancasModalOpen(false)
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao gerar cobranças', type: 'error' })
+        return
+      }
+      const success = json.success ?? 0
+      const errors = (json.errors || []) as Array<{ name: string; error: string }>
+      const totalErros = errors.length
+      if (totalErros > 0) {
+        const msg = errors.slice(0, 5).map((e) => `${e.name}: ${e.error}`).join('; ')
+        setToast({
+          message: `${success} cobrança(s) gerada(s). ${totalErros} erro(s): ${msg}${totalErros > 5 ? '...' : ''}`,
+          type: success > 0 ? 'success' : 'error',
+        })
+      } else {
+        setToast({ message: `${success} cobrança(s) gerada(s).`, type: 'success' })
+      }
+      fetchAlunos(selectedAno, selectedMes)
+      fetchCobrancas(selectedAno, selectedMes)
+    } catch {
+      setGerarCobrancasModalOpen(false)
+      setToast({ message: 'Erro ao gerar cobranças', type: 'error' })
+    } finally {
+      setGerarCobrancasLoading(false)
+    }
+  }, [selectedAno, selectedMes, fetchAlunos, fetchCobrancas])
+
+  const handleGerarCobrancaIndividual = useCallback(
+    async (a: AlunoFinanceiro) => {
+      setGerarCobrancaIndividualLoading(a.id)
+      try {
+        const res = await fetch('/api/admin/financeiro/cobranca', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ enrollmentId: a.id, year: selectedAno, month: selectedMes }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao gerar cobrança', type: 'error' })
+          return
+        }
+        setToast({ message: 'Cobrança gerada com sucesso', type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+        fetchCobrancas(selectedAno, selectedMes)
+      } catch {
+        setToast({ message: 'Erro ao gerar cobrança', type: 'error' })
+      } finally {
+        setGerarCobrancaIndividualLoading(null)
+      }
+    },
+    [selectedAno, selectedMes, fetchAlunos, fetchCobrancas]
+  )
+
   return (
     <AdminLayout>
       <div className="space-y-8">
@@ -782,10 +1075,46 @@ export default function FinanceiroAlunosPage() {
                 <p className="text-lg font-semibold text-gray-800 border-l-4 border-brand-orange pl-4">
                   Controle financeiro – {MESES_LABELS[selectedMes]} de {selectedAno}
                 </p>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setGerarCobrancasModalOpen(true)}
+                  className="shrink-0"
+                  title="Gerar boleto/PIX na Cora para todos os alunos ativos"
+                >
+                  <Receipt className="w-4 h-4 mr-2" />
+                  Gerar Cobranças do Mês
+                </Button>
               </div>
             </div>
           )}
         </div>
+
+        {/* Modal Gerar Cobranças do Mês (Cora) */}
+        <Modal
+          isOpen={gerarCobrancasModalOpen}
+          onClose={() => !gerarCobrancasLoading && setGerarCobrancasModalOpen(false)}
+          title="Gerar cobranças via Cora"
+          size="md"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setGerarCobrancasModalOpen(false)} disabled={!!gerarCobrancasLoading}>
+                Cancelar
+              </Button>
+              <Button variant="primary" onClick={handleGerarCobrancasLote} disabled={!!gerarCobrancasLoading}>
+                {gerarCobrancasLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Receipt className="w-4 h-4 mr-2" />}
+                Gerar Cobranças
+              </Button>
+            </>
+          }
+        >
+          <p className="text-gray-700">
+            Gerar cobranças para <strong>{MESES_LABELS[selectedMes]} de {selectedAno}</strong> para todos os alunos ativos com valor de mensalidade definido?
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            Serão criados boleto e QR Code PIX na Cora. Alunos sem CPF ou email não serão incluídos.
+          </p>
+        </Modal>
 
         {/* Seção: Resumo do mês (cubos) */}
         <section>
@@ -824,12 +1153,12 @@ export default function FinanceiroAlunosPage() {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => setCubeModal('alunos')}
-              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('alunos')}
+              onClick={() => setValidacaoModalOpen(true)}
+              onKeyDown={(e) => e.key === 'Enter' && setValidacaoModalOpen(true)}
               className="rounded-xl border-2 border-slate-200 bg-slate-50 p-4 shadow-sm cursor-pointer hover:bg-slate-100 transition-colors"
             >
-              <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Alunos</p>
-              <p className="mt-1 text-xl font-bold text-slate-900">{totalAlunos}</p>
+              <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Alunos com problemas nas infos</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{validacaoLoading ? '—' : (validacaoData?.comProblema ?? 0)}</p>
             </div>
             <div
               role="button"
@@ -953,6 +1282,20 @@ export default function FinanceiroAlunosPage() {
                         <option value="emitida">Emitida</option>
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
+                      <select
+                        value={filterEscola}
+                        onChange={(e) => setFilterEscola(e.target.value)}
+                        className="input min-w-[140px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        <option value="SEIDMANN">Seidmann</option>
+                        <option value="YOUBECOME">Youbecome</option>
+                        <option value="HIGHWAY">Highway</option>
+                        <option value="OUTROS">Outros</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
@@ -985,6 +1328,16 @@ export default function FinanceiroAlunosPage() {
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
                 <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefreshCobrancas}
+                  disabled={refreshCobrancasLoading}
+                  title="Atualizar status das cobranças Cora"
+                >
+                  {refreshCobrancasLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                  Atualizar Status
+                </Button>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Itens por página</label>
                   <select
@@ -1039,7 +1392,7 @@ export default function FinanceiroAlunosPage() {
                         if (col.key === 'status') return a.status ?? ''
                         if (col.key === 'metodoPagamento') return (a.metodoPagamento ?? '').replace(/;/g, ',')
                         if (col.key === 'banco') return (a.banco ?? '').replace(/;/g, ',')
-                        if (col.key === 'periodo') return a.periodoPagamento ?? ''
+                        if (col.key === 'periodo') return PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL'] ?? 'Men.'
                         if (col.key === 'ultimoPag') return formatDate(a.dataUltimoPagamento)
                         if (col.key === 'proxPag') return formatDate(a.dataProximoPagamento)
                         if (col.key === 'nfEmitida') return a.notaFiscalEmitida === true ? 'Emitida' : 'Em aberto'
@@ -1146,27 +1499,77 @@ export default function FinanceiroAlunosPage() {
                       )}
                       {displayColumns.some((c) => c.key === 'status') && (
                       <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(() => {
+                            const cobranca = cobrancasMap.get(a.id) ?? null
+                            // Atrasado é automático quando a data de vencimento passou; senão usa status da API/cobrança
+                            const display = isAtrasado
+                              ? { type: 'atrasado' as const, label: 'Atrasado', variant: 'danger' as const }
+                              : getCobrancaStatusDisplay(a.status, cobranca)
+                            const badgeClasses = `inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${BADGE_CLASSES[display.variant]}`
+                            const hasCobrancaDetails = cobranca?.coraInvoiceId
+                            const isPopoverOpen = cobrancaPopoverOpen === a.id
+                            return (
+                              <div ref={hasCobrancaDetails && isPopoverOpen ? cobrancaPopoverRef : undefined} className="relative inline-flex">
+                                <button
+                                  type="button"
+                                  onClick={() => hasCobrancaDetails && setCobrancaPopoverOpen(isPopoverOpen ? null : a.id)}
+                                  className={`${badgeClasses} ${hasCobrancaDetails ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
+                                  title={hasCobrancaDetails ? 'Clique para ver detalhes da cobrança' : isAtrasado ? 'Atrasado automaticamente (vencimento passou). Marque Pago para registrar.' : undefined}
+                                >
+                                  {display.label}
+                                  {hasCobrancaDetails && <CircleChevronDown className="w-3.5 h-3.5 opacity-70" />}
+                                </button>
+                                {hasCobrancaDetails && isPopoverOpen && cobranca && (
+                                  <div className="absolute left-0 top-full z-30 mt-1 min-w-[260px] rounded-lg border border-gray-200 bg-white p-4 shadow-lg">
+                                    <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Detalhes da cobrança Cora</p>
+                                    <div className="space-y-2 text-sm">
+                                      <p><span className="text-gray-500">Status:</span> <span className="font-medium">{display.label}</span></p>
+                                      <p><span className="text-gray-500">Valor:</span> {formatMoney(cobranca.valorMensalidade ?? 0)}</p>
+                                      <p><span className="text-gray-500">Vencimento:</span> {cobranca.dueDate ? formatDate(cobranca.dueDate) : '—'}</p>
+                                      {cobranca.paidAt && <p><span className="text-gray-500">Pago em:</span> {formatDate(cobranca.paidAt)}</p>}
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {cobranca.boletoUrl && (
+                                        <a
+                                          href={cobranca.boletoUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                                        >
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                          Ver Boleto
+                                        </a>
+                                      )}
+                                      {cobranca.pixQrCode && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(cobranca.pixQrCode!).then(() => {
+                                              setToast({ message: 'PIX copiado para a área de transferência', type: 'success' })
+                                            })
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
+                                        >
+                                          <QrCode className="w-3.5 h-3.5" />
+                                          Copiar PIX
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+                          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Marque quando o pagamento for realizado">
                             <input
                               type="checkbox"
                               checked={a.status === 'PAGO'}
                               disabled={saving}
-                              onChange={(e) => handlePagoAtrasadoCheck(a, 'PAGO', e.target.checked)}
+                              onChange={(e) => handlePagoCheck(a, e.target.checked)}
                               className="rounded border-gray-300 text-green-600"
                             />
                             <span className="text-xs font-medium">Pago</span>
-                          </label>
-                          <label className={`flex items-center gap-1.5 whitespace-nowrap ${isAtrasado ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                            <input
-                              type="checkbox"
-                              checked={isAtrasado || a.status === 'ATRASADO'}
-                              disabled={saving || isAtrasado}
-                              onChange={(e) => !isAtrasado && handlePagoAtrasadoCheck(a, 'ATRASADO', e.target.checked)}
-                              className="rounded border-gray-300 text-red-600"
-                              title={isAtrasado ? 'Atrasado automaticamente (data passou). Marque Pago para limpar.' : undefined}
-                            />
-                            <span className="text-xs font-medium">Atras.</span>
                           </label>
                         </div>
                       </td>
@@ -1198,21 +1601,10 @@ export default function FinanceiroAlunosPage() {
                         />
                       )}
                       {displayColumns.some((c) => c.key === 'periodo') && (
-                      <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
-                        <div className="flex flex-col gap-1">
-                          {(['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'] as const).map((per) => (
-                            <label key={per} className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
-                              <input
-                                type="checkbox"
-                                checked={(a.periodoPagamento ?? 'MENSAL') === per}
-                                disabled={saving}
-                                onChange={() => handlePeriodoCheck(a.id, per)}
-                                className="rounded border-gray-300"
-                              />
-                              <span className="text-xs">{PERIODO_SHORT[per] ?? per}</span>
-                            </label>
-                          ))}
-                        </div>
+                      <td className={`px-3 py-2 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-800 font-medium">
+                          {PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL']}
+                        </span>
                       </td>
                       )}
                       {displayColumns.some((c) => c.key === 'ultimoPag') && EdCell('dataUltimoPagamento', formatDate(a.dataUltimoPagamento), (
@@ -1238,29 +1630,17 @@ export default function FinanceiroAlunosPage() {
                         />
                       ))}
                       {displayColumns.some((c) => c.key === 'nfEmitida') && (
-                      <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50' : 'text-gray-900'}`}>
-                        <div className="flex flex-col gap-1.5">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={a.notaFiscalEmitida !== true}
-                              disabled={saving}
-                              onChange={() => handleNFCheck(a.id, false)}
-                              className="rounded border-gray-300"
-                            />
-                            <span className="text-xs font-medium">Em aberto</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={a.notaFiscalEmitida === true}
-                              disabled={saving}
-                              onChange={() => handleNFCheck(a.id, true)}
-                              className="rounded border-gray-300"
-                            />
-                            <span className="text-xs font-medium">Emitida</span>
-                          </label>
-                        </div>
+                      <td className={`px-3 py-2 text-sm text-center ${isAtrasado ? 'bg-red-50' : ''}`}>
+                        {a.notaFiscalEmitida === true ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Emitida
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                            Em aberto
+                          </span>
+                        )}
                       </td>
                       )}
                       {displayColumns.some((c) => c.key === 'acoes') && (
@@ -1275,6 +1655,15 @@ export default function FinanceiroAlunosPage() {
                           title={a.hasFinanceObservations ? 'Observações (há notificações)' : 'Observações'}
                         >
                           <MessageSquare className={`w-4 h-4 ${a.hasFinanceObservations ? 'fill-current' : ''}`} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGerarCobrancaIndividual(a)}
+                          disabled={gerarCobrancaIndividualLoading === a.id}
+                          className="ml-1 text-gray-500 hover:text-brand-orange p-1 disabled:opacity-50"
+                          title="Gerar boleto/PIX na Cora"
+                        >
+                          {gerarCobrancaIndividualLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
                         </button>
                         <button
                           type="button"
@@ -1366,12 +1755,7 @@ export default function FinanceiroAlunosPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Data próximo pagamento</label>
                   <input type="date" value={form.dataProximoPagamento} onChange={(e) => setForm({ ...form, dataProximoPagamento: e.target.value })} className="input w-full" />
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={form.notaFiscalEmitida} onChange={(e) => setForm({ ...form, notaFiscalEmitida: e.target.checked })} className="rounded border-gray-300" />
-                    <span className="text-sm font-semibold text-gray-700">Nota fiscal emitida?</span>
-                  </label>
-                </div>
+                {/* notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only) */}
               </div>
             </form>
           )}
@@ -1645,6 +2029,141 @@ export default function FinanceiroAlunosPage() {
               />
             </div>
           </div>
+        </Modal>
+
+        {/* Modal Lista de Alunos com Problemas */}
+        <Modal
+          isOpen={validacaoModalOpen}
+          onClose={() => setValidacaoModalOpen(false)}
+          title="Cobrança"
+          size="lg"
+        >
+          {validacaoData && validacaoData.alunos.length > 0 ? (
+            <div className="space-y-4">
+              {validacaoData.alunos.map((aluno) => {
+                const problemaCount = aluno.problemas.length
+                const corBadge = problemaCount >= 3 ? '🔴' : problemaCount === 2 ? '🟡' : '🟡'
+                return (
+                  <div key={aluno.enrollmentId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{corBadge}</span>
+                        <span className="font-semibold text-gray-900">{aluno.nome}</span>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => handleEditAluno(aluno)}>
+                        Corrigir dados
+                      </Button>
+                    </div>
+                    <ul className="space-y-1 ml-7">
+                      {aluno.problemas.map((problema, idx) => (
+                        <li key={idx} className="text-sm text-gray-700">
+                          • {problema}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">Nenhum aluno com problemas encontrado.</p>
+          )}
+        </Modal>
+
+        {/* Modal Editar Aluno */}
+        <Modal
+          isOpen={editAlunoModalOpen}
+          onClose={() => !editAlunoSaving && setEditAlunoModalOpen(false)}
+          title={editAlunoData ? `Corrigir dados – ${editAlunoData.nome}` : 'Corrigir dados'}
+          size="md"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setEditAlunoModalOpen(false)} disabled={!!editAlunoSaving}>
+                Cancelar
+              </Button>
+              <Button variant="primary" onClick={handleSaveAluno} disabled={!!editAlunoSaving}>
+                {editAlunoSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Salvar
+              </Button>
+            </>
+          }
+        >
+          {editAlunoData && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  CPF {editAlunoData.problemas.some((p) => p.includes('CPF')) && (
+                    <span className="text-red-600">*</span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={formatCPF(editAlunoData.cpf)}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '')
+                    setEditAlunoData({ ...editAlunoData, cpf: digits.slice(0, 11) })
+                  }}
+                  className={`input w-full ${editAlunoData.problemas.some((p) => p.includes('CPF')) ? 'border-red-300 bg-red-50' : ''}`}
+                  placeholder="000.000.000-00"
+                  maxLength={14}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Email {editAlunoData.problemas.some((p) => p.includes('Email')) && (
+                    <span className="text-red-600">*</span>
+                  )}
+                </label>
+                <input
+                  type="email"
+                  value={editAlunoData.email}
+                  onChange={(e) => setEditAlunoData({ ...editAlunoData, email: e.target.value })}
+                  className={`input w-full ${editAlunoData.problemas.some((p) => p.includes('Email')) ? 'border-red-300 bg-red-50' : ''}`}
+                  placeholder="email@exemplo.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Valor Mensalidade {editAlunoData.problemas.some((p) => p.includes('mensalidade')) && (
+                    <span className="text-red-600">*</span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={editAlunoData.valorMensalidade}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/[^\d,.]/g, '').replace(',', '.')
+                    setEditAlunoData({ ...editAlunoData, valorMensalidade: value })
+                  }}
+                  className={`input w-full ${editAlunoData.problemas.some((p) => p.includes('mensalidade')) ? 'border-red-300 bg-red-50' : ''}`}
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Dia de Pagamento {editAlunoData.problemas.some((p) => p.includes('pagamento')) && (
+                    <span className="text-red-600">*</span>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  value={editAlunoData.dueDay}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10)
+                    if (!isNaN(value) && value >= 1 && value <= 31) {
+                      setEditAlunoData({ ...editAlunoData, dueDay: value.toString() })
+                    } else if (e.target.value === '') {
+                      setEditAlunoData({ ...editAlunoData, dueDay: '' })
+                    }
+                  }}
+                  className={`input w-full ${editAlunoData.problemas.some((p) => p.includes('pagamento')) ? 'border-red-300 bg-red-50' : ''}`}
+                  placeholder="1-31"
+                  min={1}
+                  max={31}
+                />
+              </div>
+            </div>
+          )}
         </Modal>
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}

@@ -1,0 +1,168 @@
+## Regras do Projeto Seidmann Institute
+
+Este arquivo é lido automaticamente pelo Cursor.
+Siga TODAS as regras abaixo ao gerar ou modificar código.
+
+---
+
+### 1. Prisma / Banco de Dados
+
+O banco é **MySQL 8** (não PostgreSQL).
+O schema usa nomes em **português**.
+
+CORRETO: nome, senha, criadoEm, atualizadoEm, tipoAula
+ERRADO:  name, password, createdAt, updatedAt
+
+Sempre inclua relações no `include` do Prisma:
+```ts
+include: {
+  enrollment: { select: { id: true, nome: true } },
+  teacher: { select: { id: true, nome: true } },
+}
+```
+
+Se adicionar campo ou tabela no schema.prisma, anote no resumo de deploy.
+
+---
+
+### 2. Modais — Botões de Submit
+
+O componente Modal renderiza o footer **fora** do `<form>`.
+Botões com `type="submit"` no footer **não funcionam**.
+
+ERRADO (no footer do Modal):
+```tsx
+<Button type="submit">Salvar</Button>
+```
+
+CORRETO — Opção A (requestSubmit):
+```tsx
+<Button onClick={() => document.querySelector("form")?.requestSubmit()}>
+  Salvar
+</Button>
+```
+
+CORRETO — Opção B (form id):
+```tsx
+<form id="meu-form" onSubmit={handleSubmit}>
+  ...campos...
+</form>
+// No footer:
+<Button type="submit" form="meu-form">Salvar</Button>
+```
+
+Obs: `type="submit"` dentro de um `<form>` normal (fora de Modal) é permitido.
+
+---
+
+### 3. Event Handlers — FormEvent
+
+Quando chamar um handler sem evento real, nunca passe `undefined`.
+
+ERRADO:
+```ts
+handleSubmit(undefined as unknown as React.FormEvent)
+```
+
+CORRETO:
+```ts
+handleSubmit({ preventDefault: () => {} } as React.FormEvent)
+```
+
+---
+
+### 4. Uploads — File vs Blob
+
+Node.js 18 **não tem** a classe `File` global.
+Em produção, `instanceof File` causa erro fatal.
+
+ERRADO:
+```ts
+if (file instanceof File) { ... }
+```
+
+CORRETO:
+```ts
+if (file instanceof Blob) { ... }
+```
+
+Isso vale para **todas** as API routes que recebem upload de arquivos.
+
+---
+
+### 5. Cookies / Sessão
+
+Configuração dos cookies em produção:
+- `secure: process.env.NODE_ENV === 'production'`
+- `sameSite: 'lax'`
+- `httpOnly: true`
+
+Dois cookies de sessão:
+- `session_token` → alunos e professores (session.ts)
+- `admin_session` → painel admin (adminSession.ts)
+
+Domínios ativos:
+- https://seidmanninstitute.com (principal)
+- https://app.seidmannapi.com (secundário)
+
+---
+
+### 6. Uploads no Servidor
+
+- Container: `/app/public/uploads/`
+- Host: `./uploads:/app/public/uploads` (volume Docker)
+- Nginx: `/uploads/` → `/var/www/uploads/`
+- Limite: 50MB (`client_max_body_size`)
+
+---
+
+### 7. TypeScript / Build
+
+O `next.config.js` tem `ignoreBuildErrors: true` como segurança,
+mas o código **deve** compilar sem erros.
+
+Sempre rodar antes de commitar:
+```bash
+cd frontend && npm run build
+```
+
+Evitar `@ts-nocheck` e `as any` — tipar corretamente.
+
+---
+
+### 8. Rotas Nginx
+
+```
+/api/(students|teachers|schedules|payments|users/me)  →  backend NestJS :3001
+Tudo o resto (incluindo /api/admin/*, /api/professor/*) →  frontend Next.js :3000
+/uploads/                                               →  Nginx (estático)
+```
+
+---
+
+### 9. Checklist Pre-Deploy
+
+Antes de fazer commit, verificar:
+
+- [ ] `npm run build` passa sem erros
+- [ ] Nenhum `instanceof File` (usar `instanceof Blob`)
+- [ ] Nenhum `undefined as unknown as React.FormEvent`
+- [ ] Nenhum `type="submit"` no footer de Modal
+- [ ] Campos do Prisma usam nomes em português
+- [ ] Relações incluídas nos queries (teacher, enrollment)
+- [ ] Se alterou schema.prisma → anotar no resumo
+- [ ] Se adicionou pacote npm → anotar no resumo
+
+Prompt para pedir resumo ao Cursor:
+
+```
+Gere um resumo técnico de deploy com:
+1. Arquivos alterados (caminho completo)
+2. Se houve alteração no schema do Prisma (sim/não)
+3. Se houve novos pacotes npm (sim/não e quais)
+4. Se houve alteração em variáveis de ambiente
+5. Se houve criação de novas rotas de API
+6. Se há algum uso de instanceof File (deve ser Blob)
+7. Se há algum undefined as unknown as React.FormEvent
+8. Se há algum type="submit" no footer de Modal
+```

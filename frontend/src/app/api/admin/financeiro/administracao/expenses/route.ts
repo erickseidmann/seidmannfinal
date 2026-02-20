@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { createExpenseSchema } from '@/lib/finance'
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,32 +20,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const { name, description, valor, repeatMonthly, repeatMonths: repeatMonthsParam, startYear, startMonth } = body
-    const nameTrim = typeof name === 'string' ? name.trim() : ''
-    if (!nameTrim) {
+    const parsed = createExpenseSchema.safeParse(body)
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, message: 'Nome da despesa é obrigatório' },
+        { ok: false, message: 'Dados inválidos', details: parsed.error.flatten() },
         { status: 400 }
       )
     }
-    const valorNum = Number(valor)
-    if (Number.isNaN(valorNum) || valorNum < 0) {
-      return NextResponse.json(
-        { ok: false, message: 'Valor inválido' },
-        { status: 400 }
-      )
-    }
-    const repeat = repeatMonthly === true || repeatMonthly === 'true'
-    const repeatMonths = repeat ? Math.min(120, Math.max(1, Number(repeatMonthsParam) || 1)) : 1
+    const data = parsed.data
+    const nameTrim = data.name.trim()
+    const valorNum = data.valor
+    const repeat = data.repeatMonthly === true
+    const repeatMonths = repeat ? Math.min(120, Math.max(1, data.repeatMonths ?? 1)) : 1
     const now = new Date()
-    const startY = startYear != null ? Number(startYear) : now.getFullYear()
-    const startM = startMonth != null ? Number(startMonth) : now.getMonth() + 1
-    if (Number.isNaN(startY) || Number.isNaN(startM) || startM < 1 || startM > 12) {
-      return NextResponse.json(
-        { ok: false, message: 'Ano/mês de início inválido' },
-        { status: 400 }
-      )
-    }
+    const startY = data.startYear ?? now.getFullYear()
+    const startM = data.startMonth ?? now.getMonth() + 1
 
     if (!prisma.adminExpense) {
       return NextResponse.json(
@@ -64,11 +54,12 @@ export async function POST(request: NextRequest) {
       const expense = await prisma.adminExpense.create({
         data: {
           name: nameTrim,
-          description: typeof description === 'string' ? description.trim() || null : null,
+          description: data.description?.trim() || null,
           valor: valorNum,
           year: y,
           month: m,
           paymentStatus: 'EM_ABERTO',
+          isFixed: repeat,
         },
       })
       created.push({ id: expense.id, year: y, month: m })

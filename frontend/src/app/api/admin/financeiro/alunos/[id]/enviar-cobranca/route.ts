@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
+import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 
 /** Próxima data de vencimento dado o dia do mês (1-31). Se o dia já passou neste mês, retorna o mês que vem. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate?: Date): Date {
@@ -27,9 +28,12 @@ type TemplateEnrollment = {
   paymentInfo: { valorMensal: unknown; dueDate: Date | null; dueDay: number | null; paidAt: Date | null } | null
 }
 
-function toTemplateEnrollment(enrollment: { nome: string; valorMensalidade: unknown; diaPagamento: number | null; paymentInfo: { valorMensal: unknown; dueDate: Date | null; dueDay: number | null; paidAt: Date | null } | null }): TemplateEnrollment {
+function toTemplateEnrollment(
+  enrollment: { nome: string; valorMensalidade: unknown; diaPagamento: number | null; paymentInfo: { valorMensal: unknown; dueDate: Date | null; dueDay: number | null; paidAt: Date | null } | null },
+  financeNome: string
+): TemplateEnrollment {
   return {
-    nome: enrollment.nome,
+    nome: financeNome,
     valorMensalidade: enrollment.valorMensalidade != null ? Number(enrollment.valorMensalidade) : null,
     diaPagamento: enrollment.diaPagamento,
     paymentInfo: enrollment.paymentInfo
@@ -90,14 +94,15 @@ export async function GET(
         { status: 404 }
       )
     }
-    const email = enrollment.email?.trim()
+    const finance = getEnrollmentFinanceData(enrollment)
+    const email = finance.email?.trim()
     if (!email) {
       return NextResponse.json(
-        { ok: false, message: 'Aluno não possui e-mail cadastrado para envio da cobrança' },
+        { ok: false, message: 'Aluno/responsável não possui e-mail cadastrado para envio da cobrança' },
         { status: 400 }
       )
     }
-    const { subject, text } = buildTemplate(toTemplateEnrollment(enrollment))
+    const { subject, text } = buildTemplate(toTemplateEnrollment(enrollment, finance.nome))
     return NextResponse.json({ ok: true, data: { to: email, subject, text } })
   } catch (error) {
     console.error('[api/admin/financeiro/alunos/[id]/enviar-cobranca GET]', error)
@@ -133,10 +138,11 @@ export async function POST(
       )
     }
 
-    const email = enrollment.email?.trim()
+    const finance = getEnrollmentFinanceData(enrollment)
+    const email = finance.email?.trim()
     if (!email) {
       return NextResponse.json(
-        { ok: false, message: 'Aluno não possui e-mail cadastrado para envio da cobrança' },
+        { ok: false, message: 'Aluno/responsável não possui e-mail cadastrado para envio da cobrança' },
         { status: 400 }
       )
     }
@@ -149,12 +155,12 @@ export async function POST(
         subject = String(body.subject).trim()
         text = String(body.text).trim()
       } else {
-        const t = buildTemplate(toTemplateEnrollment(enrollment))
+        const t = buildTemplate(toTemplateEnrollment(enrollment, finance.nome))
         subject = t.subject
         text = t.text
       }
     } catch {
-      const t = buildTemplate(toTemplateEnrollment(enrollment))
+      const t = buildTemplate(toTemplateEnrollment(enrollment, finance.nome))
       subject = t.subject
       text = t.text
     }
@@ -166,6 +172,13 @@ export async function POST(
         { status: 500 }
       )
     }
+
+    logFinanceAction({
+      entityType: 'ENROLLMENT',
+      entityId: enrollmentId,
+      action: 'INVOICE_SENT',
+      performedBy: auth.session?.sub ?? null,
+    })
 
     return NextResponse.json({ ok: true, message: 'Cobrança enviada com sucesso' })
   } catch (error) {

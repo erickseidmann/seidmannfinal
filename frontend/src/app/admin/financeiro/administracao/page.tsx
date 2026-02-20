@@ -7,12 +7,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
-import StatCard from '@/components/admin/StatCard'
 import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Users, Wallet, Receipt, Plus, Trash2, CheckCircle, Pencil, Bell } from 'lucide-react'
+import { Users, Wallet, Receipt, Plus, Trash2, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -45,6 +44,7 @@ interface ExpenseRow {
   year: number
   month: number
   paymentStatus: string | null
+  isFixed?: boolean
 }
 
 function formatMoney(n: number): string {
@@ -83,6 +83,13 @@ export default function FinanceiroAdministracaoPage() {
   const [despesaMeses, setDespesaMeses] = useState('1')
   const [savingDespesa, setSavingDespesa] = useState(false)
 
+  const [showPeriodo, setShowPeriodo] = useState(true)
+  const [itemsPerPageAdmin, setItemsPerPageAdmin] = useState(10)
+  const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(10)
+  const [itemsPerPageFixed, setItemsPerPageFixed] = useState(10)
+  const [coraGastos, setCoraGastos] = useState<number>(0)
+  const [coraLoading, setCoraLoading] = useState(false)
+
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
     try {
@@ -104,9 +111,34 @@ export default function FinanceiroAdministracaoPage() {
     }
   }, [])
 
+  const fetchCoraUsage = useCallback(async (ano: number, mes: number) => {
+    setCoraLoading(true)
+    try {
+      const res = await fetch(`/api/admin/financeiro/cora-usage?year=${ano}&month=${mes}`)
+      const json = await res.json()
+      if (res.ok && json.ok && json.data?.totalCents != null) {
+        setCoraGastos(json.data.totalCents / 100)
+      } else {
+        setCoraGastos(0)
+      }
+    } catch {
+      setCoraGastos(0)
+    } finally {
+      setCoraLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchData(selectedAno, selectedMes)
-  }, [selectedAno, selectedMes, fetchData])
+    fetchCoraUsage(selectedAno, selectedMes)
+  }, [selectedAno, selectedMes, fetchData, fetchCoraUsage])
+
+  const fixedExpenses = expenses.filter((e) => e.isFixed === true)
+  const otherExpenses = expenses.filter((e) => e.isFixed !== true)
+  const totalDespesasFixas = fixedExpenses.reduce((s, e) => s + e.valor, 0)
+  const displayedAdminUsers = adminUsers.slice(0, itemsPerPageAdmin)
+  const displayedFixedExpenses = fixedExpenses.slice(0, itemsPerPageFixed)
+  const displayedOtherExpenses = otherExpenses.slice(0, itemsPerPageExpenses)
 
   const valorExibido = (u: AdminUserRow) => u.valor ?? u.valorRepetido ?? 0
   const totalAdminValor = adminUsers.reduce((s, u) => s + valorExibido(u), 0)
@@ -275,12 +307,12 @@ Equipe Seidmann Institute`
     }
   }
 
-  const openModalDespesa = () => {
+  const openModalDespesa = (asFixed = false) => {
     setDespesaNome('')
     setDespesaDescricao('')
     setDespesaValor('')
-    setDespesaRepeteMensal(false)
-    setDespesaMeses('1')
+    setDespesaRepeteMensal(asFixed)
+    setDespesaMeses(asFixed ? '12' : '1')
     setModalDespesa(true)
   }
 
@@ -479,127 +511,222 @@ Equipe Seidmann Institute`
     },
   ]
 
+  const exportCsv = (rows: { [k: string]: unknown }[], headers: string[], getRow: (r: typeof rows[0]) => string[]) => {
+    const csv = '\uFEFF' + [headers.join(';'), ...rows.map((r) => getRow(r).map((v) => (String(v).includes(';') ? `"${String(v).replace(/"/g, '""')}"` : v)).join(';'))].join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `financeiro-administracao-${selectedAno}-${String(selectedMes).padStart(2, '0')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <AdminLayout>
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Financeiro – Administração</h1>
-        <p className="text-gray-600 mt-1">Custos e despesas de administração (usuários do ADM e outras despesas).</p>
-
-        <div className="mt-6 space-y-4">
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Selecione o ano</p>
-            <div className="flex flex-wrap gap-2">
-              {ANOS_DISPONIVEIS.map((ano) => (
-                <button
-                  key={ano}
-                  type="button"
-                  onClick={() => setSelectedAno(ano)}
-                  className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
-                    selectedAno === ano ? 'bg-orange-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {ano}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Mês</p>
-            <div className="flex flex-wrap gap-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setSelectedMes(m)}
-                  className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
-                    selectedMes === m ? 'bg-orange-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {MESES_ABREV[m]}
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Administração</h1>
+          <p className="text-gray-600 mt-1 text-sm md:text-base">
+            Custos e despesas de administração (usuários do ADM, despesas fixas e outras despesas).
+          </p>
         </div>
 
-        <p className="mt-4 text-sm font-medium text-gray-700">
-          Controle – {MESES_LABELS[selectedMes]} de {selectedAno}
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-6">
-          <StatCard
-            title="Total usuários ADM (valor definido)"
-            value={loading ? '—' : formatMoney(totalAdminValor)}
-            icon={<Users className="w-6 h-6" />}
-            color="orange"
-          />
-          <StatCard
-            title="Total despesas do mês"
-            value={loading ? '—' : formatMoney(totalDespesas)}
-            icon={<Receipt className="w-6 h-6" />}
-            color="blue"
-          />
-          <StatCard
-            title="Total geral (ADM + despesas)"
-            value={loading ? '—' : formatMoney(totalGeral)}
-            icon={<Wallet className="w-6 h-6" />}
-            color="purple"
-          />
-          <StatCard
-            title="Já pago (ADM + despesas)"
-            value={loading ? '—' : formatMoney(totalPagoAdmin + totalPagoDespesas)}
-            icon={<CheckCircle className="w-6 h-6" />}
-            color="green"
-          />
-        </div>
-
-        <div className="mt-6 flex items-center gap-2">
+        {/* Seção: Período (ano e mês) - Recolhível - mesmo estilo alunos */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <button
             type="button"
-            onClick={() => fetchData(selectedAno, selectedMes)}
-            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            onClick={() => setShowPeriodo((v) => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
           >
-            Atualizar lista
+            <Calendar className="w-5 h-5 text-brand-orange shrink-0" />
+            <span className="flex-1">Controle – {MESES_LABELS[selectedMes]} de {selectedAno}</span>
+            {showPeriodo ? <ChevronDown className="w-5 h-5 shrink-0" /> : <ChevronRight className="w-5 h-5 shrink-0" />}
           </button>
+          {showPeriodo && (
+            <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+              <div className="flex flex-wrap gap-4 pt-4">
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Ano</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ANOS_DISPONIVEIS.map((ano) => (
+                      <button
+                        key={ano}
+                        type="button"
+                        onClick={() => setSelectedAno(ano)}
+                        className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                          selectedAno === ano ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {ano}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Mês</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setSelectedMes(m)}
+                        className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${
+                          selectedMes === m ? 'bg-brand-orange text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {MESES_ABREV[m]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-end">
+                  <Button variant="primary" size="sm" onClick={() => { fetchData(selectedAno, selectedMes); fetchCoraUsage(selectedAno, selectedMes); }}>
+                    Atualizar lista
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="mt-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-3">Usuários do ADM</h2>
-          <p className="text-sm text-gray-600 mb-3">
+        {/* Resumo do mês (cubos) - mesmo estilo alunos */}
+        <section>
+          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total ADM</p>
+              <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(totalAdminValor)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Total despesas</p>
+              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(totalDespesas)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-violet-800 uppercase tracking-wide">Total geral</p>
+              <p className="mt-1 text-xl font-bold text-violet-900">{loading ? '—' : formatMoney(totalGeral)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Já pago</p>
+              <p className="mt-1 text-xl font-bold text-emerald-900">{loading ? '—' : formatMoney(totalPagoAdmin + totalPagoDespesas)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Gastos Cora</p>
+              <p className="mt-1 text-xl font-bold text-indigo-900">{coraLoading ? '—' : formatMoney(coraGastos)}</p>
+              <p className="text-xs text-indigo-600 mt-0.5">Estimativa automática</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Usuários do ADM */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
+            <h2 className="text-base font-semibold text-gray-800 mr-2">Usuários do ADM</h2>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Itens por página</label>
+              <select value={itemsPerPageAdmin} onChange={(e) => setItemsPerPageAdmin(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
+                <option value={3}>3</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => exportCsv(adminUsers, ['Nome', 'Função', 'Valor', 'Pagamento'], (r) => [r.nome, r.funcao ?? '', formatMoney(valorExibido(r as AdminUserRow)), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+              <FileDown className="w-4 h-4 mr-2" />
+              Exportar Excel
+            </Button>
+          </div>
+          <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
             Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui.
-          </p>
+          </div>
           <Table<AdminUserRow>
             columns={adminColumns}
-            data={adminUsers}
+            data={displayedAdminUsers}
             loading={loading}
             emptyMessage="Nenhum usuário administrativo (exceto super admin)."
           />
-        </div>
-
-        <div className="mt-8">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Outras despesas</h2>
-              <p className="text-sm text-gray-600 mt-0.5">
-                Despesas administrativas avulsas ou recorrentes para este mês/ano.
-              </p>
+          {adminUsers.length > itemsPerPageAdmin && (
+            <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
+              Mostrando {displayedAdminUsers.length} de {adminUsers.length} usuários
             </div>
-            <button
-              type="button"
-              onClick={openModalDespesa}
-              className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            >
-              <Plus className="w-4 h-4" />
-              Adicionar despesa
-            </button>
+          )}
+        </section>
+
+        {/* Despesas fixas */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-base font-semibold text-gray-800">Despesas fixas</h2>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Itens por página</label>
+              <select value={itemsPerPageFixed} onChange={(e) => setItemsPerPageFixed(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
+                <option value={3}>3</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={100}>100</option>
+              </select>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+                <FileDown className="w-4 h-4 mr-2" />
+                Exportar
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => openModalDespesa(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar despesa
+              </Button>
+            </div>
+          </div>
+          <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
+            Despesas recorrentes (internet, aluguel etc.). Marque &quot;Repete mensalmente&quot; ao adicionar para cadastrar como fixa.
           </div>
           <Table<ExpenseRow>
             columns={expenseColumns}
-            data={expenses}
+            data={displayedFixedExpenses}
             loading={loading}
-            emptyMessage="Nenhuma despesa neste mês."
+            emptyMessage="Nenhuma despesa fixa neste mês."
           />
-        </div>
+          {fixedExpenses.length > itemsPerPageFixed && (
+            <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
+              Mostrando {displayedFixedExpenses.length} de {fixedExpenses.length} despesas fixas
+            </div>
+          )}
+        </section>
+
+        {/* Outras despesas */}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">Outras despesas</h2>
+              <p className="text-sm text-gray-600 mt-0.5">Despesas avulsas para este mês/ano.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Itens por página</label>
+              <select value={itemsPerPageExpenses} onChange={(e) => setItemsPerPageExpenses(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
+                <option value={3}>3</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={100}>100</option>
+              </select>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+                <FileDown className="w-4 h-4 mr-2" />
+                Exportar
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => openModalDespesa(false)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar despesa
+              </Button>
+            </div>
+          </div>
+          <Table<ExpenseRow>
+            columns={expenseColumns}
+            data={displayedOtherExpenses}
+            loading={loading}
+            emptyMessage="Nenhuma despesa avulsa neste mês."
+          />
+          {otherExpenses.length > itemsPerPageExpenses && (
+            <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
+              Mostrando {displayedOtherExpenses.length} de {otherExpenses.length} despesas
+            </div>
+          )}
+        </section>
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </div>

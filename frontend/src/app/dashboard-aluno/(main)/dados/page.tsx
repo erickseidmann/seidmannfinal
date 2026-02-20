@@ -18,6 +18,7 @@ interface Aluno {
   disponibilidade: string | null
   dataNascimento: string | null
   nomeResponsavel: string | null
+  emailResponsavel: string | null
   curso: string | null
   frequenciaSemanal: string | null
   tempoAulaMinutos: number | null
@@ -191,6 +192,12 @@ export default function DadosAlunoPage() {
             <>
               <dt className="text-gray-500">Nome do responsável</dt>
               <dd className="font-medium text-gray-900">{aluno.nomeResponsavel}</dd>
+            </>
+          )}
+          {(aluno as { emailResponsavel?: string | null }).emailResponsavel && (
+            <>
+              <dt className="text-gray-500">E-mail do responsável</dt>
+              <dd className="font-medium text-gray-900">{(aluno as { emailResponsavel: string }).emailResponsavel}</dd>
             </>
           )}
           {aluno.curso && (

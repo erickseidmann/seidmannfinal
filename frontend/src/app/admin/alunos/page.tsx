@@ -38,6 +38,7 @@ interface Student {
   alerts?: StudentAlertItem[]
   alertsCount?: number
   nomeResponsavel?: string | null
+  emailResponsavel?: string | null
   cpf?: string | null
   cpfResponsavel?: string | null
   curso?: string | null
@@ -190,6 +191,7 @@ const initialForm = {
   whatsapp: '',
   dataNascimento: '',
   nomeResponsavel: '',
+  emailResponsavel: '',
   cpf: '',
   cpfResponsavel: '',
   curso: '',
@@ -427,6 +429,7 @@ export default function AdminAlunosPage() {
       whatsapp: s.whatsapp || '',
       dataNascimento,
       nomeResponsavel: s.nomeResponsavel ?? '',
+      emailResponsavel: s.emailResponsavel ?? '',
       cpf: s.cpf ?? '',
       cpfResponsavel: s.cpfResponsavel ?? '',
       curso: s.curso ?? '',
@@ -876,6 +879,7 @@ export default function AdminAlunosPage() {
         whatsapp: formData.whatsapp.trim(),
         dataNascimento: formData.dataNascimento || null,
         nomeResponsavel: formData.nomeResponsavel.trim() || null,
+        emailResponsavel: isMinor ? (formData.emailResponsavel.trim() || null) : null,
         cpf: formData.cpf.trim() || null,
         cpfResponsavel: isMinor ? (formData.cpfResponsavel.trim() || null) : null,
         curso: formData.curso || null,
@@ -2044,6 +2048,18 @@ export default function AdminAlunosPage() {
                       onChange={(e) => setFormData({ ...formData, cpfResponsavel: e.target.value })}
                       className="input w-full"
                       placeholder="000.000.000-00"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      E-mail do responsável (para cobrança e NFSe)
+                    </label>
+                    <input
+                      type="email"
+                      value={formData.emailResponsavel}
+                      onChange={(e) => setFormData({ ...formData, emailResponsavel: e.target.value })}
+                      className="input w-full"
+                      placeholder="responsavel@email.com"
                     />
                   </div>
                 </div>

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { updateExpenseSchema } from '@/lib/finance'
 
 export async function PATCH(
   request: NextRequest,
@@ -22,14 +23,17 @@ export async function PATCH(
 
     const { id } = await params
     const body = await request.json().catch(() => ({}))
-    const { valor, paymentStatus } = body
-
-    const updateData: { valor?: number; paymentStatus?: string } = {}
-    if (valor !== undefined) {
-      const v = Number(valor)
-      if (!Number.isNaN(v) && v >= 0) updateData.valor = v
+    const parsed = updateExpenseSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, message: 'Dados inválidos', details: parsed.error.flatten() },
+        { status: 400 }
+      )
     }
-    if (paymentStatus !== undefined) updateData.paymentStatus = paymentStatus === 'PAGO' ? 'PAGO' : 'EM_ABERTO'
+    const data = parsed.data
+    const updateData: { valor?: number; paymentStatus?: string } = {}
+    if (data.valor !== undefined) updateData.valor = data.valor
+    if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ ok: true, message: 'Nada a atualizar' })

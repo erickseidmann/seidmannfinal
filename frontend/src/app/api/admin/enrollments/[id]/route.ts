@@ -22,6 +22,7 @@ function buildUpdateData(body: Record<string, unknown>) {
     whatsapp,
     dataNascimento,
     nomeResponsavel,
+    emailResponsavel,
     cpf,
     cpfResponsavel,
     curso,
@@ -58,6 +59,7 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (whatsapp != null) update.whatsapp = String(whatsapp).trim()
   if (dataNascimento != null) update.dataNascimento = dataNascimento ? new Date(dataNascimento as string) : null
   if (nomeResponsavel !== undefined) update.nomeResponsavel = nomeResponsavel ? String(nomeResponsavel).trim() : null
+  if (emailResponsavel !== undefined) update.emailResponsavel = emailResponsavel ? String(emailResponsavel).trim().toLowerCase().slice(0, 255) : null
   if (cpf !== undefined) update.cpf = cpf ? String(cpf).trim().replace(/\D/g, '').slice(0, 14) : null
   if (cpfResponsavel !== undefined) update.cpfResponsavel = cpfResponsavel ? String(cpfResponsavel).trim().replace(/\D/g, '').slice(0, 14) : null
   if (curso !== undefined) update.curso = curso || null

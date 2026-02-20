@@ -62,11 +62,14 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/administracao': 'financeiro-administracao',
   '/admin/financeiro/relatorios': 'financeiro-relatorios',
   '/admin/financeiro/cupons': 'financeiro-cupons',
+  '/admin/financeiro/nfse': 'financeiro-nfse',
+  '/admin/financeiro/notificacoes': 'financeiro-notificacoes',
+  '/admin/financeiro/cobrancas': 'financeiro-cobrancas',
   '/admin/chat': 'chat',
   '/admin/kanban': 'kanban',
 }
 
-const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-relatorios', 'financeiro-cupons'] as const
+const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
 function hasFinanceiroAccess(adminPages: string[], subKey: string): boolean {
   if (adminPages.includes('financeiro')) return true
   return adminPages.includes(subKey)
@@ -94,10 +97,13 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
     children: [
       { href: '/admin/financeiro/geral', labelKey: 'admin.financeiroGeral' },
       { href: '/admin/financeiro/alunos', labelKey: 'admin.financeiroAlunos' },
+      { href: '/admin/financeiro/cobrancas', labelKey: 'admin.financeiroCobrancas' },
       { href: '/admin/financeiro/professores', labelKey: 'admin.financeiroProfessores' },
       { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
       { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
       { href: '/admin/financeiro/cupons', labelKey: 'admin.financeiroCupons' },
+      { href: '/admin/financeiro/nfse', labelKey: 'admin.financeiroNfse' },
+      { href: '/admin/financeiro/notificacoes', labelKey: 'admin.financeiroNotificacoes' },
     ],
   },
 ]

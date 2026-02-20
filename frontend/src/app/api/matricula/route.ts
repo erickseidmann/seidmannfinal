@@ -41,6 +41,9 @@ export async function POST(request: NextRequest) {
       updateExisting,
       dataNascimento,
       cpf,
+      nomeResponsavel,
+      cpfResponsavel,
+      emailResponsavel,
       tipoAula,
       nomeGrupo,
       tempoAulaMinutos,
@@ -105,6 +108,34 @@ export async function POST(request: NextRequest) {
     if (!disponibilidade || typeof disponibilidade !== 'string' || !disponibilidade.trim()) {
       if (!updateExisting) {
         errors.push('Disponibilidade é obrigatória')
+      }
+    }
+
+    // Menor de idade: exigir nome, CPF e e-mail do responsável
+    const dataNasc = dataNascimento && typeof dataNascimento === 'string' && dataNascimento.trim() ? new Date(dataNascimento.trim()) : null
+    const isMenor = dataNasc && !isNaN(dataNasc.getTime()) && (() => {
+      const hoje = new Date()
+      let idade = hoje.getFullYear() - dataNasc.getFullYear()
+      const m = hoje.getMonth() - dataNasc.getMonth()
+      if (m < 0 || (m === 0 && hoje.getDate() < dataNasc.getDate())) idade--
+      return idade < 18
+    })()
+    if (isMenor && !updateExisting) {
+      if (!nomeResponsavel || typeof nomeResponsavel !== 'string' || !nomeResponsavel.trim()) {
+        errors.push('Nome do responsável é obrigatório para menores de 18 anos')
+      }
+      if (!cpfResponsavel || typeof cpfResponsavel !== 'string' || !cpfResponsavel.trim()) {
+        errors.push('CPF do responsável é obrigatório para menores de 18 anos')
+      } else {
+        const cpfDigits = String(cpfResponsavel).replace(/\D/g, '')
+        if (cpfDigits.length !== 11) {
+          errors.push('CPF do responsável deve ter 11 dígitos')
+        }
+      }
+      if (!emailResponsavel || typeof emailResponsavel !== 'string' || !emailResponsavel.trim()) {
+        errors.push('E-mail do responsável é obrigatório para menores de 18 anos')
+      } else if (!isValidEmail(emailResponsavel)) {
+        errors.push('E-mail do responsável inválido')
       }
     }
 
@@ -209,6 +240,15 @@ export async function POST(request: NextRequest) {
         }
         if (cpf && typeof cpf === 'string' && cpf.trim()) {
           createData.cpf = cpf.trim().replace(/\D/g, '').slice(0, 14)
+        }
+        if (nomeResponsavel && typeof nomeResponsavel === 'string' && nomeResponsavel.trim()) {
+          createData.nomeResponsavel = nomeResponsavel.trim().slice(0, 255)
+        }
+        if (cpfResponsavel && typeof cpfResponsavel === 'string' && cpfResponsavel.trim()) {
+          createData.cpfResponsavel = cpfResponsavel.trim().replace(/\D/g, '').slice(0, 14)
+        }
+        if (emailResponsavel && typeof emailResponsavel === 'string' && emailResponsavel.trim()) {
+          createData.emailResponsavel = emailResponsavel.trim().toLowerCase().slice(0, 255)
         }
         if (tipoAula === 'PARTICULAR' || tipoAula === 'GRUPO') {
           createData.tipoAula = tipoAula

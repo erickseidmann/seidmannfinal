@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { logFinanceAction } from '@/lib/finance'
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,6 +57,14 @@ export async function POST(request: NextRequest) {
         teacherConfirmedAt: now,
       },
       update: { teacherConfirmedAt: now },
+    })
+
+    logFinanceAction({
+      entityType: 'TEACHER',
+      entityId: teacher.id,
+      action: 'TEACHER_CONFIRMED',
+      performedBy: auth.session?.userId ?? null,
+      metadata: { year, month },
     })
 
     // Notificar admins: professor confirmou valor (pronto para pagar)

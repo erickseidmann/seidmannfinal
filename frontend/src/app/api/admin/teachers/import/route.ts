@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData()
     const file = formData.get('file') as File | null
-    if (!file || !(file instanceof File)) {
+    if (!file || !(file instanceof Blob)) {
       return NextResponse.json(
         { ok: false, message: 'Envie um arquivo CSV' },
         { status: 400 }

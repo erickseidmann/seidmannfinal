@@ -53,7 +53,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="pt-BR" className="scrollbar-brand">
+    <html lang="pt-BR" className="scrollbar-brand" suppressHydrationWarning>
       <body className={`${inter.variable} ${poppins.variable} font-sans min-h-screen flex flex-col bg-white`}>
         <LanguageProvider>
           <ConditionalHeader />

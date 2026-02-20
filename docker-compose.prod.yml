@@ -1,0 +1,72 @@
+﻿version: '3.8'
+services:
+  mysql:
+    image: mysql:8
+    container_name: seidmann-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: seidmann_app
+      MYSQL_USER: seidmann
+      MYSQL_PASSWORD: seidmann123
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - seidmann-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: seidmann-backend
+    environment:
+      TZ: America/Sao_Paulo
+      NODE_ENV: production
+      DATABASE_URL: mysql://seidmann:seidmann123@seidmann-mysql:3306/seidmann_app
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - seidmann-network
+    expose:
+      - "3001"
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: seidmann-frontend
+    environment:
+      TZ: America/Sao_Paulo
+      NODE_ENV: production
+    depends_on:
+      - backend
+    networks:
+      - seidmann-network
+    volumes:
+      - ./uploads:/app/public/uploads
+    expose:
+      - "3000"
+  nginx:
+    image: nginx:alpine
+    container_name: seidmann-nginx
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./uploads:/var/www/uploads:ro
+      - ./certbot/www:/var/www/certbot:ro
+    networks:
+      - seidmann-network
+networks:
+  seidmann-network:
+    driver: bridge
+volumes:
+  mysql_data:

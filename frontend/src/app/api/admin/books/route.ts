@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    if (!pdfFile || !(pdfFile instanceof File) || pdfFile.size === 0) {
+    if (!pdfFile || !(pdfFile instanceof Blob) || pdfFile.size === 0) {
       return NextResponse.json(
         { ok: false, message: 'Arquivo PDF é obrigatório' },
         { status: 400 }
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    if (!capaFile || !(capaFile instanceof File) || capaFile.size === 0) {
+    if (!capaFile || !(capaFile instanceof Blob) || capaFile.size === 0) {
       return NextResponse.json(
         { ok: false, message: 'Imagem de capa é obrigatória' },
         { status: 400 }

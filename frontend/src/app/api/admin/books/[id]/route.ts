@@ -76,7 +76,7 @@ export async function PATCH(
 
     const baseDir = path.join(process.cwd(), 'public', 'uploads', 'books', bookId)
 
-    if (pdfFile && pdfFile instanceof File && pdfFile.size > 0) {
+    if (pdfFile && pdfFile instanceof Blob && pdfFile.size > 0) {
       const pdfExt = path.extname(pdfFile.name).toLowerCase()
       if (pdfExt === '.pdf') {
         await mkdir(baseDir, { recursive: true })
@@ -88,7 +88,7 @@ export async function PATCH(
       }
     }
 
-    if (capaFile && capaFile instanceof File && capaFile.size > 0) {
+    if (capaFile && capaFile instanceof Blob && capaFile.size > 0) {
       const capaExt = path.extname(capaFile.name).toLowerCase()
       const allowedCapa = ['.jpg', '.jpeg', '.png', '.webp']
       if (allowedCapa.includes(capaExt)) {

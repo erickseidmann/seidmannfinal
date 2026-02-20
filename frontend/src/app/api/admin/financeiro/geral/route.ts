@@ -9,6 +9,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import {
+  toDateKey,
+  filterRecordsByPausedEnrollment,
+  computeValorAPagar,
+  type PaymentRecord,
+} from '@/lib/finance'
 
 function startOfDay(d: Date): Date {
   const x = new Date(d)
@@ -28,13 +34,6 @@ function firstDayOfMonth(y: number, m: number): Date {
 
 function lastDayOfMonth(y: number, m: number): Date {
   return endOfDay(new Date(y, m, 0))
-}
-
-function toDateKey(d: Date): string {
-  const y = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${mm}-${day}`
 }
 
 export async function GET(request: NextRequest) {
@@ -177,19 +176,7 @@ export async function GET(request: NextRequest) {
         },
       })
 
-      // Filtrar manualmente aulas de alunos pausados (a partir da data pausedAt)
-      type RecordItem = { lesson: { startAt: Date; enrollment: { status: string; pausedAt: Date | null } } }
-      const filteredRecords = (recordsInRange as RecordItem[]).filter((r) => {
-        const enrollment = r.lesson.enrollment
-        if (enrollment.status === 'PAUSED' && enrollment.pausedAt) {
-          const pausedAt = new Date(enrollment.pausedAt)
-          pausedAt.setHours(0, 0, 0, 0)
-          const lessonDate = new Date(r.lesson.startAt)
-          lessonDate.setHours(0, 0, 0, 0)
-          return lessonDate < pausedAt
-        }
-        return true
-      })
+      const filteredRecords = filterRecordsByPausedEnrollment(recordsInRange as PaymentRecord[])
 
       let totalSaidasMes = 0
       for (const pm of paymentMonthsThisMonth) {
@@ -198,17 +185,16 @@ export async function GET(request: NextRequest) {
         const valorPorPeriodo = pm.valorPorPeriodo != null ? Number(pm.valorPorPeriodo) : (t?.valorPorPeriodo != null ? Number(t.valorPorPeriodo) : 0)
         const valorExtra = pm.valorExtra != null ? Number(pm.valorExtra) : (t?.valorExtra != null ? Number(t.valorExtra) : 0)
 
-        let totalMinutos = 0
-        for (const r of filteredRecords) {
-          const lesson = r.lesson as unknown as { teacherId: string; startAt: Date; durationMinutes: number }
-          if (lesson.teacherId !== pm.teacherId) continue
-          if (holidaySet.has(toDateKey(new Date(lesson.startAt)))) continue
-          const mins = (r as unknown as { tempoAulaMinutos: number | null }).tempoAulaMinutos ?? lesson.durationMinutes ?? 60
-          totalMinutos += mins
-        }
-        const totalHoras = totalMinutos / 60 // horas registradas (LessonRecord)
-        const valorHoras = totalHoras * valorPorHora
-        const valorAPagar = Math.round((valorHoras + valorPorPeriodo + valorExtra) * 100) / 100
+        const { valorAPagar } = computeValorAPagar({
+          records: filteredRecords,
+          teacherId: pm.teacherId,
+          periodStart: periodStart.getTime(),
+          periodEnd: periodEnd.getTime(),
+          holidaySet,
+          valorPorHora,
+          valorPorPeriodo,
+          valorExtra,
+        })
         totalSaidasMes += valorAPagar
       }
       dados[month - 1].saidas = Math.round(totalSaidasMes * 100) / 100

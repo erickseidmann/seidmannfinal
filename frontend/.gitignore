@@ -1,0 +1,4 @@
+# Certificados Cora (não versionar)
+certs/
+*.pem
+*.key

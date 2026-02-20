@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    let expenses: { id: string; name: string; description: string | null; valor: number; year: number; month: number; paymentStatus: string | null }[] = []
+    let expenses: { id: string; name: string; description: string | null; valor: number; year: number; month: number; paymentStatus: string | null; isFixed: boolean }[] = []
     if (prisma.adminExpense) {
       const rows = await prisma.adminExpense.findMany({
         where: { year, month },
@@ -136,6 +136,7 @@ export async function GET(request: NextRequest) {
         year: e.year,
         month: e.month,
         paymentStatus: e.paymentStatus ?? null,
+        isFixed: e.isFixed ?? false,
       }))
     }
 

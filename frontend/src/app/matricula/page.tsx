@@ -19,6 +19,17 @@ const STEPS = [
   { id: 3, label: 'Termos e pagamento', icon: FileCheck },
 ] as const
 
+function isMenorDeIdade(dataNascimento: string): boolean {
+  if (!dataNascimento || !dataNascimento.trim()) return false
+  const nasc = new Date(dataNascimento)
+  if (Number.isNaN(nasc.getTime())) return false
+  const hoje = new Date()
+  let idade = hoje.getFullYear() - nasc.getFullYear()
+  const m = hoje.getMonth() - nasc.getMonth()
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--
+  return idade < 18
+}
+
 interface FormErrors {
   nome?: string
   whatsapp?: string
@@ -30,6 +41,9 @@ interface FormErrors {
   frequenciaSemanal?: string
   aceiteTermos?: string
   aceiteFerias?: string
+  nomeResponsavel?: string
+  cpfResponsavel?: string
+  emailResponsavel?: string
 }
 
 const TEMPO_AULA_OPCOES = [
@@ -72,6 +86,9 @@ function MatriculaPageContent() {
     nome: '',
     dataNascimento: '',
     cpf: '',
+    nomeResponsavel: '',
+    cpfResponsavel: '',
+    emailResponsavel: '',
     whatsapp: '',
     email: '',
     idioma: '',
@@ -134,7 +151,7 @@ function MatriculaPageContent() {
     return { valorMensalidade: Math.round(mensal * 100) / 100, valorHoraAplicado: valorHora }
   }, [formData.tempoAulaMinutos, formData.frequenciaSemanal, formData.codigoCupom, formData.tipoAula, couponValidado])
 
-  /** Valida apenas os campos da etapa 1 (nome, contato, idioma, nível). */
+  /** Valida apenas os campos da etapa 1 (nome, contato, idioma, nível; responsável se menor). */
   const validateStep1 = (): boolean => {
     const newErrors: FormErrors = {}
     if (!formData.nome.trim()) newErrors.nome = 'Nome completo é obrigatório'
@@ -143,6 +160,13 @@ function MatriculaPageContent() {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Email inválido'
     if (!formData.idioma) newErrors.idioma = 'Idioma é obrigatório'
     if (!formData.nivel) newErrors.nivel = 'Nível é obrigatório'
+    const menor = isMenorDeIdade(formData.dataNascimento)
+    if (menor) {
+      if (!formData.nomeResponsavel.trim()) newErrors.nomeResponsavel = 'Nome do responsável é obrigatório para menores de 18 anos'
+      if (!formData.cpfResponsavel.trim()) newErrors.cpfResponsavel = 'CPF do responsável é obrigatório para menores de 18 anos'
+      if (!formData.emailResponsavel.trim()) newErrors.emailResponsavel = 'Email do responsável é obrigatório para menores de 18 anos'
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.emailResponsavel)) newErrors.emailResponsavel = 'Email do responsável inválido'
+    }
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -192,6 +216,14 @@ function MatriculaPageContent() {
       newErrors.frequenciaSemanal = 'Frequência semanal é obrigatória'
     }
 
+    const menor = isMenorDeIdade(formData.dataNascimento)
+    if (menor) {
+      if (!formData.nomeResponsavel.trim()) newErrors.nomeResponsavel = 'Nome do responsável é obrigatório para menores de 18 anos'
+      if (!formData.cpfResponsavel.trim()) newErrors.cpfResponsavel = 'CPF do responsável é obrigatório para menores de 18 anos'
+      if (!formData.emailResponsavel.trim()) newErrors.emailResponsavel = 'Email do responsável é obrigatório para menores de 18 anos'
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.emailResponsavel)) newErrors.emailResponsavel = 'Email do responsável inválido'
+    }
+
     if (!formData.aceiteTermos) {
       newErrors.aceiteTermos = 'É necessário aceitar os termos e condições'
     }
@@ -232,6 +264,9 @@ function MatriculaPageContent() {
           disponibilidade: formData.disponibilidade,
           dataNascimento: formData.dataNascimento || undefined,
           cpf: formData.cpf ? formData.cpf.replace(/\D/g, '') : undefined,
+          nomeResponsavel: isMenorDeIdade(formData.dataNascimento) ? formData.nomeResponsavel.trim() || undefined : undefined,
+          cpfResponsavel: isMenorDeIdade(formData.dataNascimento) ? formData.cpfResponsavel.replace(/\D/g, '') : undefined,
+          emailResponsavel: isMenorDeIdade(formData.dataNascimento) ? formData.emailResponsavel.trim() || undefined : undefined,
           tipoAula: formData.tipoAula || undefined,
           nomeGrupo: formData.tipoAula === 'GRUPO' ? formData.nomeGrupo : undefined,
           escolaMatricula: 'SEIDMANN',
@@ -456,6 +491,74 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                     />
                   </div>
                 </div>
+
+                {/* Dados do responsável (obrigatório para menores de 18 anos) */}
+                {isMenorDeIdade(formData.dataNascimento) && (
+                  <div className="mt-6 pt-4 border-t border-orange-200">
+                    <p className="text-sm font-semibold text-gray-800 mb-1">
+                      Dados do responsável <span className="text-red-500">*</span>
+                    </p>
+                    <p className="text-xs text-gray-600 mb-4">
+                      Para menores de 18 anos, informe nome, CPF e e-mail do responsável. Estes dados serão usados para cobrança e documentação financeira.
+                    </p>
+                    <div className="space-y-4">
+                      <div>
+                        <label htmlFor="nomeResponsavel" className="block text-sm font-semibold text-gray-700 mb-2">
+                          Nome completo do responsável <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          id="nomeResponsavel"
+                          name="nomeResponsavel"
+                          value={formData.nomeResponsavel}
+                          onChange={handleChange}
+                          placeholder="Nome do responsável"
+                          className={`input w-full ${errors.nomeResponsavel ? 'border-red-500 focus:ring-red-500' : ''}`}
+                        />
+                        {errors.nomeResponsavel && (
+                          <p className="mt-1 text-sm text-red-600">{errors.nomeResponsavel}</p>
+                        )}
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="cpfResponsavel" className="block text-sm font-semibold text-gray-700 mb-2">
+                            CPF do responsável <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            id="cpfResponsavel"
+                            name="cpfResponsavel"
+                            value={formData.cpfResponsavel}
+                            onChange={handleChange}
+                            placeholder="000.000.000-00"
+                            className={`input w-full ${errors.cpfResponsavel ? 'border-red-500 focus:ring-red-500' : ''}`}
+                            maxLength={14}
+                          />
+                          {errors.cpfResponsavel && (
+                            <p className="mt-1 text-sm text-red-600">{errors.cpfResponsavel}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label htmlFor="emailResponsavel" className="block text-sm font-semibold text-gray-700 mb-2">
+                            E-mail do responsável <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="email"
+                            id="emailResponsavel"
+                            name="emailResponsavel"
+                            value={formData.emailResponsavel}
+                            onChange={handleChange}
+                            placeholder="responsavel@email.com"
+                            className={`input w-full ${errors.emailResponsavel ? 'border-red-500 focus:ring-red-500' : ''}`}
+                          />
+                          {errors.emailResponsavel && (
+                            <p className="mt-1 text-sm text-red-600">{errors.emailResponsavel}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 </div>
               </div>
 

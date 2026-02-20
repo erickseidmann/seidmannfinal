@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 
 const CSV_HEADERS =
-  'nome,email,whatsapp,dataNascimento,cpf,nomeResponsavel,cpfResponsavel,curso,frequenciaSemanal,tempoAulaMinutos,tipoAula,nomeGrupo,cep,rua,cidade,estado,numero,complemento,moraNoExterior,enderecoExterior,valorMensalidade,metodoPagamento,diaPagamento,melhoresHorarios,melhoresDiasSemana,nomeVendedor,nomeEmpresaOuIndicador,observacoes,status,escolaMatricula,escolaMatriculaOutro'
+  'nome,email,whatsapp,dataNascimento,cpf,nomeResponsavel,emailResponsavel,cpfResponsavel,curso,frequenciaSemanal,tempoAulaMinutos,tipoAula,nomeGrupo,cep,rua,cidade,estado,numero,complemento,moraNoExterior,enderecoExterior,valorMensalidade,metodoPagamento,diaPagamento,melhoresHorarios,melhoresDiasSemana,nomeVendedor,nomeEmpresaOuIndicador,observacoes,status,escolaMatricula,escolaMatriculaOutro'
 
 // Valores reais: status = LEAD | ACTIVE | INACTIVE | PAUSED | ... | escolaMatricula = SEIDMANN | YOUBECOME | HIGHWAY | OUTRO (se OUTRO, preencha escolaMatriculaOutro)
 const CSV_EXAMPLE_PARTICULAR =

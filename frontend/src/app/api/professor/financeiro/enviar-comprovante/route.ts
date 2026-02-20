@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { sendEmail, mensagemNotaFiscalRecibo } from '@/lib/email'
+import { logFinanceAction } from '@/lib/finance'
 
 const EMAIL_FINANCEIRO = 'financeiro@seidmanninstitute.com'
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!file || !(file instanceof File) || file.size === 0) {
+    if (!file || !(file instanceof Blob) || file.size === 0) {
       return NextResponse.json(
         { ok: false, message: 'Anexe o comprovante (nota fiscal ou recibo)' },
         { status: 400 }
@@ -115,6 +116,14 @@ export async function POST(request: NextRequest) {
       update: {
         proofSentAt: new Date(),
       },
+    })
+
+    logFinanceAction({
+      entityType: 'TEACHER',
+      entityId: teacher.id,
+      action: 'PROOF_SENT',
+      performedBy: auth.session?.userId ?? null,
+      metadata: { year, month },
     })
 
     return NextResponse.json({
