@@ -174,7 +174,7 @@ export default function FinanceiroRelatoriosPage() {
         {/* Erro */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <p className="text-red-800">{error}</p>
+            <p className="text-red-800">{String(error)}</p>
             <Button variant="outline" size="sm" onClick={() => void fetchReport()}>
               Tentar novamente
             </Button>

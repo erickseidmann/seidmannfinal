@@ -141,6 +141,18 @@ const BADGE_CLASSES: Record<CobrancaStatusDisplay['variant'], string> = {
   neutral: 'bg-gray-100 text-gray-700',
 }
 
+/** Tipo explícito para aluno da validação (API /api/admin/financeiro/validacao) */
+interface ValidacaoAluno {
+  enrollmentId: string
+  nome: string
+  email: string | null
+  cpf: string | null
+  whatsapp?: string | null
+  valorMensalidade: number | null
+  dueDay: number | null
+  problemas: string[]
+}
+
 function CellWithCopy({
   value,
   onCopy,
@@ -224,15 +236,7 @@ export default function FinanceiroAlunosPage() {
     total: number
     comProblema: number
     semProblema: number
-    alunos: Array<{
-      enrollmentId: string
-      nome: string
-      email: string | null
-      cpf: string | null
-      valorMensalidade: number | null
-      dueDay: number | null
-      problemas: string[]
-    }>
+    alunos: ValidacaoAluno[]
   } | null>(null)
   const [validacaoLoading, setValidacaoLoading] = useState(false)
   const [validacaoModalOpen, setValidacaoModalOpen] = useState(false)
@@ -344,7 +348,7 @@ export default function FinanceiroAlunosPage() {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`
   }
 
-  const handleEditAluno = (aluno: typeof validacaoData!.alunos[0]) => {
+  const handleEditAluno = (aluno: ValidacaoAluno) => {
     setEditAlunoData({
       enrollmentId: aluno.enrollmentId,
       nome: aluno.nome,
