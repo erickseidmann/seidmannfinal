@@ -132,6 +132,7 @@ export async function GET(request: NextRequest) {
       actual: number
       expectedMinutes?: number
       actualMinutes?: number
+      groupKey?: string
     }[] = []
 
     // Buscar todos os alunos em situação ativa com frequência semanal definida (e tempoAulaMinutos quando houver).
@@ -184,6 +185,7 @@ export async function GET(request: NextRequest) {
               actual: actualCount,
               expectedMinutes,
               actualMinutes,
+              groupKey,
             })
           }
         } else if (actualCount !== freq) {
@@ -192,6 +194,7 @@ export async function GET(request: NextRequest) {
             studentName,
             expected: freq,
             actual: actualCount,
+            groupKey,
           })
         }
         continue
@@ -244,12 +247,32 @@ export async function GET(request: NextRequest) {
       }
     }
     const wrongFrequencyListWithDetails = wrongFrequencyList.map((item) => {
-      const lessonTimesThisWeek = lessons
-        .filter((l) => l.enrollmentId === item.enrollmentId)
-        .map((l) => l.startAt.toISOString())
+      const relevantLessons =
+        item.groupKey != null
+          ? lessons.filter(
+              (l) =>
+                l.status !== 'CANCELLED' &&
+                (l.enrollment as { tipoAula?: string; nomeGrupo?: string })?.tipoAula === 'GRUPO' &&
+                (l.enrollment as { nomeGrupo?: string })?.nomeGrupo === item.groupKey
+            )
+          : lessons.filter(
+              (l) => l.status !== 'CANCELLED' && l.enrollmentId === item.enrollmentId
+            )
+      const lessonTimesThisWeek = relevantLessons.map((l) => l.startAt.toISOString())
+      const lessonsThisWeek = relevantLessons.map((l) => ({
+        id: l.id,
+        startAt: l.startAt.toISOString(),
+        durationMinutes: l.durationMinutes ?? 60,
+        teacherName: l.teacher.nome,
+      }))
+      const isOverlap =
+        (item.expectedMinutes != null && item.actualMinutes != null && item.actualMinutes > item.expectedMinutes + TOLERANCE_MINUTES) ||
+        (item.expectedMinutes == null && item.actual > item.expected)
       return {
         ...item,
         lessonTimesThisWeek,
+        lessonsThisWeek,
+        isOverlap,
         lastBook: lastBookByEnrollment[item.enrollmentId] ?? null,
       }
     })

@@ -14,7 +14,8 @@ import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus } from 'lucide-react'
+import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X } from 'lucide-react'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -55,6 +56,9 @@ interface Stats {
     actual: number
     expectedMinutes?: number
     actualMinutes?: number
+    isOverlap?: boolean
+    lessonsThisWeek?: { id: string; startAt: string; durationMinutes: number; teacherName: string }[]
+    lessonTimesThisWeek?: string[]
   }[]
   teacherErrorsCount: number
   doubleBookingList: { teacherId: string; teacherName: string; lessons: { studentName: string; startAt: string }[] }[]
@@ -386,6 +390,18 @@ export default function AdminCalendarioPage() {
   }>>([])
   const [rescheduledLessonsModalOpen, setRescheduledLessonsModalOpen] = useState(false)
   const [transferRequestsModalOpen, setTransferRequestsModalOpen] = useState(false)
+  const [excluindoAulaId, setExcluindoAulaId] = useState<string | null>(null)
+  const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<{
+    id: string
+    nome: string
+    frequenciaSemanal?: number | null
+    tempoAulaMinutos?: number | null
+  } | null>(null)
+  const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
+    existingLessonTimes: string[]
+    expected: number
+    actual: number
+  } | null>(null)
 
   const weekStartForStats = useMemo(() => getMonday(currentDate), [currentDate])
 
@@ -493,6 +509,32 @@ export default function AdminCalendarioPage() {
       console.error(e)
     }
   }, [weekStartForStats])
+
+  const excluirAulaWrongFrequency = useCallback(
+    async (lessonId: string) => {
+      setExcluindoAulaId(lessonId)
+      try {
+        const res = await fetch(`/api/admin/lessons/${lessonId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ deleteFuture: false }),
+        })
+        const json = await res.json()
+        if (json.ok) {
+          await fetchStats()
+          setToast({ message: 'Aula excluída.', type: 'success' })
+        } else {
+          setToast({ message: json.message || 'Erro ao excluir aula', type: 'error' })
+        }
+      } catch (e) {
+        setToast({ message: 'Erro ao excluir aula', type: 'error' })
+      } finally {
+        setExcluindoAulaId(null)
+      }
+    },
+    [fetchStats]
+  )
 
   const fetchNovosMatriculadosCount = useCallback(async () => {
     try {
@@ -2719,12 +2761,79 @@ export default function AdminCalendarioPage() {
               )}
               {listModal.type === 'wrongFrequency' &&
                 stats.wrongFrequencyList.map((item) => (
-                  <div key={item.enrollmentId} className="p-3 rounded-lg border border-orange-200 bg-orange-50 text-sm">
-                    <span className="font-medium">{item.studentName}</span>
-                    {item.expectedMinutes != null && item.actualMinutes != null ? (
-                      <> – cadastro: {item.expectedMinutes} min/sem (ex.: {item.expected}x{item.expectedMinutes / item.expected}min). Nesta semana (seg–sáb): {item.actualMinutes} min.</>
-                    ) : (
-                      <> – cadastro: {item.expected} aula(s) por semana. Nesta semana (seg–sáb): {item.actual} aula(s).</>
+                  <div key={item.enrollmentId} className="p-3 rounded-lg border border-orange-200 bg-orange-50 text-sm space-y-2">
+                    <div>
+                      <span className="font-medium">{item.studentName}</span>
+                      {item.isOverlap ? (
+                        <span className="ml-1 text-red-700 font-semibold">– Aula sobreposta</span>
+                      ) : item.expectedMinutes != null && item.actualMinutes != null ? (
+                        <> – cadastro: {item.expectedMinutes} min/sem (ex.: {item.expected}x{Math.round(item.expectedMinutes / item.expected)}min). Nesta semana (seg–sáb): {item.actualMinutes} min.</>
+                      ) : (
+                        <> – cadastro: {item.expected} aula(s) por semana. Nesta semana (seg–sáb): {item.actual} aula(s).</>
+                      )}
+                    </div>
+                    {item.isOverlap && item.lessonsThisWeek && item.lessonsThisWeek.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-xs font-medium text-gray-700">Excluir uma aula para corrigir:</p>
+                        <ul className="space-y-1">
+                          {item.lessonsThisWeek.map((lesson) => {
+                            const startDate = new Date(lesson.startAt)
+                            const diaHora = startDate.toLocaleDateString('pt-BR', {
+                              weekday: 'short',
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                            })
+                            const hora = formatTime(lesson.startAt)
+                            return (
+                              <li
+                                key={lesson.id}
+                                className="flex items-center justify-between gap-2 py-1.5 px-2 rounded bg-white border border-orange-100"
+                              >
+                                <span>
+                                  {diaHora} às {hora} – {lesson.teacherName} ({lesson.durationMinutes} min)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => excluirAulaWrongFrequency(lesson.id)}
+                                  disabled={excluindoAulaId === lesson.id}
+                                  className="flex-shrink-0 p-1 rounded text-red-600 hover:bg-red-100 hover:text-red-800 disabled:opacity-50"
+                                  title="Excluir esta aula"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                    {!item.isOverlap && (
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={() => {
+                          const tempoAula =
+                            item.expectedMinutes != null && item.expected > 0
+                              ? Math.round(item.expectedMinutes / item.expected)
+                              : undefined
+                          setDesignarAulaEnrollment({
+                            id: item.enrollmentId,
+                            nome: item.studentName,
+                            frequenciaSemanal: item.expected,
+                            tempoAulaMinutos: tempoAula ?? undefined,
+                          })
+                          setDesignarAulaCorrectionData({
+                            existingLessonTimes: item.lessonTimesThisWeek ?? [],
+                            expected: item.expected,
+                            actual: item.actual,
+                          })
+                        }}
+                        className="mt-2"
+                      >
+                        Corrigir
+                      </Button>
                     )}
                   </div>
                 ))}
@@ -2960,6 +3069,30 @@ export default function AdminCalendarioPage() {
             )}
           </div>
         </Modal>
+
+        <DesignarAulaModal
+          isOpen={!!designarAulaEnrollment}
+          onClose={() => {
+            setDesignarAulaEnrollment(null)
+            setDesignarAulaCorrectionData(null)
+          }}
+          enrollment={
+            designarAulaEnrollment
+              ? {
+                  id: designarAulaEnrollment.id,
+                  nome: designarAulaEnrollment.nome,
+                  frequenciaSemanal: designarAulaEnrollment.frequenciaSemanal ?? null,
+                  tempoAulaMinutos: designarAulaEnrollment.tempoAulaMinutos ?? null,
+                }
+              : null
+          }
+          correctionData={designarAulaCorrectionData}
+          onSuccess={() => {
+            setDesignarAulaEnrollment(null)
+            setDesignarAulaCorrectionData(null)
+            fetchStats()
+          }}
+        />
 
         {toast && (
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
