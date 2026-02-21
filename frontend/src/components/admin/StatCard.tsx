@@ -11,65 +11,84 @@ interface StatCardProps {
   title: string
   value: string | number
   icon?: ReactNode
-  color?: 'green' | 'orange' | 'red' | 'blue' | 'purple'
+  color?: 'green' | 'orange' | 'red' | 'blue' | 'purple' | 'teal' | 'indigo' | 'amber'
   subtitle?: string
   className?: string
   /** Estilo igual ao financeiro: fundo pastel, borda colorida, título em maiúsculas */
   variant?: 'default' | 'finance'
 }
 
-const colorClasses = {
+const colorClasses: Record<string, string> = {
   green: 'text-emerald-600 bg-emerald-100',
   orange: 'text-amber-600 bg-amber-100',
   red: 'text-rose-600 bg-rose-100',
   blue: 'text-sky-600 bg-sky-100',
   purple: 'text-violet-600 bg-violet-100',
+  teal: 'text-teal-600 bg-teal-100',
+  indigo: 'text-indigo-600 bg-indigo-100',
+  amber: 'text-amber-600 bg-amber-100',
 }
 
-const financeCardClasses = {
+const financeCardClasses: Record<string, string> = {
   green: 'border-2 border-emerald-200 bg-emerald-50 hover:bg-emerald-100',
   orange: 'border-2 border-amber-200 bg-amber-50 hover:bg-amber-100',
   red: 'border-2 border-red-200 bg-red-50 hover:bg-red-100',
   blue: 'border-2 border-sky-200 bg-sky-50 hover:bg-sky-100',
   purple: 'border-2 border-violet-200 bg-violet-50 hover:bg-violet-100',
+  teal: 'border-2 border-teal-200 bg-teal-50 hover:bg-teal-100',
+  indigo: 'border-2 border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+  amber: 'border-2 border-amber-200 bg-amber-50 hover:bg-amber-100',
 }
 
-const financeTitleClasses = {
+const financeTitleClasses: Record<string, string> = {
   green: 'text-emerald-800',
   orange: 'text-amber-800',
   red: 'text-red-800',
   blue: 'text-sky-800',
   purple: 'text-violet-800',
+  teal: 'text-teal-800',
+  indigo: 'text-indigo-800',
+  amber: 'text-amber-800',
 }
 
-const financeValueClasses = {
+const financeValueClasses: Record<string, string> = {
   green: 'text-emerald-900',
   orange: 'text-amber-900',
   red: 'text-red-900',
   blue: 'text-sky-900',
   purple: 'text-violet-900',
+  teal: 'text-teal-900',
+  indigo: 'text-indigo-900',
+  amber: 'text-amber-900',
 }
 
-const financeIconClasses = {
+const financeIconClasses: Record<string, string> = {
   green: 'text-emerald-700 bg-emerald-200/60',
   orange: 'text-amber-700 bg-amber-200/60',
   red: 'text-red-700 bg-red-200/60',
   blue: 'text-sky-700 bg-sky-200/60',
   purple: 'text-violet-700 bg-violet-200/60',
+  teal: 'text-teal-700 bg-teal-200/60',
+  indigo: 'text-indigo-700 bg-indigo-200/60',
+  amber: 'text-amber-700 bg-amber-200/60',
 }
 
 export default function StatCard({ title, value, icon, color = 'blue', subtitle, className = '', variant = 'default' }: StatCardProps) {
   if (variant === 'finance') {
+    const cardClass = financeCardClasses[color] ?? financeCardClasses.blue
+    const titleClass = financeTitleClasses[color] ?? financeTitleClasses.blue
+    const valueClass = financeValueClasses[color] ?? financeValueClasses.blue
+    const iconClass = financeIconClasses[color] ?? financeIconClasses.blue
     return (
       <div
-        className={`rounded-xl p-4 shadow-sm transition-colors h-full flex flex-col ${financeCardClasses[color]} ${className}`}
+        className={`rounded-xl p-4 shadow-sm transition-colors h-full flex flex-col ${cardClass} ${className}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className={`text-xs font-semibold uppercase tracking-wide ${financeTitleClasses[color]}`}>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${titleClass}`}>
               {title}
             </p>
-            <p className={`mt-1 text-xl font-bold tabular-nums ${financeValueClasses[color]}`}>
+            <p className={`mt-1 text-xl font-bold tabular-nums ${valueClass}`}>
               {value}
             </p>
             {subtitle && (
@@ -77,7 +96,7 @@ export default function StatCard({ title, value, icon, color = 'blue', subtitle,
             )}
           </div>
           {icon && (
-            <div className={`shrink-0 p-2 rounded-lg ${financeIconClasses[color]}`}>
+            <div className={`shrink-0 p-2 rounded-lg ${iconClass}`}>
               {icon}
             </div>
           )}

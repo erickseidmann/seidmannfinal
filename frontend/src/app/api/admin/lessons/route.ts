@@ -4,6 +4,22 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+
+function overlap(
+  startA: Date,
+  durationA: number,
+  startB: Date,
+  durationB: number
+): boolean {
+  const endA = new Date(startA.getTime() + durationA * 60 * 1000)
+  const endB = new Date(startB.getTime() + durationB * 60 * 1000)
+  return startA.getTime() < endB.getTime() && startB.getTime() < endA.getTime()
+}
+
+function formatDataHora(d: Date): string {
+  return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) +
+    ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+}
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
@@ -261,7 +277,38 @@ export async function POST(request: NextRequest) {
     }
 
     const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
-    
+
+    // Verificar sobreposição: não permitir que professor tenha duas aulas no mesmo horário (exceto mesmo aluno)
+    const checkOverlap = async (
+      lessonStart: Date,
+      enrollmentIdParam: string,
+      teacherIdParam: string
+    ): Promise<{ skip: boolean; conflictMessage?: string }> => {
+      const windowStart = new Date(lessonStart)
+      windowStart.setHours(windowStart.getHours() - 4)
+      const windowEnd = new Date(lessonStart)
+      windowEnd.setMinutes(windowEnd.getMinutes() + duration + 60)
+      const existing = await prisma.lesson.findMany({
+        where: {
+          teacherId: teacherIdParam,
+          status: { not: 'CANCELLED' },
+          startAt: { gte: windowStart, lte: windowEnd },
+        },
+        select: { id: true, enrollmentId: true, startAt: true, durationMinutes: true },
+      })
+      for (const ex of existing) {
+        if (!overlap(lessonStart, duration, ex.startAt, ex.durationMinutes ?? 60)) continue
+        if (ex.enrollmentId === enrollmentIdParam) {
+          return { skip: true } // mesmo aluno: ignorar este slot
+        }
+        return {
+          skip: false,
+          conflictMessage: `A repetição de frequência não pode acontecer porque no dia ${formatDataHora(ex.startAt)} o professor já tem outra aula. Por favor, reagende para outro dia e horário, ou coloque uma frequência diferente. Nunca podemos sobrepor uma aula sobre a outra.`,
+        }
+      }
+      return { skip: false }
+    }
+
     // Se há repetição de frequência, usar lógica de frequência (não usar repeatWeeks)
     if (repeatFrequencyEnabled && repeatFrequencyWeeks > 0) {
       // Criar aulas para todas as semanas (incluindo a primeira)
@@ -269,6 +316,14 @@ export async function POST(request: NextRequest) {
         // Aula inicial da semana
         const lessonStart = new Date(startAt)
         lessonStart.setDate(lessonStart.getDate() + w * 7)
+        const overlapResult = await checkOverlap(lessonStart, enrollmentId, teacherId)
+        if (overlapResult.conflictMessage) {
+          return NextResponse.json(
+            { ok: false, message: overlapResult.conflictMessage },
+            { status: 400 }
+          )
+        }
+        if (!overlapResult.skip) {
         const lesson1 = await prisma.lesson.create({
             data: {
               enrollmentId,
@@ -286,11 +341,20 @@ export async function POST(request: NextRequest) {
             },
           })
           lessonsCreated.push(lesson1)
+        }
         
         // Aula da mesma semana (se configurada)
         if (repeatSameWeek && repeatSameWeekStartAt) {
           const sameWeekDate = new Date(repeatSameWeekStartAt)
           sameWeekDate.setDate(sameWeekDate.getDate() + w * 7)
+          const overlapResult2 = await checkOverlap(sameWeekDate, enrollmentId, teacherId)
+          if (overlapResult2.conflictMessage) {
+            return NextResponse.json(
+              { ok: false, message: overlapResult2.conflictMessage },
+              { status: 400 }
+            )
+          }
+          if (!overlapResult2.skip) {
           const lesson2 = await prisma.lesson.create({
               data: {
                 enrollmentId,
@@ -308,6 +372,7 @@ export async function POST(request: NextRequest) {
               },
             })
             lessonsCreated.push(lesson2)
+          }
         }
       }
     } else {
@@ -316,6 +381,14 @@ export async function POST(request: NextRequest) {
         for (let w = 0; w < repeatWeeks; w++) {
           const lessonStart = new Date(startAt)
           lessonStart.setDate(lessonStart.getDate() + w * 7)
+          const overlapResult = await checkOverlap(lessonStart, enrollmentId, teacherId)
+          if (overlapResult.conflictMessage) {
+            return NextResponse.json(
+              { ok: false, message: overlapResult.conflictMessage },
+              { status: 400 }
+            )
+          }
+          if (overlapResult.skip) continue
           const lesson = await prisma.lesson.create({
             data: {
               enrollmentId,
@@ -336,6 +409,14 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // Criar apenas a aula inicial
+        const overlapResult = await checkOverlap(firstStart, enrollmentId, teacherId)
+        if (overlapResult.conflictMessage) {
+          return NextResponse.json(
+            { ok: false, message: overlapResult.conflictMessage },
+            { status: 400 }
+          )
+        }
+        if (!overlapResult.skip) {
         const lesson = await prisma.lesson.create({
           data: {
             enrollmentId,
@@ -353,11 +434,20 @@ export async function POST(request: NextRequest) {
           },
         })
         lessonsCreated.push(lesson)
+        }
       }
       
       // Se há repetição na mesma semana (sem frequência), criar essa aula também
       if (repeatSameWeek && repeatSameWeekStartAt) {
         const sameWeekDate = new Date(repeatSameWeekStartAt)
+        const overlapResultSame = await checkOverlap(sameWeekDate, enrollmentId, teacherId)
+        if (overlapResultSame.conflictMessage) {
+          return NextResponse.json(
+            { ok: false, message: overlapResultSame.conflictMessage },
+            { status: 400 }
+          )
+        }
+        if (!overlapResultSame.skip) {
         const lesson = await prisma.lesson.create({
             data: {
               enrollmentId,
@@ -375,6 +465,7 @@ export async function POST(request: NextRequest) {
             },
           })
           lessonsCreated.push(lesson)
+        }
       }
     }
 

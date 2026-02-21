@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import Modal from './Modal'
 
 const DIAS_SEMANA = [
@@ -37,17 +37,33 @@ interface EnrollmentData {
   tempoAulaMinutos?: number | null
 }
 
+export interface CorrectionData {
+  existingLessonTimes: string[]
+  expected: number
+  actual: number
+}
+
 interface DesignarAulaModalProps {
   isOpen: boolean
   onClose: () => void
   enrollment: EnrollmentData | null
+  correctionData?: CorrectionData | null
   onSuccess: () => void
+}
+
+function formatLessonDateTime(isoStr: string): string {
+  const d = new Date(isoStr)
+  const weekday = d.toLocaleDateString('pt-BR', { weekday: 'short' })
+  const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  return `${weekday} ${date} às ${time}`
 }
 
 export default function DesignarAulaModal({
   isOpen,
   onClose,
   enrollment,
+  correctionData,
   onSuccess,
 }: DesignarAulaModalProps) {
   const hoje = new Date()
@@ -67,16 +83,54 @@ export default function DesignarAulaModal({
   const freq = enrollment?.frequenciaSemanal ?? 2
   const tempo = enrollment?.tempoAulaMinutos ?? 60
 
+  // Dias já agendados (modo correção): extraídos das aulas existentes
+  const diasJaAgendados = useMemo(() => {
+    if (!correctionData?.existingLessonTimes?.length) return []
+    const set = new Set<number>()
+    for (const isoStr of correctionData.existingLessonTimes) {
+      const d = new Date(isoStr)
+      const day = d.getDay() // 0=Dom, 1=Seg, ..., 6=Sab
+      if (day >= 1 && day <= 6) set.add(day)
+    }
+    return [...set].sort((a, b) => a - b)
+  }, [correctionData])
+
+  // Dias que vamos adicionar (exclui os já agendados)
+  const diasParaAdicionar = useMemo(
+    () => diasSelecionados.filter((d) => !diasJaAgendados.includes(d)),
+    [diasSelecionados, diasJaAgendados]
+  )
+
+  const inicializouDias = useRef(false)
+  useEffect(() => {
+    if (!isOpen) {
+      inicializouDias.current = false
+      return
+    }
+    if (inicializouDias.current) return
+    if (correctionData?.existingLessonTimes?.length && diasJaAgendados.length > 0) {
+      setDiasSelecionados(diasJaAgendados)
+    } else if (!correctionData) {
+      setDiasSelecionados([1, 5])
+    }
+    inicializouDias.current = true
+  }, [isOpen, correctionData, diasJaAgendados])
+
   const toggleDia = (d: number) => {
+    if (diasJaAgendados.includes(d)) return // não permite desmarcar dias já agendados
     setDiasSelecionados((prev) => {
       if (prev.includes(d)) {
         const next = prev.filter((x) => x !== d)
         return next.length >= 1 ? next : prev
       }
-      if (prev.length >= freq) return prev
+      const maxNovos = freq - diasJaAgendados.length
+      const countNovos = prev.filter((x) => !diasJaAgendados.includes(x)).length
+      if (countNovos >= maxNovos) return prev
       return [...prev, d].sort((a, b) => a - b)
     })
   }
+
+  const diaParaBusca = diasParaAdicionar.length > 0 ? diasParaAdicionar[0] : diasSelecionados[0] ?? 1
 
   const buscarProfessores = useCallback(async () => {
     if (!enrollment) return
@@ -85,7 +139,7 @@ export default function DesignarAulaModal({
     setProfessores([])
     setProfessorSelecionado(null)
     try {
-      const dia = diasSelecionados[0] ?? 1
+      const dia = diaParaBusca
       const startDate = new Date(dataInicio)
       const startDateAdjusted = new Date(startDate)
       let diasToAdd = (dia - startDateAdjusted.getDay() + 7) % 7
@@ -111,15 +165,17 @@ export default function DesignarAulaModal({
     } finally {
       setLoadingProfessores(false)
     }
-  }, [enrollment, diasSelecionados, dataInicio, horario, tempo])
+  }, [enrollment, diaParaBusca, dataInicio, horario, tempo])
 
   const designarAulas = useCallback(async () => {
     if (!enrollment || !professorSelecionado) return
+    const diasACriar = diasParaAdicionar.length > 0 ? [...diasParaAdicionar].sort((a, b) => a - b) : [...diasSelecionados].sort((a, b) => a - b)
+    if (diasACriar.length === 0) return
     setSubmitting(true)
     setError(null)
     try {
       const startDate = new Date(dataInicio)
-      const sortedDias = [...diasSelecionados].sort((a, b) => a - b)
+      const sortedDias = diasACriar
       const primeiroDia = sortedDias[0]
       const segundoDia = sortedDias[1]
 
@@ -199,6 +255,7 @@ export default function DesignarAulaModal({
     professorSelecionado,
     dataInicio,
     diasSelecionados,
+    diasParaAdicionar,
     horario,
     tempo,
     quantidadeSemanas,
@@ -222,6 +279,36 @@ export default function DesignarAulaModal({
           <p className="text-sm text-gray-600">
             Configure as aulas para <strong>{enrollment.nome}</strong>. Frequência e tempo vêm da matrícula.
           </p>
+
+          {correctionData && correctionData.existingLessonTimes.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-2">
+              <p className="text-sm font-medium text-red-800">Já agendado nesta semana:</p>
+              <ul className="space-y-1">
+                {correctionData.existingLessonTimes.map((isoStr, idx) => (
+                  <li key={idx} className="text-sm text-red-700 font-medium">
+                    {formatLessonDateTime(isoStr)}
+                  </li>
+                ))}
+              </ul>
+              {(correctionData.expected - correctionData.actual) > 0 ? (
+                <p className="text-sm text-red-800">
+                  Faltam <strong>{correctionData.expected - correctionData.actual}</strong> aula{(correctionData.expected - correctionData.actual) !== 1 ? 's' : ''} para agendar.
+                </p>
+              ) : (correctionData.expected - correctionData.actual) < 0 ? (
+                <p className="text-sm text-red-800">
+                  Excesso de <strong>{correctionData.actual - correctionData.expected}</strong> {(correctionData.actual - correctionData.expected) === 1 ? 'aula agendada' : 'aulas agendadas'}.
+                </p>
+              ) : null}
+            </div>
+          )}
+
+          {correctionData && correctionData.existingLessonTimes.length === 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm text-red-800">
+                Nenhuma aula agendada nesta semana. Faltam <strong>{correctionData.expected}</strong> aula{correctionData.expected !== 1 ? 's' : ''} para agendar.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -264,18 +351,34 @@ export default function DesignarAulaModal({
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Dias da semana</label>
             <div className="flex flex-wrap gap-2">
-              {DIAS_SEMANA.map((d) => (
-                <label key={d.value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={diasSelecionados.includes(d.value)}
-                    onChange={() => toggleDia(d.value)}
-                    className="rounded border-gray-300"
-                  />
-                  <span className="text-sm">{d.label}</span>
-                </label>
-              ))}
+              {DIAS_SEMANA.map((d) => {
+                const jaAgendado = diasJaAgendados.includes(d.value)
+                return (
+                  <label
+                    key={d.value}
+                    className={`flex items-center gap-2 rounded px-2 py-1 ${
+                      jaAgendado ? 'cursor-default bg-amber-100' : 'cursor-pointer hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={diasSelecionados.includes(d.value)}
+                      onChange={() => toggleDia(d.value)}
+                      disabled={jaAgendado}
+                      className={`rounded border-gray-300 ${jaAgendado ? 'accent-amber-600' : ''}`}
+                    />
+                    <span className={`text-sm ${jaAgendado ? 'text-amber-800 font-medium' : 'text-gray-700'}`}>
+                      {d.label}
+                    </span>
+                  </label>
+                )
+              })}
             </div>
+            {diasJaAgendados.length > 0 && (
+              <p className="mt-1.5 text-xs text-amber-700">
+                Dias em amarelo já estão agendados e não serão alterados. Selecione os dias que faltam.
+              </p>
+            )}
           </div>
 
           <div>
@@ -297,7 +400,11 @@ export default function DesignarAulaModal({
             <button
               type="button"
               onClick={buscarProfessores}
-              disabled={loadingProfessores || diasSelecionados.length === 0}
+              disabled={
+                loadingProfessores ||
+                diasSelecionados.length === 0 ||
+                (diasJaAgendados.length > 0 && diasParaAdicionar.length === 0)
+              }
               className="px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-medium hover:bg-sky-700 disabled:opacity-50"
             >
               {loadingProfessores ? 'Buscando...' : 'Buscar professores disponíveis'}
@@ -326,7 +433,11 @@ export default function DesignarAulaModal({
               <button
                 type="button"
                 onClick={designarAulas}
-                disabled={!professorSelecionado || submitting}
+                disabled={
+                  !professorSelecionado ||
+                  submitting ||
+                  (diasJaAgendados.length > 0 && diasParaAdicionar.length === 0)
+                }
                 className="mt-4 px-6 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? 'Designando...' : 'Designar aulas para o professor'}

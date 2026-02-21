@@ -376,10 +376,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: enrollments })
     }
 
-    // Alunos sem professor selecionado nesta semana + alunos com frequência incorreta
-    if (type === 'studentsWithoutTeacherWeek') {
+    // Alunos sem professor selecionado nesta semana ou na próxima
+    if (type === 'studentsWithoutTeacherWeek' || type === 'studentsWithoutTeacherNextWeek') {
       const weekStartParam = searchParams.get('weekStart')
-      const monday = weekStartParam ? new Date(weekStartParam) : getMonday(new Date())
+      let monday: Date
+      if (weekStartParam) {
+        monday = new Date(weekStartParam)
+      } else if (type === 'studentsWithoutTeacherNextWeek') {
+        const thisMonday = getMonday(new Date())
+        monday = new Date(thisMonday)
+        monday.setDate(monday.getDate() + 7)
+      } else {
+        monday = getMonday(new Date())
+      }
       const saturdayEnd = getSaturdayEnd(monday)
 
       // Buscar aulas da semana para calcular frequência incorreta
@@ -534,7 +543,7 @@ export async function GET(request: NextRequest) {
 
       // Aulas sem professor nesta semana (para sugestões)
       const lessonsWithoutTeacher = lessons
-        .filter((l) => !l.teacherId && ['ACTIVE', 'PAUSED'].includes(l.enrollment.status as string))
+        .filter((l) => !l.teacherId && (l.enrollment.status as string) === 'ACTIVE')
         .map((l) => ({
           id: l.id,
           enrollmentId: l.enrollmentId,
@@ -546,14 +555,14 @@ export async function GET(request: NextRequest) {
       const enrollmentIdsWithTeacherThisWeek = new Set(
         lessons.filter((l) => l.teacherId != null).map((l) => l.enrollmentId)
       )
-      const allActivePaused = await prisma.enrollment.findMany({
-        where: { status: { in: ['ACTIVE', 'PAUSED'] } },
-        select: { id: true, nome: true, tipoAula: true, nomeGrupo: true },
+      const allActiveEnrollments = await prisma.enrollment.findMany({
+        where: { status: 'ACTIVE' },
+        select: { id: true, nome: true, tipoAula: true, nomeGrupo: true, frequenciaSemanal: true, tempoAulaMinutos: true },
         orderBy: { nome: 'asc' },
       })
       // Replicar "com professor" para todos do mesmo grupo (igual à tabela)
       const groupByNomeGrupo: Record<string, string[]> = {}
-      for (const e of allActivePaused) {
+      for (const e of allActiveEnrollments) {
         const nomeGrupo = (e as { nomeGrupo?: string | null }).nomeGrupo?.trim()
         if ((e as { tipoAula?: string | null }).tipoAula === 'GRUPO' && nomeGrupo) {
           if (!groupByNomeGrupo[nomeGrupo]) groupByNomeGrupo[nomeGrupo] = []
@@ -566,7 +575,7 @@ export async function GET(request: NextRequest) {
           ids.forEach((id) => enrollmentIdsWithTeacherThisWeek.add(id))
         }
       }
-      const enrollments = allActivePaused.filter((e) => !enrollmentIdsWithTeacherThisWeek.has(e.id))
+      const enrollments = allActiveEnrollments.filter((e) => !enrollmentIdsWithTeacherThisWeek.has(e.id))
 
       const futureLessons = lessonsWithoutTeacher
 
@@ -673,6 +682,8 @@ export async function GET(request: NextRequest) {
         return {
           id: enrollment.id,
           nome: enrollment.nome,
+          frequenciaSemanal: enrollment.frequenciaSemanal ?? null,
+          tempoAulaMinutos: enrollment.tempoAulaMinutos ?? null,
           suggestions,
           lessonTimes,
         }

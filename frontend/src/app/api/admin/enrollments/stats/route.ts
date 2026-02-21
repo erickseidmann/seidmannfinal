@@ -73,28 +73,25 @@ export async function GET(request: NextRequest) {
       prisma.enrollment.count({ where: { status: 'PAUSED' } }),
     ])
 
-    // Alunos "sem professor (semana)" = mesmo critério da coluna da tabela "Professor (semana)":
-    // Ativos/Pausados que NÃO têm nenhuma aula esta semana COM professor
+    // Alunos "sem professor (semana)" = apenas ATIVOS que NÃO têm nenhuma aula esta semana COM professor
     // Inclui lógica de grupo: se alguém do grupo tem professor, todos do grupo contam como "com professor"
     const allLessonsThisWeek = await prisma.lesson.findMany({
       where: {
         startAt: { gte: monday, lte: saturdayEnd },
-        enrollment: {
-          status: { in: ['ACTIVE', 'PAUSED'] },
-        },
+        enrollment: { status: 'ACTIVE' },
       },
       select: { enrollmentId: true, teacherId: true },
     })
     const enrollmentIdsWithTeacher = new Set(
       allLessonsThisWeek.filter((l) => l.teacherId !== null).map((l) => l.enrollmentId)
     )
-    const activePausedEnrollments = await prisma.enrollment.findMany({
-      where: { status: { in: ['ACTIVE', 'PAUSED'] } },
+    const activeEnrollments = await prisma.enrollment.findMany({
+      where: { status: 'ACTIVE' },
       select: { id: true, tipoAula: true, nomeGrupo: true },
     })
     // Replicar "com professor" para todos do mesmo grupo (igual à tabela)
     const groupByNomeGrupo: Record<string, string[]> = {}
-    for (const e of activePausedEnrollments) {
+    for (const e of activeEnrollments) {
       const nomeGrupo = (e as { nomeGrupo?: string | null }).nomeGrupo?.trim()
       if ((e as { tipoAula?: string | null }).tipoAula === 'GRUPO' && nomeGrupo) {
         if (!groupByNomeGrupo[nomeGrupo]) groupByNomeGrupo[nomeGrupo] = []
@@ -107,7 +104,31 @@ export async function GET(request: NextRequest) {
         ids.forEach((id) => enrollmentIdsWithTeacher.add(id))
       }
     }
-    const semProfessorCount = activePausedEnrollments.filter((e) => !enrollmentIdsWithTeacher.has(e.id)).length
+    const semProfessorCount = activeEnrollments.filter((e) => !enrollmentIdsWithTeacher.has(e.id)).length
+
+    // Alunos sem professor NA PRÓXIMA SEMANA (apenas ativos)
+    const nextMonday = new Date(monday)
+    nextMonday.setDate(nextMonday.getDate() + 7)
+    const nextSaturdayEnd = getSaturdayEnd(nextMonday)
+    const allLessonsNextWeek = await prisma.lesson.findMany({
+      where: {
+        startAt: { gte: nextMonday, lte: nextSaturdayEnd },
+        enrollment: { status: 'ACTIVE' },
+      },
+      select: { enrollmentId: true, teacherId: true },
+    })
+    const enrollmentIdsWithTeacherNextWeek = new Set(
+      allLessonsNextWeek.filter((l) => l.teacherId !== null).map((l) => l.enrollmentId)
+    )
+    for (const ids of Object.values(groupByNomeGrupo)) {
+      const hasTeacher = ids.some((id) => enrollmentIdsWithTeacherNextWeek.has(id))
+      if (hasTeacher) {
+        ids.forEach((id) => enrollmentIdsWithTeacherNextWeek.add(id))
+      }
+    }
+    const semProfessorProximaSemanaCount = activeEnrollments.filter(
+      (e) => !enrollmentIdsWithTeacherNextWeek.has(e.id)
+    ).length
 
     return NextResponse.json({
       ok: true,
@@ -124,6 +145,7 @@ export async function GET(request: NextRequest) {
           pausados: pausadosCount,
         },
         semProfessor: semProfessorCount,
+        semProfessorProximaSemana: semProfessorProximaSemanaCount,
       },
     })
   } catch (error) {

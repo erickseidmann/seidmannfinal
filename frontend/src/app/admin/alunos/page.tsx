@@ -305,6 +305,7 @@ export default function AdminAlunosPage() {
     porEscola: { seidmann: number; youbecome: number; highway: number; outros: number }
     porStatus: { ativos: number; inativos: number; pausados: number }
     semProfessor: number
+    semProfessorProximaSemana: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
   const [listModal, setListModal] = useState<{ title: string; type: string } | null>(null)
@@ -320,8 +321,17 @@ export default function AdminAlunosPage() {
   const [listLoading, setListLoading] = useState(false)
   const [wrongFrequencyStats, setWrongFrequencyStats] = useState<{
     count: number
-    list: { enrollmentId: string; studentName: string; expected: number; actual: number }[]
+    list: { enrollmentId: string; studentName: string; expected: number; actual: number; lessonTimesThisWeek?: string[] }[]
   }>({ count: 0, list: [] })
+  const [wrongFrequencyStatsProximaSemana, setWrongFrequencyStatsProximaSemana] = useState<{
+    count: number
+    list: { enrollmentId: string; studentName: string; expected: number; actual: number; lessonTimesThisWeek?: string[] }[]
+  }>({ count: 0, list: [] })
+  const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
+    existingLessonTimes: string[]
+    expected: number
+    actual: number
+  } | null>(null)
   // Por padrão ocultas: email, cpf, endereco, valorMensalidade, trackingCode, criadoEm — aparecem só se o usuário selecionar em "Colunas"
   const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
@@ -337,6 +347,7 @@ export default function AdminAlunosPage() {
     fetchStudents()
     fetchStats()
     fetchWrongFrequencyStats()
+    fetchWrongFrequencyStatsProximaSemana()
   }, [filters])
 
   const fetchStats = useCallback(async () => {
@@ -380,6 +391,31 @@ export default function AdminAlunosPage() {
     }
   }, [])
 
+  const fetchWrongFrequencyStatsProximaSemana = useCallback(async () => {
+    try {
+      const monday = getMonday(new Date())
+      const nextMonday = new Date(monday)
+      nextMonday.setDate(nextMonday.getDate() + 7)
+      const res = await fetch(`/api/admin/lessons/stats?weekStart=${nextMonday.toISOString()}`, {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && json.data?.wrongFrequencyList) {
+          setWrongFrequencyStatsProximaSemana({
+            count: json.data.wrongFrequencyCount ?? 0,
+            list: json.data.wrongFrequencyList,
+          })
+        } else {
+          setWrongFrequencyStatsProximaSemana({ count: 0, list: [] })
+        }
+      }
+    } catch (e) {
+      console.error(e)
+      setWrongFrequencyStatsProximaSemana({ count: 0, list: [] })
+    }
+  }, [])
+
   const openListModal = useCallback(
     async (type: string, title: string) => {
       setListModal({ title, type })
@@ -387,9 +423,14 @@ export default function AdminAlunosPage() {
       setListLoading(true)
       try {
         const monday = getMonday(new Date())
-        const url = type === 'studentsWithoutTeacherWeek'
-          ? `/api/admin/dashboard-lists?type=${type}&weekStart=${monday.toISOString()}`
-          : `/api/admin/dashboard-lists?type=${type}`
+        const nextMonday = new Date(monday)
+        nextMonday.setDate(nextMonday.getDate() + 7)
+        let url = `/api/admin/dashboard-lists?type=${type}`
+        if (type === 'studentsWithoutTeacherWeek') {
+          url += `&weekStart=${monday.toISOString()}`
+        } else if (type === 'studentsWithoutTeacherNextWeek') {
+          url += `&weekStart=${nextMonday.toISOString()}`
+        }
         const res = await fetch(url, { credentials: 'include' })
         const json = await res.json()
         if (res.ok && json.ok && Array.isArray(json.data)) {
@@ -1410,7 +1451,10 @@ export default function AdminAlunosPage() {
           </button>
           <button
             type="button"
-            onClick={() => setDesignarAulaStudent(s)}
+            onClick={() => {
+              setDesignarAulaStudent(s)
+              setDesignarAulaCorrectionData(null)
+            }}
             className="text-emerald-600 hover:text-emerald-800 text-sm font-medium"
             title="Designar aulas"
           >
@@ -1559,8 +1603,8 @@ export default function AdminAlunosPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor')}
+            onClick={() => openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor (esta semana)')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWithoutTeacherWeek', 'Alunos sem Professor (esta semana)')}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
@@ -1568,8 +1612,24 @@ export default function AdminAlunosPage() {
               title="Sem Professor (semana)"
               value={statsLoading ? '...' : (stats?.semProfessor ?? 0)}
               icon={<AlertTriangle className="w-5 h-5" />}
-              color="orange"
-              subtitle="Ativos/Pausados sem aula esta semana"
+              color="teal"
+              subtitle="Ativos sem aula esta semana"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('studentsWithoutTeacherNextWeek', 'Alunos sem Professor (próx. semana)')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWithoutTeacherNextWeek', 'Alunos sem Professor (próx. semana)')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Sem Professor (próx. semana)"
+              value={statsLoading ? '...' : (stats?.semProfessorProximaSemana ?? 0)}
+              icon={<AlertTriangle className="w-5 h-5" />}
+              color="indigo"
+              subtitle="Ativos sem aula na próxima semana"
             />
           </div>
           <div
@@ -1592,8 +1652,32 @@ export default function AdminAlunosPage() {
               title="Frequência incorreta"
               value={wrongFrequencyStats.count}
               icon={<AlertTriangle className="w-5 h-5" />}
-              color="red"
+              color="purple"
               subtitle="Ação necessária esta semana"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListModal({ title: 'Frequência incorreta (próx. semana)', type: 'wrongFrequencyProximaSemana' })
+              setListData([])
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListModal({ title: 'Frequência incorreta (próx. semana)', type: 'wrongFrequencyProximaSemana' })
+                setListData([])
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Frequência incorreta (próx. semana)"
+              value={wrongFrequencyStatsProximaSemana.count}
+              icon={<AlertTriangle className="w-5 h-5" />}
+              color="amber"
+              subtitle="Ação necessária na próxima semana"
             />
           </div>
           {/* Total por escola */}
@@ -2810,22 +2894,25 @@ export default function AdminAlunosPage() {
         >
           {listLoading ? (
             <p className="text-gray-500">Carregando...</p>
-          ) : listModal?.type === 'wrongFrequency' ? (
+          ) : listModal?.type === 'wrongFrequency' || listModal?.type === 'wrongFrequencyProximaSemana' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
-                    <th className="py-2 font-semibold text-gray-700">Ação Necessária</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Ação Necessária</th>
+                    <th className="py-2 font-semibold text-gray-700">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {wrongFrequencyStats.list.length === 0 ? (
+                  {(listModal?.type === 'wrongFrequencyProximaSemana' ? wrongFrequencyStatsProximaSemana.list : wrongFrequencyStats.list).length === 0 ? (
                     <tr>
-                      <td colSpan={2} className="py-4 text-center text-gray-500">Nenhum aluno com frequência incorreta esta semana.</td>
+                      <td colSpan={3} className="py-4 text-center text-gray-500">
+                        {listModal?.type === 'wrongFrequencyProximaSemana' ? 'Nenhum aluno com frequência incorreta na próxima semana.' : 'Nenhum aluno com frequência incorreta esta semana.'}
+                      </td>
                     </tr>
                   ) : (
-                    wrongFrequencyStats.list.map((item) => {
+                    (listModal?.type === 'wrongFrequencyProximaSemana' ? wrongFrequencyStatsProximaSemana.list : wrongFrequencyStats.list).map((item) => {
                       const diff = item.expected - item.actual
                       const acaoNecessaria = diff > 0
                         ? `Adicionar ${diff} aula${diff > 1 ? 's' : ''}`
@@ -2835,10 +2922,33 @@ export default function AdminAlunosPage() {
                       return (
                         <tr key={item.enrollmentId} className="border-b border-gray-100">
                           <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
-                          <td className="py-3">
+                          <td className="py-3 pr-4">
                             <span className="inline-flex items-center px-2 py-1 rounded-md bg-orange-100 text-orange-800 text-xs font-medium">
                               {acaoNecessaria}
                             </span>
+                          </td>
+                          <td className="py-3">
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              onClick={() => {
+                                setDesignarAulaStudent({
+                                  id: item.enrollmentId,
+                                  nome: item.studentName,
+                                  frequenciaSemanal: item.expected ?? undefined,
+                                  tempoAulaMinutos: undefined,
+                                } as Student)
+                                setDesignarAulaCorrectionData({
+                                  existingLessonTimes: item.lessonTimesThisWeek ?? [],
+                                  expected: item.expected,
+                                  actual: item.actual,
+                                })
+                              }}
+                              className="px-3 py-1.5 text-sm font-medium"
+                            >
+                              Corrigir
+                            </Button>
                           </td>
                         </tr>
                       )
@@ -2902,14 +3012,15 @@ export default function AdminAlunosPage() {
                 </div>
               ))}
             </div>
-          ) : listModal?.type === 'studentsWithoutTeacherWeek' ? (
+          ) : listModal?.type === 'studentsWithoutTeacherWeek' || listModal?.type === 'studentsWithoutTeacherNextWeek' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
                     <th className="py-2 pr-4 font-semibold text-gray-700">Sugestões de Professores</th>
-                    <th className="py-2 font-semibold text-gray-700">Dias e horários de aulas</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Dias e horários de aulas</th>
+                    <th className="py-2 font-semibold text-gray-700">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2917,6 +3028,8 @@ export default function AdminAlunosPage() {
                     const student = item as {
                       id: string
                       nome: string
+                      frequenciaSemanal?: number | null
+                      tempoAulaMinutos?: number | null
                       suggestions: { lessonId: string; startAt: string; teachers: { id: string; nome: string }[] }[]
                       lessonTimes?: { startAt: string }[]
                     }
@@ -2955,8 +3068,27 @@ export default function AdminAlunosPage() {
                             <span className="text-sm text-gray-500 italic">Sem professor disponível</span>
                           )}
                         </td>
-                        <td className="py-3 text-sm text-gray-700">
+                        <td className="py-3 pr-4 text-sm text-gray-700">
                           {diasHorarios || '—'}
+                        </td>
+                        <td className="py-3">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="sm"
+                            onClick={() => {
+                              setDesignarAulaStudent({
+                                id: student.id,
+                                nome: student.nome,
+                                frequenciaSemanal: student.frequenciaSemanal ?? undefined,
+                                tempoAulaMinutos: student.tempoAulaMinutos ?? undefined,
+                              } as Student)
+                              setDesignarAulaCorrectionData(null)
+                            }}
+                            className="px-3 py-1.5 text-sm font-medium"
+                          >
+                            Designar Professor
+                          </Button>
                         </td>
                       </tr>
                     )
@@ -3154,11 +3286,22 @@ export default function AdminAlunosPage() {
 
         <DesignarAulaModal
           isOpen={!!designarAulaStudent}
-          onClose={() => setDesignarAulaStudent(null)}
+          onClose={() => {
+            setDesignarAulaStudent(null)
+            setDesignarAulaCorrectionData(null)
+          }}
           enrollment={designarAulaStudent ? { id: designarAulaStudent.id, nome: designarAulaStudent.nome, frequenciaSemanal: designarAulaStudent.frequenciaSemanal ?? null, tempoAulaMinutos: designarAulaStudent.tempoAulaMinutos ?? null } : null}
+          correctionData={designarAulaCorrectionData}
           onSuccess={() => {
             fetchStudents()
             setDesignarAulaStudent(null)
+            setDesignarAulaCorrectionData(null)
+            fetchStats()
+            fetchWrongFrequencyStats()
+            fetchWrongFrequencyStatsProximaSemana()
+            if (listModal?.type === 'studentsWithoutTeacherWeek' || listModal?.type === 'studentsWithoutTeacherNextWeek') {
+              openListModal(listModal.type, listModal.title)
+            }
           }}
         />
 
