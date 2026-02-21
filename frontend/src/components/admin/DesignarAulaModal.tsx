@@ -17,18 +17,15 @@ const DIAS_SEMANA = [
   { value: 6, label: 'Sábado' },
 ] as const
 
-const HORARIOS = [
-  { value: 480, label: '8h' },
-  { value: 540, label: '9h' },
-  { value: 600, label: '10h' },
-  { value: 660, label: '11h' },
-  { value: 840, label: '14h' },
-  { value: 900, label: '15h' },
-  { value: 960, label: '16h' },
-  { value: 1020, label: '17h' },
-  { value: 1080, label: '18h' },
-  { value: 1140, label: '19h' },
-] as const
+// Horários de 6h às 23h30, intervalos de 30 min
+const HORARIOS = (() => {
+  const items: { value: number; label: string }[] = []
+  for (let h = 6; h <= 23; h++) {
+    items.push({ value: h * 60, label: `${h}h` })
+    items.push({ value: h * 60 + 30, label: `${h}h30` })
+  }
+  return items
+})()
 
 interface EnrollmentData {
   id: string
@@ -76,6 +73,7 @@ export default function DesignarAulaModal({
   const [quantidadeSemanas, setQuantidadeSemanas] = useState(4)
   const [professores, setProfessores] = useState<{ id: string; nome: string }[]>([])
   const [professorSelecionado, setProfessorSelecionado] = useState<string | null>(null)
+  const [buscaProfessor, setBuscaProfessor] = useState('')
   const [loadingProfessores, setLoadingProfessores] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -263,9 +261,16 @@ export default function DesignarAulaModal({
     onClose,
   ])
 
+  const professoresFiltrados = useMemo(() => {
+    if (!buscaProfessor.trim()) return professores
+    const term = buscaProfessor.trim().toLowerCase()
+    return professores.filter((p) => p.nome.toLowerCase().includes(term))
+  }, [professores, buscaProfessor])
+
   const handleClose = () => {
     setProfessores([])
     setProfessorSelecionado(null)
+    setBuscaProfessor('')
     setError(null)
     onClose()
   }
@@ -414,8 +419,15 @@ export default function DesignarAulaModal({
           {professores.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Professores disponíveis</label>
+              <input
+                type="text"
+                placeholder="Buscar professor pelo nome..."
+                value={buscaProfessor}
+                onChange={(e) => setBuscaProfessor(e.target.value)}
+                className="input w-full max-w-xs mb-2"
+              />
               <div className="flex flex-wrap gap-2">
-                {professores.map((p) => (
+                {professoresFiltrados.map((p) => (
                   <button
                     key={p.id}
                     type="button"
@@ -430,6 +442,9 @@ export default function DesignarAulaModal({
                   </button>
                 ))}
               </div>
+              {professoresFiltrados.length === 0 && buscaProfessor.trim() && (
+                <p className="text-sm text-gray-500 mt-1">Nenhum professor encontrado com &quot;{buscaProfessor}&quot;</p>
+              )}
               <button
                 type="button"
                 onClick={designarAulas}
