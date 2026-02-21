@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { logFinanceAction } from '@/lib/finance'
 import { generateMonthlyBilling, generateBulkBilling } from '@/lib/cora/billing'
 import { getInvoice } from '@/lib/cora/client'
 
@@ -206,8 +207,50 @@ export async function GET(request: NextRequest) {
               barcode: invoice.payment_options?.bank_slip?.barcode,
               digitableLine: invoice.payment_options?.bank_slip?.digitable_line,
               boletoUrl: invoice.payment_options?.bank_slip?.url,
-              paidAt: lastPayment?.created_at ?? null,
-              paymentMethod: lastPayment?.payment_method ?? null,
+              paidAt: lastPayment?.created_at ?? undefined,
+              paymentMethod: lastPayment?.payment_method ?? undefined,
+            }
+
+            // Sincronizar: quando Cora diz PAID mas nosso banco ainda não está PAGO, atualizar para marcar o checkbox
+            const coraPaid = invoiceData.status === 'PAID'
+            const notMarkedPaid = pm.paymentStatus !== 'PAGO'
+            if (coraPaid && notMarkedPaid) {
+              try {
+                await prisma.enrollmentPaymentMonth.upsert({
+                  where: { enrollmentId_year_month: { enrollmentId: enrollment.id, year, month } },
+                  create: { enrollmentId: enrollment.id, year, month, paymentStatus: 'PAGO' },
+                  update: { paymentStatus: 'PAGO' },
+                })
+                if (invoiceData.paidAt) {
+                  await prisma.paymentInfo.upsert({
+                    where: { enrollmentId: enrollment.id },
+                    create: { enrollmentId: enrollment.id, paidAt: new Date(invoiceData.paidAt) },
+                    update: { paidAt: new Date(invoiceData.paidAt) },
+                  })
+                }
+                const coraDb = await prisma.coraInvoice.findUnique({ where: { coraInvoiceId } })
+                if (coraDb && coraDb.status !== 'PAID') {
+                  const paidAmount = invoice.total_paid > 0 ? invoice.total_paid : coraDb.amount
+                  await prisma.coraInvoice.update({
+                    where: { coraInvoiceId },
+                    data: {
+                      status: 'PAID',
+                      paidAt: invoiceData.paidAt ? new Date(invoiceData.paidAt) : new Date(),
+                      paidAmount,
+                    },
+                  })
+                }
+                logFinanceAction({
+                  entityType: 'ENROLLMENT',
+                  entityId: enrollment.id,
+                  action: 'PAYMENT_CONFIRMED',
+                  newValue: { paymentStatus: 'PAGO', year, month, coraInvoiceId, source: 'COBRANCA_SYNC' },
+                  performedBy: 'COBRANCA_SYNC',
+                  metadata: { coraInvoiceId },
+                }).catch(() => {})
+              } catch (syncErr) {
+                console.warn('[api/admin/financeiro/cobranca GET] Erro ao sincronizar PAID:', syncErr)
+              }
             }
           } catch (error) {
             console.warn(
@@ -217,10 +260,11 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        const effectiveStatus = invoiceData?.status === 'PAID' ? 'PAGO' : pm.paymentStatus
         return {
           enrollmentId: enrollment.id,
           nome: enrollment.nome,
-          status: pm.paymentStatus,
+          status: effectiveStatus,
           valorMensalidade,
           dueDate,
           pixQrCode: invoiceData?.pixQrCode ?? null,

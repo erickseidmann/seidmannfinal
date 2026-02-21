@@ -12,8 +12,32 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
+import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History } from 'lucide-react'
+import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2 } from 'lucide-react'
+
+function LinkItem({ label, path }: { label: string; path: string }) {
+  const [copied, setCopied] = useState(false)
+  const url = typeof window !== 'undefined' ? `${window.location.origin}${path}` : path
+  const copy = () => {
+    navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 bg-white rounded-lg border border-slate-200 px-3 py-2">
+      <span className="text-sm font-medium text-slate-700 w-48">{label}:</span>
+      <code className="text-xs text-slate-600 flex-1 min-w-0 truncate">{url}</code>
+      <button
+        type="button"
+        onClick={copy}
+        className="text-xs px-2 py-1 rounded bg-brand-orange text-white hover:opacity-90 shrink-0"
+      >
+        {copied ? 'Copiado!' : 'Copiar'}
+      </button>
+    </div>
+  )
+}
 
 /** Segunda-feira 00:00 da semana que contém d */
 function getMonday(d: Date): Date {
@@ -105,6 +129,14 @@ interface ListItemWithoutLesson extends ListItemBase {
 interface ListItemNovosMatriculados extends ListItemBase {
   dataMatricula?: string
   linkPagamentoEnviadoAt?: string | null
+  dataPagamentoAgendada?: string | null
+  recebeuBoleto?: boolean
+  jaPagou?: boolean
+  frequenciaSemanal?: number | null
+  tempoAulaMinutos?: number | null
+  melhoresDiasSemana?: string | null
+  melhoresHorarios?: string | null
+  escolaMatriculaLabel?: string | null
 }
 interface ListItemTotalUser extends ListItemBase {
   role?: string
@@ -143,6 +175,7 @@ export default function AdminDashboardPage() {
   const [auditHours, setAuditHours] = useState(48)
   const [auditLoading, setAuditLoading] = useState(false)
   const [auditCount48h, setAuditCount48h] = useState<number | null>(null)
+  const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<ListItemNovosMatriculados | null>(null)
 
   useEffect(() => {
     fetchMetrics()
@@ -416,6 +449,22 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
+        {/* Links de matrícula para escolas parceiras */}
+        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Link2 className="w-5 h-5 text-slate-600" />
+            <h3 className="text-sm font-semibold text-slate-700">Links de matrícula para escolas parceiras</h3>
+          </div>
+          <p className="text-xs text-slate-600 mb-3">
+            Envie estes links para as escolas adicionarem alunos. O formulário exibe o nome da escola automaticamente.
+          </p>
+          <div className="space-y-2">
+            <LinkItem label="Youbecome" path="/matricula?escola=YOUBECOME" />
+            <LinkItem label="Highway" path="/matricula?escola=HIGHWAY" />
+            <LinkItem label="Outra escola (troque NomeEscola)" path="/matricula?escola=OUTRO&nome=NomeEscola" />
+          </div>
+        </div>
+
         {/* Cubos de métricas (estilo financeiro, um único grid alinhado) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8 items-stretch">
           <div
@@ -438,7 +487,7 @@ export default function AdminDashboardPage() {
             tabIndex={0}
             onClick={() => openListModal('novosMatriculados')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('novosMatriculados')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.novosMatriculadosCount ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
           >
             <StatCard
               variant="finance"
@@ -626,14 +675,18 @@ export default function AdminDashboardPage() {
           ) : modalType === 'novosMatriculados' ? (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                Alunos que se matricularam pelo formulário e ainda não foram marcados como «já adicionei aulas». Use «Enviei link pag» para registrar o envio do link de pagamento; «Já adicionei aulas» remove o aluno da lista.
+                Alunos que se matricularam pelo formulário e ainda não foram marcados como «já adicionei aulas». Use «Enviei link pag» para registrar o envio do link de pagamento; «Designar aula» (quando pago) para agendar as aulas; «Já adicionei aulas» remove o aluno da lista.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-gray-200">
                       <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Data da matrícula</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Escola</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Matrícula</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Vencimento</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Boleto</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Pago</th>
                       <th className="py-2 font-semibold text-gray-700">Ação</th>
                     </tr>
                   </thead>
@@ -647,13 +700,25 @@ export default function AdminDashboardPage() {
                             year: 'numeric',
                           })
                         : '—'
+                      const vencFormatado = row.dataPagamentoAgendada
+                        ? new Date(row.dataPagamentoAgendada).toLocaleDateString('pt-BR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                          })
+                        : '—'
                       const isLoadingAulas = marcandoAulasId === row.id
                       const isLoadingLink = marcandoLinkPagId === row.id
                       const linkEnviado = !!row.linkPagamentoEnviadoAt
+                      const jaPagou = !!row.jaPagou
                       return (
                         <tr key={row.id} className="border-b border-gray-100">
                           <td className="py-2 pr-4">{row.nome}</td>
+                          <td className="py-2 pr-4">{row.escolaMatriculaLabel ?? '—'}</td>
                           <td className="py-2 pr-4">{dataFormatada}</td>
+                          <td className="py-2 pr-4">{vencFormatado}</td>
+                          <td className="py-2 pr-4">{row.recebeuBoleto ? '✓ Sim' : '—'}</td>
+                          <td className="py-2 pr-4">{jaPagou ? '✓ Sim' : '—'}</td>
                           <td className="py-2 flex flex-wrap gap-2">
                             <button
                               type="button"
@@ -667,6 +732,15 @@ export default function AdminDashboardPage() {
                             >
                               {isLoadingLink ? 'Salvando...' : linkEnviado ? 'Link enviado' : 'Enviei link pag'}
                             </button>
+                            {jaPagou && (
+                              <button
+                                type="button"
+                                onClick={() => setDesignarAulaEnrollment(row)}
+                                className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                              >
+                                Designar aula
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => marcarAulasAdicionadas(row.id)}
@@ -829,6 +903,17 @@ export default function AdminDashboardPage() {
             )}
           </div>
         </Modal>
+
+        {/* Modal Designar aula (submodal dos novos matriculados) */}
+        <DesignarAulaModal
+          isOpen={!!designarAulaEnrollment}
+          onClose={() => setDesignarAulaEnrollment(null)}
+          enrollment={designarAulaEnrollment}
+          onSuccess={() => {
+            openListModal('novosMatriculados')
+            fetchMetrics()
+          }}
+        />
 
         {/* Modal Alunos sem aula designada (freq. incorreta): nome, horários de aula, último livro */}
         <Modal

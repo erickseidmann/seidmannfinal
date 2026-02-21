@@ -41,6 +41,15 @@ const config: Config = {
         'soft': '0 2px 15px -3px rgba(0, 0, 0, 0.07), 0 10px 20px -2px rgba(0, 0, 0, 0.04)',
         'soft-lg': '0 10px 30px -5px rgba(0, 0, 0, 0.1), 0 10px 20px -5px rgba(0, 0, 0, 0.04)',
       },
+      keyframes: {
+        'blink-alert': {
+          '0%, 100%': { opacity: '1', boxShadow: '0 0 0 0 rgba(14, 165, 233, 0.8), 0 0 20px 2px rgba(14, 165, 233, 0.5)' },
+          '50%': { opacity: '0.75', boxShadow: '0 0 0 6px rgba(14, 165, 233, 0.9), 0 0 30px 8px rgba(14, 165, 233, 0.6)' },
+        },
+      },
+      animation: {
+        'blink-alert': 'blink-alert 0.9s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

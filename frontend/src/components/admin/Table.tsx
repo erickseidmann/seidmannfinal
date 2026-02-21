@@ -6,7 +6,8 @@
 
 'use client'
 
-import { ReactNode, useState, useRef, useEffect } from 'react'
+import { ReactNode, useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronUp, Columns } from 'lucide-react'
 
 export interface Column<T> {
@@ -50,6 +51,8 @@ export default function Table<T extends { id: string }>({
   getRowClassName,
 }: TableProps<T>) {
   const [columnsOpen, setColumnsOpen] = useState(false)
+  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; maxHeight: number; openUpward?: boolean } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const fixedKeys = columns.filter((c) => c.fixed).map((c) => c.key)
@@ -61,11 +64,44 @@ export default function Table<T extends { id: string }>({
   const visibleSet = new Set(effectiveVisible)
   const displayColumns = columns.filter((c) => c.fixed || visibleSet.has(c.key))
 
+  const updateDropdownPosition = useCallback(() => {
+    if (!triggerRef.current || !columnsOpen) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    const padding = 8
+    const dropdownMinHeight = 120
+    const spaceBelow = window.innerHeight - rect.bottom - padding
+    const spaceAbove = rect.top - padding
+    const maxH = Math.min(400, window.innerHeight * 0.6)
+    const openUpward = spaceBelow < dropdownMinHeight && spaceAbove > spaceBelow
+    let top: number
+    if (openUpward) {
+      top = Math.max(padding, rect.top - maxH - 4)
+    } else {
+      top = rect.bottom + 4
+    }
+    const left = Math.max(padding, Math.min(rect.right - 200, window.innerWidth - 220))
+    setDropdownStyle({ top, left, maxHeight: maxH, openUpward })
+  }, [columnsOpen])
+
+  useEffect(() => {
+    if (columnsOpen) {
+      updateDropdownPosition()
+      window.addEventListener('scroll', updateDropdownPosition, true)
+      window.addEventListener('resize', updateDropdownPosition)
+    } else {
+      setDropdownStyle(null)
+    }
+    return () => {
+      window.removeEventListener('scroll', updateDropdownPosition, true)
+      window.removeEventListener('resize', updateDropdownPosition)
+    }
+  }, [columnsOpen, updateDropdownPosition])
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setColumnsOpen(false)
-      }
+      const target = e.target as Node
+      if (triggerRef.current?.contains(target) || dropdownRef.current?.contains(target)) return
+      setColumnsOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -93,12 +129,44 @@ export default function Table<T extends { id: string }>({
     )
   }
 
+  const dropdownContent = hasColumnSelector && columnsOpen && dropdownStyle && typeof document !== 'undefined' && createPortal(
+    <div
+      ref={dropdownRef}
+      className="fixed z-[100] min-w-[200px] w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-xl overflow-hidden"
+      style={{
+        top: dropdownStyle.top,
+        left: dropdownStyle.left,
+        maxHeight: dropdownStyle.maxHeight,
+      }}
+    >
+      <div className="overflow-y-auto h-full" style={{ maxHeight: dropdownStyle.maxHeight }}>
+        <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase sticky top-0 bg-white">Exibir colunas</p>
+        {toggleableColumns.map((col) => (
+          <label
+            key={col.key}
+            className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50"
+          >
+            <input
+              type="checkbox"
+              checked={visibleSet.has(col.key)}
+              onChange={() => toggleColumn(col.key)}
+              className="rounded border-gray-300"
+            />
+            <span className="text-sm text-gray-800">{col.label || col.key}</span>
+          </label>
+        ))}
+      </div>
+    </div>,
+    document.body
+  )
+
   return (
     <div className="w-full max-w-full">
       {hasColumnSelector && (
         <div className="mb-3 flex flex-col sm:flex-row sm:justify-end gap-2">
-          <div className="relative" ref={dropdownRef}>
+          <div className="relative">
             <button
+              ref={triggerRef}
               type="button"
               onClick={() => setColumnsOpen((v) => !v)}
               className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 w-full sm:w-auto justify-center sm:justify-start"
@@ -107,25 +175,7 @@ export default function Table<T extends { id: string }>({
               <span className="hidden sm:inline">Colunas</span>
               <span className="sm:hidden">Colunas visíveis</span>
             </button>
-            {columnsOpen && (
-              <div className="absolute right-0 top-full z-20 mt-1 min-w-[200px] max-w-[90vw] rounded-lg border border-gray-200 bg-white py-2 shadow-lg max-h-[60vh] overflow-y-auto">
-                <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
-                {toggleableColumns.map((col) => (
-                  <label
-                    key={col.key}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={visibleSet.has(col.key)}
-                      onChange={() => toggleColumn(col.key)}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm text-gray-800">{col.label || col.key}</span>
-                  </label>
-                ))}
-              </div>
-            )}
+            {dropdownContent}
           </div>
         </div>
       )}

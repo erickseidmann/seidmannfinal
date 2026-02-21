@@ -49,19 +49,90 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'novosMatriculados') {
+      const withLessons = await prisma.lesson.groupBy({
+        by: ['enrollmentId'],
+        _count: { id: true },
+      })
+      const idsComAulas = withLessons.map((l) => l.enrollmentId)
+
       const enrollments = await prisma.enrollment.findMany({
-        where: { pendenteAdicionarAulas: true },
-        select: { id: true, nome: true, criadoEm: true, linkPagamentoEnviadoAt: true },
+        where: {
+          pendenteAdicionarAulas: true,
+          ...(idsComAulas.length > 0 && { id: { notIn: idsComAulas } }),
+        },
+        select: {
+          id: true,
+          nome: true,
+          criadoEm: true,
+          linkPagamentoEnviadoAt: true,
+          diaPagamento: true,
+          frequenciaSemanal: true,
+          tempoAulaMinutos: true,
+          idioma: true,
+          melhoresDiasSemana: true,
+          melhoresHorarios: true,
+          escolaMatricula: true,
+          escolaMatriculaOutro: true,
+          coraInvoices: {
+            select: { dueDate: true, boletoUrl: true, status: true },
+            orderBy: { dueDate: 'asc' },
+            take: 1,
+          },
+          paymentMonths: {
+            select: { year: true, month: true, paymentStatus: true },
+            orderBy: [{ year: 'asc' }, { month: 'asc' }],
+            take: 1,
+          },
+        },
         orderBy: { criadoEm: 'desc' },
       })
+
+      const hoje = new Date()
+      const anoAtual = hoje.getFullYear()
+      const mesAtual = hoje.getMonth() + 1
+
       return NextResponse.json({
         ok: true,
-        data: enrollments.map((e) => ({
-          id: e.id,
-          nome: e.nome,
-          dataMatricula: e.criadoEm.toISOString(),
-          linkPagamentoEnviadoAt: e.linkPagamentoEnviadoAt?.toISOString() ?? null,
-        })),
+        data: enrollments.map((e) => {
+          const diaPag = e.diaPagamento ?? 10
+          let mesVenc = mesAtual
+          let anoVenc = anoAtual
+          if (hoje.getDate() > diaPag) {
+            mesVenc = mesAtual === 12 ? 1 : mesAtual + 1
+            anoVenc = mesAtual === 12 ? anoAtual + 1 : anoAtual
+          }
+          const dataPagamentoAgendada = new Date(anoVenc, mesVenc - 1, Math.min(diaPag, 28))
+          const cora = e.coraInvoices[0]
+          const pm = e.paymentMonths[0]
+          const recebeuBoleto = !!cora?.boletoUrl || !!cora
+          const jaPagou = cora?.status === 'PAID' || pm?.paymentStatus === 'PAGO'
+
+          return {
+            id: e.id,
+            nome: e.nome,
+            dataMatricula: e.criadoEm.toISOString(),
+            linkPagamentoEnviadoAt: e.linkPagamentoEnviadoAt?.toISOString() ?? null,
+            dataPagamentoAgendada: dataPagamentoAgendada.toISOString(),
+            recebeuBoleto,
+            jaPagou,
+            frequenciaSemanal: e.frequenciaSemanal ?? null,
+            tempoAulaMinutos: e.tempoAulaMinutos ?? null,
+            idioma: e.idioma,
+            melhoresDiasSemana: e.melhoresDiasSemana ?? null,
+            melhoresHorarios: e.melhoresHorarios ?? null,
+            escolaMatricula: e.escolaMatricula ?? null,
+            escolaMatriculaLabel:
+              e.escolaMatricula === 'OUTRO' && e.escolaMatriculaOutro
+                ? e.escolaMatriculaOutro
+                : e.escolaMatricula === 'SEIDMANN'
+                  ? 'Seidmann'
+                  : e.escolaMatricula === 'YOUBECOME'
+                    ? 'Youbecome'
+                    : e.escolaMatricula === 'HIGHWAY'
+                      ? 'Highway'
+                      : e.escolaMatricula ?? '—',
+          }
+        }),
       })
     }
 

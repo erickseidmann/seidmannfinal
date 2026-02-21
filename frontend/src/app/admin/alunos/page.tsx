@@ -14,7 +14,8 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail } from 'lucide-react'
+import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 
 interface StudentAlertItem {
@@ -30,6 +31,8 @@ interface Student {
   whatsapp: string
   idioma: string | null
   nivel: string | null
+  objetivo?: string | null
+  disponibilidade?: string | null
   status: string
   trackingCode: string | null
   criadoEm: string
@@ -67,6 +70,12 @@ interface Student {
   escolaMatriculaOutro?: string | null
   cancelamentoAntecedenciaHoras?: number | null
   activationDate?: string | null
+  faturamentoTipo?: string | null
+  faturamentoRazaoSocial?: string | null
+  faturamentoCnpj?: string | null
+  faturamentoEmail?: string | null
+  faturamentoEndereco?: string | null
+  faturamentoDescricaoNfse?: string | null
   user?: { id: string; nome: string; email: string; whatsapp: string | null } | null
 }
 
@@ -76,6 +85,13 @@ const TEMPO_AULA_OPCOES = [
   { value: 60, label: '01:00' },
   { value: 120, label: '02:00' },
 ]
+
+function formatCnpjForDisplay(cnpj: string | null | undefined): string {
+  if (!cnpj) return ''
+  const d = (cnpj || '').replace(/\D/g, '')
+  if (d.length !== 14) return cnpj
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+}
 
 function isMenorDeIdade(dataNascimento: string | null): boolean {
   if (!dataNascimento) return false
@@ -171,6 +187,10 @@ function formatEndereco(s: Student): string {
 const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => string }[] = [
   { key: 'nome', label: 'Nome', getValue: (s) => (s.nome ?? '').replace(/;/g, ',') },
   { key: 'idade', label: 'Idade', getValue: (s) => (calcularIdade(s.dataNascimento) ?? '—').toString() },
+  { key: 'idioma', label: 'Idioma', getValue: (s) => (s.idioma === 'ENGLISH' ? 'Inglês' : s.idioma === 'SPANISH' ? 'Espanhol' : s.idioma ?? '—').replace(/;/g, ',') },
+  { key: 'nivel', label: 'Nível', getValue: (s) => (s.nivel ?? '—').replace(/;/g, ',') },
+  { key: 'objetivo', label: 'Objetivo', getValue: (s) => (s.objetivo ?? '—').replace(/;/g, ',').replace(/\n/g, ' ') },
+  { key: 'disponibilidade', label: 'Disponibilidade', getValue: (s) => (s.disponibilidade ?? '—').replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'email', label: 'Email', getValue: (s) => (s.email ?? '').replace(/;/g, ',') },
   { key: 'whatsapp', label: 'WhatsApp', getValue: (s) => (s.whatsapp ?? '').replace(/;/g, ',') },
   { key: 'cpf', label: 'CPF', getValue: (s) => (s.cpf ?? '').replace(/;/g, ',') },
@@ -189,6 +209,10 @@ const initialForm = {
   nome: '',
   email: '',
   whatsapp: '',
+  idioma: '',
+  nivel: '',
+  objetivo: '',
+  disponibilidade: '',
   dataNascimento: '',
   nomeResponsavel: '',
   emailResponsavel: '',
@@ -220,6 +244,12 @@ const initialForm = {
   observacoes: '',
   status: 'ACTIVE',
   activationDate: '',
+  faturamentoTipo: 'ALUNO' as 'ALUNO' | 'EMPRESA',
+  faturamentoRazaoSocial: '',
+  faturamentoCnpj: '',
+  faturamentoEmail: '',
+  faturamentoEndereco: '',
+  faturamentoDescricaoNfse: '',
 }
 
 export default function AdminAlunosPage() {
@@ -268,6 +298,7 @@ export default function AdminAlunosPage() {
     totalValidationErrors: number
   } | null>(null)
   const [passwordModalStudent, setPasswordModalStudent] = useState<Student | null>(null)
+  const [designarAulaStudent, setDesignarAulaStudent] = useState<Student | null>(null)
   const [passwordForm, setPasswordForm] = useState({ novaSenha: '123456', obrigarAlteracao: true })
   const [passwordLoading, setPasswordLoading] = useState(false)
   const [stats, setStats] = useState<{
@@ -427,6 +458,10 @@ export default function AdminAlunosPage() {
       nome: s.nome || '',
       email: s.email || '',
       whatsapp: s.whatsapp || '',
+      idioma: s.idioma ?? '',
+      nivel: s.nivel ?? '',
+      objetivo: s.objetivo ?? '',
+      disponibilidade: s.disponibilidade ?? '',
       dataNascimento,
       nomeResponsavel: s.nomeResponsavel ?? '',
       emailResponsavel: s.emailResponsavel ?? '',
@@ -458,6 +493,12 @@ export default function AdminAlunosPage() {
       observacoes: s.observacoes ?? '',
       status: s.status || 'ACTIVE',
       activationDate: s.activationDate ? new Date(s.activationDate).toISOString().slice(0, 10) : '',
+      faturamentoTipo: (s.faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO') as 'ALUNO' | 'EMPRESA',
+      faturamentoRazaoSocial: s.faturamentoRazaoSocial ?? '',
+      faturamentoCnpj: formatCnpjForDisplay(s.faturamentoCnpj),
+      faturamentoEmail: s.faturamentoEmail ?? '',
+      faturamentoEndereco: s.faturamentoEndereco ?? '',
+      faturamentoDescricaoNfse: s.faturamentoDescricaoNfse ?? '',
     })
     setIsModalOpen(true)
   }, [])
@@ -882,6 +923,10 @@ export default function AdminAlunosPage() {
         emailResponsavel: isMinor ? (formData.emailResponsavel.trim() || null) : null,
         cpf: formData.cpf.trim() || null,
         cpfResponsavel: isMinor ? (formData.cpfResponsavel.trim() || null) : null,
+        idioma: formData.idioma === 'ENGLISH' || formData.idioma === 'SPANISH' ? formData.idioma : null,
+        nivel: formData.nivel.trim() || null,
+        objetivo: formData.objetivo.trim() || null,
+        disponibilidade: formData.disponibilidade.trim() || null,
         curso: formData.curso || null,
         frequenciaSemanal: formData.frequenciaSemanal ? Number(formData.frequenciaSemanal) : null,
         tempoAulaMinutos: formData.tempoAulaMinutos ? Number(formData.tempoAulaMinutos) : null,
@@ -908,6 +953,12 @@ export default function AdminAlunosPage() {
         observacoes: formData.observacoes.trim() || null,
         status: formData.status || 'ACTIVE',
         activationDate: formData.status === 'PAUSED' && formData.activationDate ? formData.activationDate : null,
+        faturamentoTipo: formData.faturamentoTipo,
+        faturamentoRazaoSocial: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoRazaoSocial.trim() || null : null,
+        faturamentoCnpj: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoCnpj.replace(/\D/g, '') || null : null,
+        faturamentoEmail: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoEmail.trim() || null : null,
+        faturamentoEndereco: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoEndereco.trim() || null : null,
+        faturamentoDescricaoNfse: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoDescricaoNfse.trim() || null : null,
       }
       if (editingStudent) {
         const res = await fetch(`/api/admin/enrollments/${editingStudent.id}`, {
@@ -1359,6 +1410,14 @@ export default function AdminAlunosPage() {
           </button>
           <button
             type="button"
+            onClick={() => setDesignarAulaStudent(s)}
+            className="text-emerald-600 hover:text-emerald-800 text-sm font-medium"
+            title="Designar aulas"
+          >
+            <CalendarPlus className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
             onClick={() => s.alerts?.length ? setAlertsModalStudent(s) : openCreateAlertModal(s)}
             className={`text-sm font-medium ${s.alerts?.length ? getAlertSymbolColor(s.alerts) : 'text-gray-600 hover:text-gray-800'}`}
             title={s.alerts?.length ? 'Ver alertas / Criar novo' : 'Criar alerta'}
@@ -1404,44 +1463,44 @@ export default function AdminAlunosPage() {
     <AdminLayout>
       <div className="space-y-8">
         {/* Cabeçalho */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex flex-col gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Alunos</h1>
-            <p className="text-sm text-gray-600 mt-1">Lista de alunos e matrículas do instituto</p>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900">Alunos</h1>
+            <p className="text-xs sm:text-sm text-gray-600 mt-1">Lista de alunos e matrículas do instituto</p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
             <Button
               onClick={handleSendAccessToAll}
               variant="outline"
-              size="md"
-              className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
+              size="sm"
+              className="flex items-center gap-1.5 sm:gap-2 border-green-300 text-green-700 hover:bg-green-50 text-xs sm:text-sm"
               title="Enviar e-mail de acesso (login e senha padrão) para todos os alunos"
               disabled={sendAccessLoading}
             >
-              {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-              Liberar acesso para todos alunos
+              {sendAccessLoading ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <Mail className="w-4 h-4 shrink-0" />}
+              <span className="hidden sm:inline">Liberar acesso</span>
             </Button>
             <Button
               onClick={handleDeleteLast10Min}
               variant="outline"
-              size="md"
-              className="flex items-center gap-2 border-red-300 text-red-700 hover:bg-red-50"
+              size="sm"
+              className="flex items-center gap-1.5 sm:gap-2 border-red-300 text-red-700 hover:bg-red-50 text-xs sm:text-sm"
               title="Excluir todos os alunos criados nos últimos 10 minutos (somente admin)"
             >
-              <Trash2 className="w-4 h-4" />
-              Excluir alunos dos últimos 10 min
+              <Trash2 className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Excluir últimos 10 min</span>
             </Button>
             <Button
               onClick={() => setImportModalOpen(true)}
               variant="outline"
-              size="md"
-              className="flex items-center gap-2"
+              size="sm"
+              className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
             >
-              <FileSpreadsheet className="w-4 h-4" />
-              Adicionar por lista
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Adicionar por lista</span>
             </Button>
-            <Button variant="primary" size="md" onClick={handleOpenModal} className="flex items-center gap-2">
-              <Plus className="w-4 h-4" />
+            <Button variant="primary" size="sm" onClick={handleOpenModal} className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm">
+              <Plus className="w-4 h-4 shrink-0" />
               Adicionar aluno
             </Button>
           </div>
@@ -1900,6 +1959,54 @@ export default function AdminAlunosPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Idioma</label>
+                  <select
+                    value={formData.idioma}
+                    onChange={(e) => setFormData({ ...formData, idioma: e.target.value })}
+                    className="input w-full"
+                  >
+                    <option value="">Selecione</option>
+                    <option value="ENGLISH">Inglês</option>
+                    <option value="SPANISH">Espanhol</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Nível</label>
+                  <select
+                    value={formData.nivel}
+                    onChange={(e) => setFormData({ ...formData, nivel: e.target.value })}
+                    className="input w-full"
+                  >
+                    <option value="">Selecione</option>
+                    <option value="Iniciante">Iniciante</option>
+                    <option value="Básico">Básico</option>
+                    <option value="Intermediário">Intermediário</option>
+                    <option value="Avançado">Avançado</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Objetivo</label>
+                <textarea
+                  value={formData.objetivo}
+                  onChange={(e) => setFormData({ ...formData, objetivo: e.target.value })}
+                  className="input w-full min-h-[60px]"
+                  placeholder="Ex: trabalho, viagem, conversação, prova..."
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Disponibilidade</label>
+                <textarea
+                  value={formData.disponibilidade}
+                  onChange={(e) => setFormData({ ...formData, disponibilidade: e.target.value })}
+                  className="input w-full min-h-[60px]"
+                  placeholder="Ex: Seg/Qua 19h; Ter/Qui 7h"
+                  rows={2}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Data de nascimento
                   </label>
@@ -2061,6 +2168,83 @@ export default function AdminAlunosPage() {
                       className="input w-full"
                       placeholder="responsavel@email.com"
                     />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Dados de Faturamento */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-gray-800 border-b pb-2">Dados de Faturamento</h3>
+              <p className="text-xs text-gray-500">Define em nome de quem a nota fiscal será emitida (aluno ou empresa).</p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Faturar para</label>
+                <select
+                  value={formData.faturamentoTipo}
+                  onChange={(e) => setFormData({ ...formData, faturamentoTipo: e.target.value as 'ALUNO' | 'EMPRESA' })}
+                  className="input w-full"
+                >
+                  <option value="ALUNO">Aluno</option>
+                  <option value="EMPRESA">Empresa</option>
+                </select>
+              </div>
+              {formData.faturamentoTipo === 'EMPRESA' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Razão Social *</label>
+                    <input
+                      type="text"
+                      value={formData.faturamentoRazaoSocial}
+                      onChange={(e) => setFormData({ ...formData, faturamentoRazaoSocial: e.target.value })}
+                      className="input w-full"
+                      placeholder="Razão social da empresa"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">CNPJ *</label>
+                    <input
+                      type="text"
+                      value={formData.faturamentoCnpj}
+                      onChange={(e) => {
+                        const d = e.target.value.replace(/\D/g, '').slice(0, 14)
+                        const f = d.length <= 2 ? d : d.length <= 5 ? `${d.slice(0,2)}.${d.slice(2)}` : d.length <= 8 ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5)}` : d.length <= 12 ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8)}` : `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`
+                        setFormData({ ...formData, faturamentoCnpj: f })
+                      }}
+                      className="input w-full"
+                      placeholder="00.000.000/0001-00"
+                      maxLength={18}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Email para NF *</label>
+                    <input
+                      type="email"
+                      value={formData.faturamentoEmail}
+                      onChange={(e) => setFormData({ ...formData, faturamentoEmail: e.target.value })}
+                      className="input w-full"
+                      placeholder="email@empresa.com"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Endereço fiscal (opcional)</label>
+                    <textarea
+                      value={formData.faturamentoEndereco}
+                      onChange={(e) => setFormData({ ...formData, faturamentoEndereco: e.target.value })}
+                      className="input w-full min-h-[60px]"
+                      placeholder="Endereço completo da empresa"
+                      rows={2}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição da NF (opcional)</label>
+                    <textarea
+                      value={formData.faturamentoDescricaoNfse}
+                      onChange={(e) => setFormData({ ...formData, faturamentoDescricaoNfse: e.target.value })}
+                      className="input w-full min-h-[80px] font-mono text-sm"
+                      placeholder={'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'}
+                      rows={3}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Use {`{aluno}`}, {`{frequencia}`}, {`{curso}`}, {`{mes}`}, {`{ano}`} como variáveis. Deixe vazio para usar o modelo padrão.</p>
                   </div>
                 </div>
               )}
@@ -2967,6 +3151,16 @@ export default function AdminAlunosPage() {
             </div>
           </div>
         </Modal>
+
+        <DesignarAulaModal
+          isOpen={!!designarAulaStudent}
+          onClose={() => setDesignarAulaStudent(null)}
+          enrollment={designarAulaStudent ? { id: designarAulaStudent.id, nome: designarAulaStudent.nome, frequenciaSemanal: designarAulaStudent.frequenciaSemanal ?? null, tempoAulaMinutos: designarAulaStudent.tempoAulaMinutos ?? null } : null}
+          onSuccess={() => {
+            fetchStudents()
+            setDesignarAulaStudent(null)
+          }}
+        />
 
         {toast && (
           <Toast

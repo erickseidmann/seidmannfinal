@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
-const PAYMENT_OVERDUE_DAYS_LIMIT = Number(process.env.PAYMENT_OVERDUE_DAYS_LIMIT) || 8
+const PAYMENT_OVERDUE_DAYS_LIMIT = Number(process.env.PAYMENT_OVERDUE_DAYS_LIMIT) || 30
 
 export async function GET(request: NextRequest) {
   try {
@@ -93,6 +93,7 @@ export async function GET(request: NextRequest) {
     const yearM = todayDate.getFullYear()
     const monthM = todayDate.getMonth() + 1
 
+    const atRiskWindowStart = Math.max(5, PAYMENT_OVERDUE_DAYS_LIMIT - 10)
     const atRiskEnrollments = atRisk.filter((e) => {
       const pm = e.paymentMonths[0]
       if (pm?.paymentStatus === 'PAGO') return false
@@ -102,7 +103,7 @@ export async function GET(request: NextRequest) {
       const dueDate = new Date(yearM, monthM - 1, safeDay)
       const msDiff = todayDate.getTime() - dueDate.getTime()
       const daysOverdue = Math.ceil(msDiff / (24 * 60 * 60 * 1000))
-      return daysOverdue > 5 && daysOverdue <= PAYMENT_OVERDUE_DAYS_LIMIT
+      return daysOverdue >= atRiskWindowStart && daysOverdue <= PAYMENT_OVERDUE_DAYS_LIMIT
     })
 
     const toDeactivate = atRisk.filter((e) => {

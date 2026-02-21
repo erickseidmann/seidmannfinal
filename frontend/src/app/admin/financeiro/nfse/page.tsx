@@ -934,7 +934,7 @@ export default function FinanceiroNfsePage() {
           )}
         </Modal>
 
-        <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+        <Toast message={toast?.message || ""} type={toast?.type || "error"} onClose={() => setToast(null)} />
       </div>
     </AdminLayout>
   )

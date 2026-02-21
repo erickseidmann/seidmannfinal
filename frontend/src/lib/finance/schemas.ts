@@ -20,6 +20,13 @@ export const updateStudentPaymentSchema = z.object({
   dataUltimoPagamento: z.string().nullish(),
   dataProximoPagamento: z.string().nullish(),
   dueDay: z.number().int().min(1).max(31).optional(),
+  // Dados de faturamento para NFSe em nome de empresa
+  faturamentoTipo: z.enum(['ALUNO', 'EMPRESA']).nullish(),
+  faturamentoRazaoSocial: z.string().max(255).nullish(),
+  faturamentoCnpj: z.string().max(18).nullish(),
+  faturamentoEmail: z.string().max(255).nullish(),
+  faturamentoEndereco: z.string().max(2000).nullish(),
+  faturamentoDescricaoNfse: z.string().max(2000).nullish(),
   // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
   year: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(2000).max(2100).optional()),
   month: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(1).max(12).optional()),

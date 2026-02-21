@@ -54,7 +54,7 @@ export default function FinanceiroRelatoriosPage() {
   const [tipo, setTipo] = useState<ReportType>('geral')
   const [year, setYear] = useState(anoAtual)
   const [month, setMonth] = useState<string>('')
-  const [data, setData] = useState<unknown>(null)
+  const [data, setData] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -666,3 +666,4 @@ function ReportProfessores({ data }: { data: ProfessoresData }) {
     </div>
   )
 }
+

@@ -232,6 +232,7 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<CoraIn
   const payload: Record<string, unknown> = {
     code: params.code,
     customer,
+    payment_forms: ['BANK_SLIP', 'PIX'],
     services: [
       { name: params.serviceName, amount: params.amountCents },
     ],

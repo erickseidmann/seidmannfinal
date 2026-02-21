@@ -333,8 +333,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:ml-64">
-          <div className="mx-auto w-full max-w-[1600px]">
+        <main className="min-w-0 flex-1 p-3 sm:p-4 md:p-6 lg:ml-64 overflow-x-hidden">
+          <div className="mx-auto w-full max-w-[1600px] min-w-0">
             {children}
           </div>
         </main>

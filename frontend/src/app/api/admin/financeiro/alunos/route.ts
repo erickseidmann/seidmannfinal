@@ -179,10 +179,17 @@ export async function GET(request: NextRequest) {
         enr.moraNoExterior && enr.enderecoExterior
           ? enr.enderecoExterior.trim()
           : [enr.rua, enr.numero, enr.complemento, enr.cidade, enr.estado, enr.cep].filter(Boolean).join(', ') || null
+      const enrFaturamento = e as { faturamentoTipo?: string | null; faturamentoRazaoSocial?: string | null; faturamentoCnpj?: string | null; faturamentoEmail?: string | null; faturamentoEndereco?: string | null; faturamentoDescricaoNfse?: string | null }
       return {
         id: e.id,
         nome: e.nome,
         cpf: (e as { cpf?: string | null }).cpf ?? null,
+        faturamentoTipo: enrFaturamento.faturamentoTipo ?? 'ALUNO',
+        faturamentoRazaoSocial: enrFaturamento.faturamentoRazaoSocial ?? null,
+        faturamentoCnpj: enrFaturamento.faturamentoCnpj ?? null,
+        faturamentoEmail: enrFaturamento.faturamentoEmail ?? null,
+        faturamentoEndereco: enrFaturamento.faturamentoEndereco ?? null,
+        faturamentoDescricaoNfse: enrFaturamento.faturamentoDescricaoNfse ?? null,
         endereco: enderecoCompleto,
         tipoAula: e.tipoAula ?? null,
         nomeGrupo: e.nomeGrupo ?? null,

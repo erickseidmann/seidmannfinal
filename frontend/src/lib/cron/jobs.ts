@@ -193,7 +193,7 @@ export async function runNfseRetry(): Promise<{
         : enrollment.paymentInfo?.valorMensal != null
           ? Number(enrollment.paymentInfo.valorMensal)
           : null
-    if (!finance.cpf || !valorMensalidade || valorMensalidade <= 0) {
+    if ((!finance.cpf && !finance.cnpj) || !valorMensalidade || valorMensalidade <= 0) {
       falha++
       continue
     }
@@ -202,11 +202,16 @@ export async function runNfseRetry(): Promise<{
       const novaRef = generateNfseRef(nota.enrollmentId, nota.year, nota.month)
       const payload = buildNfsePayload({
         studentName: finance.nome,
-        cpf: finance.cpf,
+        cpf: finance.cpf || undefined,
+        cnpj: finance.cnpj || undefined,
         email: finance.email || undefined,
         amount: valorMensalidade,
         year: nota.year,
         month: nota.month,
+        alunoNome: enrollment.nome,
+        frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
+        curso: enrollment.curso ?? undefined,
+        customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
       })
       const response = await emitirNfse(novaRef, payload)
       await prisma.nfseInvoice.update({
@@ -348,7 +353,7 @@ export async function runPaymentNotifications(): Promise<{
           await sleep(DELAY_MS)
         }
       }
-    } else if (daysOverdue >= 1 && daysOverdue <= 8) {
+    } else if (daysOverdue >= 1 && daysOverdue <= 30) {
       const type = `overdue_${daysOverdue}`
       if (!(await checkAlreadySent(type))) {
         const r = await sendPaymentOverdueReminder(fullEnrollment, daysOverdue, year, month)
@@ -356,7 +361,7 @@ export async function runPaymentNotifications(): Promise<{
         else errors++
         await sleep(DELAY_MS)
       }
-    } else if (daysOverdue > 8) {
+    } else if (daysOverdue > 30) {
       if (!(await checkAlreadySent('deactivated'))) {
         await prisma.enrollment.update({
           where: { id: enrollment.id },

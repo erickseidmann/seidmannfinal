@@ -27,25 +27,103 @@ const MESES = [
   'Dezembro',
 ]
 
+/** Nomes amigáveis para os cursos */
+const CURSO_LABEL: Record<string, string> = {
+  INGLES: 'Inglês',
+  ESPANHOL: 'Espanhol',
+  INGLES_E_ESPANHOL: 'Inglês e Espanhol',
+}
+
 interface BuildNfseParams {
-  studentName: string
-  cpf: string
+  studentName: string // Nome do tomador (aluno ou razão social da empresa)
+  cpf?: string // CPF do aluno (quando faturamento ALUNO)
+  cnpj?: string // CNPJ da empresa (quando faturamento EMPRESA)
   email?: string
   amount: number // valor da mensalidade
   year: number
   month: number
-  description?: string // override total da discriminação
-  extraDescription?: string // texto adicionado ao final da discriminação padrão
+  /** Override total da discriminação */
+  description?: string
+  /** Texto adicionado ao final da discriminação padrão */
+  extraDescription?: string
+  /** Para EMPRESA: nome do aluno, frequência e curso usados na descrição */
+  alunoNome?: string
+  frequenciaSemanal?: number | null
+  curso?: string | null
+  /** Template editável da descrição (quando faturamentoTipo=EMPRESA); se vazio usa padrão */
+  customDescricaoEmpresa?: string | null
+}
+
+/** Template padrão para NF em nome de empresa. Use {aluno}, {frequencia}, {curso}, {mes}, {ano} */
+const TEMPLATE_EMPRESA_PADRAO =
+  'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'
+
+function aplicarTemplateEmpresa(template: string, vars: {
+  aluno: string
+  frequencia: string
+  curso: string
+  mes: string
+  ano: number
+}): string {
+  return template
+    .replace(/\{aluno\}/g, vars.aluno)
+    .replace(/\{frequencia\}/g, vars.frequencia)
+    .replace(/\{curso\}/g, vars.curso)
+    .replace(/\{mes\}/g, vars.mes)
+    .replace(/\{ano\}/g, String(vars.ano))
 }
 
 export function buildNfsePayload(params: BuildNfseParams): NfsePayload {
-  const { studentName, cpf, email, amount, year, month, description, extraDescription } = params
+  const {
+    studentName,
+    cpf,
+    cnpj,
+    email,
+    amount,
+    year,
+    month,
+    description,
+    extraDescription,
+    alunoNome,
+    frequenciaSemanal,
+    curso,
+    customDescricaoEmpresa,
+  } = params
 
   const mesNome = MESES[month] || String(month)
-  const base =
-    description ||
-    `Combo de aulas de idioma.\nPagamento referente ao mês de ${mesNome}/${year}.\nAluno ${studentName}.`
+
+  let base: string
+  if (description) {
+    base = description
+  } else if (cnpj) {
+    // NF em nome de empresa: usa template editável ou padrão
+    const template = (customDescricaoEmpresa && customDescricaoEmpresa.trim()) || TEMPLATE_EMPRESA_PADRAO
+    base = aplicarTemplateEmpresa(template, {
+      aluno: alunoNome?.trim() || studentName,
+      frequencia: frequenciaSemanal != null ? String(frequenciaSemanal) : '-',
+      curso: curso ? (CURSO_LABEL[curso] || curso) : '-',
+      mes: mesNome,
+      ano: year,
+    })
+  } else {
+    base =
+      `Combo de aulas de idioma.\nPagamento referente ao mês de ${mesNome}/${year}.\nAluno ${studentName}.`
+  }
+
   const discriminacao = extraDescription ? `${base}\n${extraDescription}`.trim() : base
+
+  // Tomador: CPF (pessoa física) ou CNPJ (pessoa jurídica/empresa)
+  const cpfDigits = cpf ? cpf.replace(/\D/g, '') : null
+  const cnpjDigits = cnpj ? cnpj.replace(/\D/g, '') : null
+  const tomador: { cpf?: string; cnpj?: string; razao_social: string; email?: string } = {
+    razao_social: studentName,
+    ...(email && { email }),
+  }
+  if (cnpjDigits && cnpjDigits.length === 14) {
+    tomador.cnpj = cnpjDigits
+  } else if (cpfDigits && cpfDigits.length === 11) {
+    tomador.cpf = cpfDigits
+  }
 
   return {
     data_emissao: new Date().toISOString().split('T')[0], // Data atual no formato YYYY-MM-DD (obrigatório pela Focus NFe)
@@ -54,11 +132,7 @@ export function buildNfsePayload(params: BuildNfseParams): NfsePayload {
     optante_simples_nacional: true,
     incentivador_cultural: false,
     prestador: PRESTADOR,
-    tomador: {
-      cpf: cpf.replace(/\D/g, ''), // só números
-      razao_social: studentName,
-      ...(email && { email }),
-    },
+    tomador,
     servico: {
       aliquota: 0, // Simples Nacional isento
       discriminacao,

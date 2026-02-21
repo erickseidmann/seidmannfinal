@@ -557,6 +557,11 @@ export interface ComprovanteMatriculaData {
   disponibilidade?: string | null
   diaPagamento?: number | null
   nomeVendedor?: string | null
+  /** Dados de pagamento Cora */
+  boletoUrl?: string | null
+  boletoDigitableLine?: string | null
+  pixEmv?: string | null
+  pixQrCodeUrl?: string | null
 }
 
 function formatCurrency(value: unknown): string {
@@ -601,6 +606,23 @@ export function comprovanteMatriculaContent(data: ComprovanteMatriculaData): { s
     : '—'
 
   const subject = 'Comprovante de Matrícula – Seidmann Institute'
+
+  // Montar bloco de pagamento
+  let blocoPagamento = ''
+  if (data.boletoUrl || data.pixEmv) {
+    blocoPagamento = '\n💰 Dados para Pagamento\n\n'
+    if (data.pixEmv) {
+      blocoPagamento += '🟢 PIX Copia e Cola:\n' + data.pixEmv + '\n\n'
+    }
+    if (data.boletoUrl) {
+      blocoPagamento += '📄 Link do Boleto:\n' + data.boletoUrl + '\n'
+      if (data.boletoDigitableLine) {
+        blocoPagamento += 'Linha digitável: ' + data.boletoDigitableLine + '\n'
+      }
+      blocoPagamento += '\n'
+    }
+    blocoPagamento += 'Sua matrícula será confirmada após o pagamento.\n\n'
+  }
 
   const blocosTermos = `
 📖 Termos e Condições
@@ -676,7 +698,7 @@ Valor do Curso: ${valorCurso}
 Frequência das Aulas: ${frequencia}
 Melhores Horários: ${melhoresHorarios}
 Dia de Pagamento: ${diaPagamento}
-${blocosTermos}
+${blocoPagamento}${blocosTermos}
 
 Caso tenha dúvidas ou precise de suporte, entre em contato conosco pelo e-mail:
 📩 atendimento@seidmanninstitute.com
@@ -706,6 +728,22 @@ Equipe Seidmann Institute`
     <tr><td style="padding: 4px 8px; border-bottom: 1px solid #eee;"><strong>Melhores Horários:</strong></td><td style="padding: 4px 8px; border-bottom: 1px solid #eee;">${escapeHtml(melhoresHorarios)}</td></tr>
     <tr><td style="padding: 4px 8px; border-bottom: 1px solid #eee;"><strong>Dia de Pagamento:</strong></td><td style="padding: 4px 8px; border-bottom: 1px solid #eee;">${escapeHtml(diaPagamento)}</td></tr>
   </table>
+  ${(data.boletoUrl || data.pixEmv) ? `
+  <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+    <p style="font-weight: bold; font-size: 16px; margin-bottom: 12px;">💰 Dados para Pagamento</p>
+    ${data.pixEmv ? `
+      <p style="margin-bottom: 8px;"><strong>🟢 PIX Copia e Cola:</strong></p>
+      <p style="background: white; padding: 10px; border-radius: 4px; font-size: 12px; word-break: break-all; border: 1px solid #e5e7eb;">${escapeHtml(data.pixEmv)}</p>
+      ${data.pixQrCodeUrl ? `<p style="text-align: center; margin: 12px 0;"><img src="${escapeHtml(data.pixQrCodeUrl)}" alt="QR Code PIX" width="200" height="200" style="border-radius: 8px;"></p>` : ''}
+    ` : ''}
+    ${data.boletoUrl ? `
+      <p style="margin-top: 12px;"><strong>📄 Boleto Bancário:</strong></p>
+      ${data.boletoDigitableLine ? `<p style="font-size: 12px; font-family: monospace; background: white; padding: 8px; border-radius: 4px; border: 1px solid #e5e7eb;">${escapeHtml(data.boletoDigitableLine)}</p>` : ''}
+      <p><a href="${escapeHtml(data.boletoUrl)}" style="display: inline-block; background: #2563eb; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; margin-top: 8px;">Visualizar Boleto</a></p>
+    ` : ''}
+    <p style="font-size: 13px; color: #666; margin-top: 12px;">Sua matrícula será confirmada após o pagamento.</p>
+  </div>
+  ` : ''}
   <p><strong>📖 Termos e Condições</strong></p>
   <p><strong>💳 Pagamento</strong><br>
   O pagamento deve ser realizado até o dia acordado entre o(a) aluno(a) e o(a) vendedor(a). Caso a data de pagamento caia em final de semana ou feriado, poderá ser realizado no próximo dia útil. Valores promocionais, combos ou pacotes devem estar especificados separadamente. Em caso de atraso sem aviso prévio, o(a) aluno(a) poderá perder descontos concedidos, sendo cobrado o valor integral da mensalidade. Descontos não são mantidos em caso de pausa no curso. Valores de combos, pacotes promocionais e mensalidades estão sujeitos a reajuste anual.</p>

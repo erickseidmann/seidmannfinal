@@ -55,11 +55,22 @@ export type User = {
   createdAt: string // ISO date string
 }
 
+/** Dados de pagamento retornados pela API de matrícula (Cora) */
+export type MatriculaPayment = {
+  boletoUrl: string | null
+  boletoBarcode: string | null
+  boletoDigitableLine: string | null
+  pixEmv: string | null
+  pixQrCodeUrl: string | null
+  coraInvoiceId: string | null
+}
+
 /**
  * Resposta da API POST /api/matricula
  */
 export type MatriculaResponse = ApiSuccess<{
   enrollment: Enrollment
+  payment?: MatriculaPayment
 }>
 
 /**

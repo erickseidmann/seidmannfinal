@@ -10,7 +10,8 @@ import { useState, FormEvent, Suspense, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import type { MatriculaResponse, ApiResponse } from '@/contracts/api.contract'
+import type { MatriculaResponse, ApiResponse, MatriculaPayment } from '@/contracts/api.contract'
+import { isValidCPF } from '@/lib/finance/validators'
 import { User, BookOpen, FileCheck } from 'lucide-react'
 
 const STEPS = [
@@ -32,13 +33,21 @@ function isMenorDeIdade(dataNascimento: string): boolean {
 
 interface FormErrors {
   nome?: string
+  cpf?: string
   whatsapp?: string
   email?: string
   idioma?: string
   nivel?: string
-  disponibilidade?: string
+  melhoresDiasSemana?: string
+  melhoresHorarios?: string
   tempoAulaMinutos?: string
   frequenciaSemanal?: string
+  metodoPagamento?: string
+  cep?: string
+  rua?: string
+  numero?: string
+  cidade?: string
+  estado?: string
   aceiteTermos?: string
   aceiteFerias?: string
   nomeResponsavel?: string
@@ -65,6 +74,39 @@ const FREQUENCIA_SEMANAL_OPCOES = [
   { value: '7', label: '7x por semana' },
 ]
 
+const DIAS_SEMANA = [
+  { value: 'seg', label: 'Segunda' },
+  { value: 'ter', label: 'Terça' },
+  { value: 'qua', label: 'Quarta' },
+  { value: 'qui', label: 'Quinta' },
+  { value: 'sex', label: 'Sexta' },
+  { value: 'sab', label: 'Sábado' },
+  { value: 'dom', label: 'Domingo' },
+] as const
+
+const HORARIOS = [
+  { value: 'manha', label: 'Manhã (7h-12h)' },
+  { value: 'tarde', label: 'Tarde (12h-18h)' },
+  { value: 'noite', label: 'Noite (18h-22h)' },
+] as const
+
+async function buscarCep(cep: string): Promise<{ logradouro: string; localidade: string; uf: string } | null> {
+  const limpo = cep.replace(/\D/g, '')
+  if (limpo.length !== 8) return null
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${limpo}/json/`)
+    const data = await res.json()
+    if (data.erro) return null
+    return {
+      logradouro: data.logradouro || '',
+      localidade: data.localidade || '',
+      uf: data.uf || '',
+    }
+  } catch {
+    return null
+  }
+}
+
 const VALOR_HORA_PARTICULAR = 60
 const VALOR_HORA_GRUPO = 45
 const SEMANAS_POR_MES = 4
@@ -78,9 +120,23 @@ function formatMoney(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
 }
 
+function getEscolaFromParams(searchParams: ReturnType<typeof useSearchParams>): { escola: 'SEIDMANN' | 'YOUBECOME' | 'HIGHWAY' | 'OUTRO'; nomeOutro?: string } {
+  const escola = searchParams.get('escola')?.toUpperCase()
+  if (escola === 'YOUBECOME' || escola === 'HIGHWAY') {
+    return { escola }
+  }
+  if (escola === 'OUTRO') {
+    const nomeOutro = searchParams.get('nome')?.trim()
+    return { escola: 'OUTRO', nomeOutro: nomeOutro || undefined }
+  }
+  return { escola: 'SEIDMANN' }
+}
+
 function MatriculaPageContent() {
   const searchParams = useSearchParams()
   const isAutoComplete = searchParams.get('auto') === '1'
+  const { escola: escolaParam, nomeOutro } = getEscolaFromParams(searchParams)
+  const isModoParceiro = escolaParam !== 'SEIDMANN'
   
   const [formData, setFormData] = useState({
     nome: '',
@@ -94,11 +150,19 @@ function MatriculaPageContent() {
     idioma: '',
     nivel: '',
     objetivo: '',
-    disponibilidade: '',
+    melhoresDiasSemana: [] as string[],
+    melhoresHorarios: [] as string[],
     tipoAula: '' as '' | 'PARTICULAR' | 'GRUPO',
     nomeGrupo: '',
     tempoAulaMinutos: '',
     frequenciaSemanal: '',
+    metodoPagamento: '',
+    cep: '',
+    rua: '',
+    numero: '',
+    complemento: '',
+    cidade: '',
+    estado: '',
     codigoCupom: '',
     aceiteTermos: false,
     aceiteFerias: false,
@@ -109,8 +173,16 @@ function MatriculaPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [paymentInfo, setPaymentInfo] = useState<{
+    boletoUrl: string | null
+    boletoDigitableLine: string | null
+    pixEmv: string | null
+    pixQrCodeUrl: string | null
+  } | null>(null)
+  const [copiedPix, setCopiedPix] = useState(false)
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [couponValidado, setCouponValidado] = useState<{ valorPorHoraAula: number } | null>(null)
+  const [cepLoading, setCepLoading] = useState(false)
 
   useEffect(() => {
     const code = formData.codigoCupom.trim().toUpperCase()
@@ -151,7 +223,7 @@ function MatriculaPageContent() {
     return { valorMensalidade: Math.round(mensal * 100) / 100, valorHoraAplicado: valorHora }
   }, [formData.tempoAulaMinutos, formData.frequenciaSemanal, formData.codigoCupom, formData.tipoAula, couponValidado])
 
-  /** Valida apenas os campos da etapa 1 (nome, contato, idioma, nível; responsável se menor). */
+  /** Valida apenas os campos da etapa 1 (nome, contato, idioma, nível; CPF; responsável se menor). */
   const validateStep1 = (): boolean => {
     const newErrors: FormErrors = {}
     if (!formData.nome.trim()) newErrors.nome = 'Nome completo é obrigatório'
@@ -164,8 +236,12 @@ function MatriculaPageContent() {
     if (menor) {
       if (!formData.nomeResponsavel.trim()) newErrors.nomeResponsavel = 'Nome do responsável é obrigatório para menores de 18 anos'
       if (!formData.cpfResponsavel.trim()) newErrors.cpfResponsavel = 'CPF do responsável é obrigatório para menores de 18 anos'
+      else if (!isValidCPF(formData.cpfResponsavel)) newErrors.cpfResponsavel = 'CPF do responsável inválido'
       if (!formData.emailResponsavel.trim()) newErrors.emailResponsavel = 'Email do responsável é obrigatório para menores de 18 anos'
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.emailResponsavel)) newErrors.emailResponsavel = 'Email do responsável inválido'
+    } else {
+      if (!formData.cpf.trim()) newErrors.cpf = 'CPF é obrigatório'
+      else if (!isValidCPF(formData.cpf)) newErrors.cpf = 'CPF inválido'
     }
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -174,9 +250,24 @@ function MatriculaPageContent() {
   /** Valida apenas a etapa 2 (disponibilidade, tempo de aula, frequência). */
   const validateStep2 = (): boolean => {
     const newErrors: FormErrors = {}
-    if (!formData.disponibilidade.trim()) newErrors.disponibilidade = 'Disponibilidade é obrigatória'
+    if (!formData.melhoresDiasSemana.length) newErrors.melhoresDiasSemana = 'Selecione ao menos um dia da semana'
+    if (!formData.melhoresHorarios.length) newErrors.melhoresHorarios = 'Selecione ao menos um horário'
     if (!formData.tempoAulaMinutos) newErrors.tempoAulaMinutos = 'Tempo de aula é obrigatório'
     if (!formData.frequenciaSemanal) newErrors.frequenciaSemanal = 'Frequência semanal é obrigatória'
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
+  /** Valida etapa 3 (metodoPagamento, endereço). */
+  const validateStep3 = (): boolean => {
+    const newErrors: FormErrors = {}
+    if (!formData.metodoPagamento) newErrors.metodoPagamento = 'Método de pagamento é obrigatório'
+    const cepOk = formData.cep?.replace(/\D/g, '').length === 8
+    if (!cepOk) newErrors.cep = 'CEP é obrigatório e deve ter 8 dígitos'
+    if (!formData.rua?.trim()) newErrors.rua = 'Rua é obrigatória'
+    if (!formData.numero?.trim()) newErrors.numero = 'Número é obrigatório'
+    if (!formData.cidade?.trim()) newErrors.cidade = 'Cidade é obrigatória'
+    if (!formData.estado?.trim()) newErrors.estado = 'Estado é obrigatório'
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -206,8 +297,11 @@ function MatriculaPageContent() {
       newErrors.nivel = 'Nível é obrigatório'
     }
 
-    if (!formData.disponibilidade.trim()) {
-      newErrors.disponibilidade = 'Disponibilidade é obrigatória'
+    if (!formData.melhoresDiasSemana?.length) {
+      newErrors.melhoresDiasSemana = 'Selecione ao menos um dia da semana'
+    }
+    if (!formData.melhoresHorarios?.length) {
+      newErrors.melhoresHorarios = 'Selecione ao menos um horário'
     }
     if (!formData.tempoAulaMinutos) {
       newErrors.tempoAulaMinutos = 'Tempo de aula é obrigatório'
@@ -220,9 +314,21 @@ function MatriculaPageContent() {
     if (menor) {
       if (!formData.nomeResponsavel.trim()) newErrors.nomeResponsavel = 'Nome do responsável é obrigatório para menores de 18 anos'
       if (!formData.cpfResponsavel.trim()) newErrors.cpfResponsavel = 'CPF do responsável é obrigatório para menores de 18 anos'
+      else if (!isValidCPF(formData.cpfResponsavel)) newErrors.cpfResponsavel = 'CPF do responsável inválido'
       if (!formData.emailResponsavel.trim()) newErrors.emailResponsavel = 'Email do responsável é obrigatório para menores de 18 anos'
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.emailResponsavel)) newErrors.emailResponsavel = 'Email do responsável inválido'
+    } else {
+      if (!formData.cpf.trim()) newErrors.cpf = 'CPF é obrigatório'
+      else if (!isValidCPF(formData.cpf)) newErrors.cpf = 'CPF inválido'
     }
+
+    if (!formData.metodoPagamento) newErrors.metodoPagamento = 'Método de pagamento é obrigatório'
+    const cepOk = formData.cep?.replace(/\D/g, '').length === 8
+    if (!cepOk) newErrors.cep = 'CEP é obrigatório e deve ter 8 dígitos'
+    if (!formData.rua?.trim()) newErrors.rua = 'Rua é obrigatória'
+    if (!formData.numero?.trim()) newErrors.numero = 'Número é obrigatório'
+    if (!formData.cidade?.trim()) newErrors.cidade = 'Cidade é obrigatória'
+    if (!formData.estado?.trim()) newErrors.estado = 'Estado é obrigatório'
 
     if (!formData.aceiteTermos) {
       newErrors.aceiteTermos = 'É necessário aceitar os termos e condições'
@@ -261,7 +367,16 @@ function MatriculaPageContent() {
           idioma: formData.idioma,
           nivel: formData.nivel,
           objetivo: formData.objetivo || null,
-          disponibilidade: formData.disponibilidade,
+          melhoresDiasSemana: formData.melhoresDiasSemana.join(', '),
+          melhoresHorarios: formData.melhoresHorarios.join(', '),
+          disponibilidade: `Dias: ${formData.melhoresDiasSemana.join(', ')}. Horários: ${formData.melhoresHorarios.join(', ')}`,
+          metodoPagamento: formData.metodoPagamento || null,
+          cep: formData.cep?.replace(/\D/g, '').slice(0, 8) || null,
+          rua: formData.rua?.trim() || null,
+          cidade: formData.cidade?.trim() || null,
+          estado: formData.estado?.trim().slice(0, 2) || null,
+          numero: formData.numero?.trim() || null,
+          complemento: formData.complemento?.trim() || null,
           dataNascimento: formData.dataNascimento || undefined,
           cpf: formData.cpf ? formData.cpf.replace(/\D/g, '') : undefined,
           nomeResponsavel: isMenorDeIdade(formData.dataNascimento) ? formData.nomeResponsavel.trim() || undefined : undefined,
@@ -269,7 +384,8 @@ function MatriculaPageContent() {
           emailResponsavel: isMenorDeIdade(formData.dataNascimento) ? formData.emailResponsavel.trim() || undefined : undefined,
           tipoAula: formData.tipoAula || undefined,
           nomeGrupo: formData.tipoAula === 'GRUPO' ? formData.nomeGrupo : undefined,
-          escolaMatricula: 'SEIDMANN',
+          escolaMatricula: escolaParam,
+          escolaMatriculaOutro: escolaParam === 'OUTRO' && nomeOutro ? nomeOutro : undefined,
           tempoAulaMinutos: formData.tempoAulaMinutos ? Number(formData.tempoAulaMinutos) : undefined,
           frequenciaSemanal: formData.frequenciaSemanal ? Number(formData.frequenciaSemanal) : undefined,
           valorMensalidade: valorMensalidade > 0 ? valorMensalidade : undefined,
@@ -292,43 +408,31 @@ function MatriculaPageContent() {
         throw new Error(errorMessage)
       }
 
-      // Sucesso - mostrar feedback e abrir WhatsApp
+      // Sucesso - salvar dados de pagamento e mostrar tela
       setShowSuccess(true)
+      setIsSubmitting(false)
 
-      // Construir mensagem para WhatsApp usando formato padronizado
-      const enrollment = json.data.enrollment
-      // Mapear enum de volta para label em português para WhatsApp
-      const languageLabelMap: Record<string, string> = {
-        'ENGLISH': 'Inglês',
-        'SPANISH': 'Espanhol',
+      const payment = json.ok ? (json.data as { payment?: MatriculaPayment }).payment : undefined
+      if (payment) {
+        setPaymentInfo({
+          boletoUrl: payment.boletoUrl ?? null,
+          boletoDigitableLine: payment.boletoDigitableLine ?? null,
+          pixEmv: payment.pixEmv ?? null,
+          pixQrCodeUrl: payment.pixQrCodeUrl ?? null,
+        })
       }
-      const languageLabel = enrollment.idioma 
-        ? (languageLabelMap[enrollment.idioma] || enrollment.idioma)
-        : 'Não informado'
-      const codigo = (enrollment as { trackingCode?: string }).trackingCode || enrollment.id
-      const mensagem = `Olá! Quero finalizar minha matrícula no Seidmann Institute.
-Número de Matrícula: ${codigo}
-Nome: ${enrollment.nome}
-Idioma: ${languageLabel}
-Nível: ${enrollment.nivel}
-WhatsApp: ${enrollment.whatsapp}
-Email: ${enrollment.email}
-Disponibilidade: ${enrollment.disponibilidade || '-'}`
-
-      const whatsappNumber = '5519987121980'
-      const encodedMessage = encodeURIComponent(mensagem)
-      const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodedMessage}`
-
-      // Aguardar 800ms antes de abrir o WhatsApp
-      setTimeout(() => {
-        window.open(whatsappUrl, '_blank')
-        setIsSubmitting(false)
-      }, 800)
     } catch (error) {
       console.error('Erro ao criar matrícula:', error)
       setSubmitError(error instanceof Error ? error.message : 'Erro ao criar matrícula. Tente novamente.')
       setIsSubmitting(false)
     }
+  }
+
+  const formatCpfInput = (v: string): string => {
+    const d = v.replace(/\D/g, '').slice(0, 11)
+    if (d.length <= 3) return d
+    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
   }
 
   const handleChange = (
@@ -337,9 +441,14 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
     const { name, value, type } = e.target
     const checked = (e.target as HTMLInputElement).checked
 
+    let finalValue: string | boolean = type === 'checkbox' ? checked : value
+    if (type !== 'checkbox' && (name === 'cpf' || name === 'cpfResponsavel')) {
+      finalValue = formatCpfInput(String(value))
+    }
+
     setFormData((prev) => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: finalValue,
     }))
 
     // Limpar erro do campo quando o usuário começar a digitar
@@ -374,32 +483,124 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
             </div>
           )}
 
-          {/* Tela de sucesso (outro tipo) */}
+          {/* Tela de sucesso com dados de pagamento */}
           {showSuccess ? (
-            <Card className="p-8 md:p-12 text-center">
-              <div className="max-w-md mx-auto space-y-6">
-                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-                  <FileCheck className="w-8 h-8 text-green-600" />
+            <Card className="p-8 md:p-12">
+              <div className="max-w-lg mx-auto space-y-6">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                    <FileCheck className="w-8 h-8 text-green-600" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-brand-text">Matrícula realizada!</h2>
+                  <p className="text-gray-600 mt-2">
+                    Sua matrícula foi registrada com sucesso. Realize o pagamento abaixo para confirmar.
+                  </p>
                 </div>
-                <h2 className="text-2xl font-bold text-brand-text">Matrícula enviada!</h2>
-                <p className="text-gray-600">
-                  Sua solicitação foi registrada. Abrindo o WhatsApp para você falar com a equipe e concluir sua matrícula.
-                </p>
-                <Button href="/" variant="primary" size="lg">
-                  Voltar para a Home
-                </Button>
+
+                {paymentInfo && (paymentInfo.pixEmv || paymentInfo.boletoUrl) ? (
+                  <div className="space-y-6">
+                    {/* PIX */}
+                    {paymentInfo.pixEmv && (
+                      <div className="rounded-xl border border-green-200 bg-green-50 p-5">
+                        <h3 className="text-lg font-semibold text-green-800 mb-4 flex items-center gap-2">
+                          💳 Pagar com PIX
+                        </h3>
+
+                        {paymentInfo.pixQrCodeUrl && (
+                          <div className="flex justify-center mb-4">
+                            <img
+                              src={paymentInfo.pixQrCodeUrl}
+                              alt="QR Code PIX"
+                              className="w-[250px] h-[250px] rounded-lg border border-gray-200"
+                            />
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          <label className="block text-sm font-semibold text-green-700">PIX Copia e Cola:</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={paymentInfo.pixEmv}
+                              className="input w-full text-xs bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(paymentInfo.pixEmv!)
+                                setCopiedPix(true)
+                                setTimeout(() => setCopiedPix(false), 3000)
+                              }}
+                              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition whitespace-nowrap"
+                            >
+                              {copiedPix ? '✓ Copiado!' : 'Copiar'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Boleto */}
+                    {paymentInfo.boletoUrl && (
+                      <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
+                        <h3 className="text-lg font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                          📄 Pagar com Boleto
+                        </h3>
+                        {paymentInfo.boletoDigitableLine && (
+                          <p className="text-xs text-blue-700 font-mono mb-3 break-all bg-white rounded p-2 border border-blue-100">
+                            {paymentInfo.boletoDigitableLine}
+                          </p>
+                        )}
+                        <a
+                          href={paymentInfo.boletoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition"
+                        >
+                          Visualizar Boleto
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center">
+                    <p className="text-sm text-amber-800">
+                      Os dados de pagamento serão enviados para seu email. Em caso de dúvidas, entre em contato pelo WhatsApp.
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-center pt-4 border-t border-gray-200">
+                  <p className="text-sm text-gray-500 mb-4">
+                    Um email com os detalhes da matrícula e pagamento foi enviado para você.
+                  </p>
+                  <Button href="/" variant="primary" size="lg">
+                    Voltar para a Home
+                  </Button>
+                </div>
               </div>
             </Card>
           ) : (
           /* Card do Formulário com abas */
           <Card className="p-6 md:p-8 overflow-hidden">
-            {/* Welcome integrado às mini abas – cor Seidmann */}
+            {/* Título: modo Seidmann ou neutro (parceiros) */}
             <div className="text-center mb-8 pb-6 border-b border-orange-100">
               <h1 className="text-2xl sm:text-3xl md:text-4xl font-display font-bold bg-gradient-to-r from-brand-orange to-brand-yellow bg-clip-text text-transparent">
-                Welcome To Seidmann Institute
+                {isModoParceiro
+                  ? escolaParam === 'OUTRO' && nomeOutro
+                    ? `Matrícula – ${nomeOutro}`
+                    : escolaParam === 'YOUBECOME'
+                      ? 'Matrícula – Youbecome'
+                      : escolaParam === 'HIGHWAY'
+                        ? 'Matrícula – Highway'
+                        : 'Formulário de Matrícula'
+                  : 'Welcome To Seidmann Institute'}
               </h1>
               <p className="text-gray-500 text-sm sm:text-base mt-2">
-                Preencha as 3 etapas para concluir sua matrícula. É rápido e fácil.
+                {isModoParceiro
+                  ? 'Preencha as 3 etapas para concluir sua matrícula. É rápido e fácil.'
+                  : 'Preencha as 3 etapas para concluir sua matrícula. É rápido e fácil.'}
               </p>
             </div>
 
@@ -477,7 +678,7 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                   </div>
                   <div>
                     <label htmlFor="cpf" className="block text-sm font-semibold text-gray-700 mb-2">
-                      CPF <span className="text-gray-500 text-xs">(opcional)</span>
+                      CPF {!isMenorDeIdade(formData.dataNascimento) ? <span className="text-red-500">*</span> : <span className="text-gray-500 text-xs">(opcional para menores)</span>}
                     </label>
                     <input
                       type="text"
@@ -486,9 +687,13 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                       value={formData.cpf}
                       onChange={handleChange}
                       placeholder="000.000.000-00"
-                      className="input w-full"
+                      className={`input w-full ${errors.cpf ? 'border-red-500 focus:ring-red-500' : ''}`}
                       maxLength={14}
+                      aria-invalid={errors.cpf ? 'true' : 'false'}
                     />
+                    {errors.cpf && (
+                      <p className="mt-1 text-sm text-red-600">{errors.cpf}</p>
+                    )}
                   </div>
                 </div>
 
@@ -532,6 +737,7 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                             onChange={handleChange}
                             placeholder="000.000.000-00"
                             className={`input w-full ${errors.cpfResponsavel ? 'border-red-500 focus:ring-red-500' : ''}`}
+                          aria-invalid={errors.cpfResponsavel ? 'true' : 'false'}
                             maxLength={14}
                           />
                           {errors.cpfResponsavel && (
@@ -779,26 +985,65 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                 />
               </div>
 
-              {/* Disponibilidade */}
+              {/* Disponibilidade - Dias da semana */}
               <div>
-                <label htmlFor="disponibilidade" className="block text-sm font-semibold text-gray-700 mb-2">
-                  Disponibilidade <span className="text-red-500">*</span>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Melhores dias da semana <span className="text-red-500">*</span>
                 </label>
-                <textarea
-                  id="disponibilidade"
-                  name="disponibilidade"
-                  value={formData.disponibilidade}
-                  onChange={handleChange}
-                  placeholder="Ex: Seg/Qua 19h; Ter/Qui 7h"
-                  rows={2}
-                  className={`input resize-none ${errors.disponibilidade ? 'border-red-500 focus:ring-red-500' : ''}`}
-                  aria-invalid={errors.disponibilidade ? 'true' : 'false'}
-                  aria-describedby={errors.disponibilidade ? 'disponibilidade-error' : undefined}
-                />
-                {errors.disponibilidade && (
-                  <p id="disponibilidade-error" className="mt-1 text-sm text-red-600">
-                    {errors.disponibilidade}
-                  </p>
+                <p className="text-xs text-gray-500 mb-2">Selecione os dias em que você tem disponibilidade</p>
+                <div className="flex flex-wrap gap-3">
+                  {DIAS_SEMANA.map((d) => (
+                    <label key={d.value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.melhoresDiasSemana.includes(d.value)}
+                        onChange={() => {
+                          const next = formData.melhoresDiasSemana.includes(d.value)
+                            ? formData.melhoresDiasSemana.filter((x) => x !== d.value)
+                            : [...formData.melhoresDiasSemana, d.value]
+                          setFormData({ ...formData, melhoresDiasSemana: next })
+                          if (errors.melhoresDiasSemana) setErrors({ ...errors, melhoresDiasSemana: undefined })
+                        }}
+                        className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+                      />
+                      <span className="text-sm">{d.label}</span>
+                    </label>
+                  ))}
+                </div>
+                {errors.melhoresDiasSemana && (
+                  <p className="mt-1 text-sm text-red-600">{errors.melhoresDiasSemana}</p>
+                )}
+              </div>
+
+              {/* Disponibilidade - Horários (até 2) */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Melhores horários <span className="text-red-500">*</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2">Selecione até 2 horários de preferência</p>
+                <div className="flex flex-wrap gap-3">
+                  {HORARIOS.map((h) => (
+                    <label key={h.value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.melhoresHorarios.includes(h.value)}
+                        onChange={() => {
+                          const next = formData.melhoresHorarios.includes(h.value)
+                            ? formData.melhoresHorarios.filter((x) => x !== h.value)
+                            : formData.melhoresHorarios.length < 2
+                              ? [...formData.melhoresHorarios, h.value]
+                              : formData.melhoresHorarios
+                          setFormData({ ...formData, melhoresHorarios: next })
+                          if (errors.melhoresHorarios) setErrors({ ...errors, melhoresHorarios: undefined })
+                        }}
+                        className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+                      />
+                      <span className="text-sm">{h.label}</span>
+                    </label>
+                  ))}
+                </div>
+                {errors.melhoresHorarios && (
+                  <p className="mt-1 text-sm text-red-600">{errors.melhoresHorarios}</p>
                 )}
               </div>
               </div>
@@ -809,6 +1054,151 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
               {/* ========== ABA 3: Termos, pagamento e envio ========== */}
               {step === 3 && (
               <>
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
+                <p className="text-sm font-semibold text-gray-700 mb-1">Método de pagamento e endereço</p>
+                <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label htmlFor="metodoPagamento" className="block text-sm font-semibold text-gray-700 mb-2">
+                      Método de pagamento <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="metodoPagamento"
+                      name="metodoPagamento"
+                      value={formData.metodoPagamento}
+                      onChange={handleChange}
+                      className={`input w-full ${errors.metodoPagamento ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    >
+                      <option value="">Selecione</option>
+                      <option value="PIX">PIX</option>
+                      <option value="BOLETO">Boleto</option>
+                    </select>
+                    {errors.metodoPagamento && <p className="mt-1 text-sm text-red-600">{errors.metodoPagamento}</p>}
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="cep" className="block text-sm font-semibold text-gray-700 mb-2">
+                        CEP <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="cep"
+                        name="cep"
+                        value={formData.cep}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, '').slice(0, 8)
+                          const formatted = v.length > 5 ? `${v.slice(0,5)}-${v.slice(5)}` : v
+                          setFormData({ ...formData, cep: formatted })
+                          if (errors.cep) setErrors({ ...errors, cep: undefined })
+                        }}
+                        onBlur={async () => {
+                          const limpo = formData.cep.replace(/\D/g, '')
+                          if (limpo.length !== 8) return
+                          setCepLoading(true)
+                          try {
+                            const end = await buscarCep(formData.cep)
+                            if (end) {
+                              setFormData((prev) => ({
+                                ...prev,
+                                rua: end.logradouro || prev.rua,
+                                cidade: end.localidade || prev.cidade,
+                                estado: end.uf || prev.estado,
+                              }))
+                            }
+                          } finally {
+                            setCepLoading(false)
+                          }
+                        }}
+                        placeholder="00000-000"
+                        className={`input w-full ${errors.cep ? 'border-red-500 focus:ring-red-500' : ''}`}
+                        maxLength={9}
+                      />
+                      {cepLoading && <p className="text-xs text-gray-500 mt-1">Buscando endereço...</p>}
+                      {errors.cep && <p className="mt-1 text-sm text-red-600">{errors.cep}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="rua" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Rua <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="rua"
+                        name="rua"
+                        value={formData.rua}
+                        onChange={handleChange}
+                        placeholder="Rua, Avenida..."
+                        className={`input w-full ${errors.rua ? 'border-red-500 focus:ring-red-500' : ''}`}
+                      />
+                      {errors.rua && <p className="mt-1 text-sm text-red-600">{errors.rua}</p>}
+                    </div>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="numero" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Número <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="numero"
+                        name="numero"
+                        value={formData.numero}
+                        onChange={handleChange}
+                        placeholder="123"
+                        className={`input w-full ${errors.numero ? 'border-red-500 focus:ring-red-500' : ''}`}
+                      />
+                      {errors.numero && <p className="mt-1 text-sm text-red-600">{errors.numero}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="complemento" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Complemento <span className="text-gray-500 text-xs">(opcional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="complemento"
+                        name="complemento"
+                        value={formData.complemento}
+                        onChange={handleChange}
+                        placeholder="Apto, bloco..."
+                        className="input w-full"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="cidade" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Cidade <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="cidade"
+                        name="cidade"
+                        value={formData.cidade}
+                        onChange={handleChange}
+                        placeholder="Cidade"
+                        className={`input w-full ${errors.cidade ? 'border-red-500 focus:ring-red-500' : ''}`}
+                      />
+                      {errors.cidade && <p className="mt-1 text-sm text-red-600">{errors.cidade}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="estado" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Estado (UF) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="estado"
+                        name="estado"
+                        value={formData.estado}
+                        onChange={(e) => setFormData({ ...formData, estado: e.target.value.toUpperCase().slice(0, 2) })}
+                        placeholder="SP"
+                        className={`input w-full max-w-[80px] ${errors.estado ? 'border-red-500 focus:ring-red-500' : ''}`}
+                        maxLength={2}
+                      />
+                      {errors.estado && <p className="mt-1 text-sm text-red-600">{errors.estado}</p>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
                 <p className="text-sm font-semibold text-gray-700 mb-1">Termos e Condições Seidmann Institute</p>
                 <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
@@ -933,6 +1323,15 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
               </>
               )}
 
+              {/* Mensagem de confirmação e agendamento (step 3) */}
+              {step === 3 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm text-amber-900">
+                    <strong>Sua matrícula só será confirmada após o pagamento.</strong> No sistema, só poderemos agendar a aula para o aluno matriculado com até 8 dias de antecedência da data de pagamento.
+                  </p>
+                </div>
+              )}
+
               {/* Navegação entre abas */}
               <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-gray-200">
                 {step > 1 ? (
@@ -958,7 +1357,7 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                     className="flex-1"
                     onClick={() => {
                       if (step === 1 && validateStep1()) setStep(2)
-                      if (step === 2 && validateStep2()) setStep(3)
+                      else if (step === 2 && validateStep2()) setStep(3)
                     }}
                   >
                     Próximo
@@ -971,7 +1370,7 @@ Disponibilidade: ${enrollment.disponibilidade || '-'}`
                     className="flex-1"
                     disabled={isSubmitting}
                   >
-                    {isSubmitting ? 'Enviando...' : 'Matricule-se'}
+                    {isSubmitting ? 'Processando...' : 'Pagar'}
                   </Button>
                 )}
               </div>

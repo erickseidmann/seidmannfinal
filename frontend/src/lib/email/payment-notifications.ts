@@ -18,14 +18,7 @@ export type PaymentNotificationType =
   | 'reminder_10'
   | 'reminder_5'
   | 'reminder_3'
-  | 'overdue_1'
-  | 'overdue_2'
-  | 'overdue_3'
-  | 'overdue_4'
-  | 'overdue_5'
-  | 'overdue_6'
-  | 'overdue_7'
-  | 'overdue_8'
+  | `overdue_${number}`
   | 'payment_confirmed'
   | 'deactivated'
 

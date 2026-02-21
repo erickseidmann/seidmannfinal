@@ -25,6 +25,10 @@ function buildUpdateData(body: Record<string, unknown>) {
     emailResponsavel,
     cpf,
     cpfResponsavel,
+    idioma,
+    nivel,
+    objetivo,
+    disponibilidade,
     curso,
     frequenciaSemanal,
     tempoAulaMinutos,
@@ -51,6 +55,12 @@ function buildUpdateData(body: Record<string, unknown>) {
     observacoes,
     status,
     activationDate,
+    faturamentoTipo,
+    faturamentoRazaoSocial,
+    faturamentoCnpj,
+    faturamentoEmail,
+    faturamentoEndereco,
+    faturamentoDescricaoNfse,
   } = body
 
   const update: Record<string, unknown> = {}
@@ -62,6 +72,10 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (emailResponsavel !== undefined) update.emailResponsavel = emailResponsavel ? String(emailResponsavel).trim().toLowerCase().slice(0, 255) : null
   if (cpf !== undefined) update.cpf = cpf ? String(cpf).trim().replace(/\D/g, '').slice(0, 14) : null
   if (cpfResponsavel !== undefined) update.cpfResponsavel = cpfResponsavel ? String(cpfResponsavel).trim().replace(/\D/g, '').slice(0, 14) : null
+  if (idioma !== undefined) update.idioma = idioma === 'ENGLISH' || idioma === 'SPANISH' ? idioma : null
+  if (nivel !== undefined) update.nivel = nivel ? String(nivel).trim().slice(0, 255) : null
+  if (objetivo !== undefined) update.objetivo = objetivo ? String(objetivo).trim().slice(0, 2000) : null
+  if (disponibilidade !== undefined) update.disponibilidade = disponibilidade ? String(disponibilidade).trim().slice(0, 2000) : null
   if (curso !== undefined) update.curso = curso || null
   if (frequenciaSemanal !== undefined && frequenciaSemanal !== '') update.frequenciaSemanal = Math.min(7, Math.max(1, Number(frequenciaSemanal)))
   if (tempoAulaMinutos !== undefined && tempoAulaMinutos !== '') update.tempoAulaMinutos = [30, 40, 60, 120].includes(Number(tempoAulaMinutos)) ? Number(tempoAulaMinutos) : null
@@ -102,6 +116,12 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (observacoes !== undefined) update.observacoes = observacoes ? String(observacoes).trim() : null
   if (status !== undefined && VALID_STATUSES.includes(String(status))) update.status = status
   if (activationDate !== undefined) update.activationDate = activationDate ? new Date(activationDate as string) : null
+  if (faturamentoTipo !== undefined) update.faturamentoTipo = faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO'
+  if (faturamentoRazaoSocial !== undefined) update.faturamentoRazaoSocial = faturamentoRazaoSocial ? String(faturamentoRazaoSocial).trim() : null
+  if (faturamentoCnpj !== undefined) update.faturamentoCnpj = faturamentoCnpj ? String(faturamentoCnpj).trim().replace(/\D/g, '').slice(0, 14) || null : null
+  if (faturamentoEmail !== undefined) update.faturamentoEmail = faturamentoEmail ? String(faturamentoEmail).trim().toLowerCase().slice(0, 255) : null
+  if (faturamentoEndereco !== undefined) update.faturamentoEndereco = faturamentoEndereco ? String(faturamentoEndereco).trim().slice(0, 2000) : null
+  if (faturamentoDescricaoNfse !== undefined) update.faturamentoDescricaoNfse = faturamentoDescricaoNfse ? String(faturamentoDescricaoNfse).trim().slice(0, 2000) : null
   return update
 }
 

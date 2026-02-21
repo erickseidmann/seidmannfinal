@@ -13,12 +13,18 @@ const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
 interface EmitirNfseParams {
   enrollmentId: string
   studentName: string
-  cpf: string
+  cpf?: string
+  cnpj?: string
   email?: string
   amount: number
   year: number
   month: number
   extraDescription?: string
+  /** Para faturamento EMPRESA: dados para descrição da NF */
+  alunoNome?: string
+  frequenciaSemanal?: number | null
+  curso?: string | null
+  customDescricaoEmpresa?: string | null
 }
 
 // Emitir NFSe para um aluno
@@ -27,7 +33,25 @@ export async function emitirNfseParaAluno(params: EmitirNfseParams): Promise<Nfs
     throw new Error('Emissão de NFSe está desabilitada. Configure NFSE_ENABLED=true.')
   }
 
-  const { enrollmentId, studentName, cpf, email, amount, year, month, extraDescription } = params
+  const {
+    enrollmentId,
+    studentName,
+    cpf,
+    cnpj,
+    email,
+    amount,
+    year,
+    month,
+    extraDescription,
+    alunoNome,
+    frequenciaSemanal,
+    curso,
+    customDescricaoEmpresa,
+  } = params
+  const doc = cnpj ? cnpj.replace(/\D/g, '') : (cpf ? cpf.replace(/\D/g, '') : '')
+  if (!doc || (cnpj && doc.length !== 14) || (cpf && !cnpj && doc.length !== 11)) {
+    throw new Error(cnpj ? 'CNPJ inválido' : 'CPF inválido')
+  }
 
   // Verifica se já existe nota para este aluno/mês (não cancelada)
   const existente = await prisma.nfseInvoice.findUnique({
@@ -58,20 +82,25 @@ export async function emitirNfseParaAluno(params: EmitirNfseParams): Promise<Nfs
   // Monta payload
   const payload = buildNfsePayload({
     studentName,
-    cpf,
+    cpf: cpf ? cpf.replace(/\D/g, '') : undefined,
+    cnpj: cnpj ? cnpj.replace(/\D/g, '') : undefined,
     email,
     amount,
     year,
     month,
     extraDescription,
+    alunoNome,
+    frequenciaSemanal,
+    curso,
+    customDescricaoEmpresa,
   })
 
-  // Salva no banco como 'processando_autorizacao'
+  // Salva no banco como 'processando_autorizacao' (cpf coluna armazena CPF ou CNPJ)
   const registro = await prisma.nfseInvoice.create({
     data: {
       enrollmentId,
       studentName,
-      cpf: cpf.replace(/\D/g, ''),
+      cpf: doc,
       email: email || null,
       year,
       month,

@@ -245,6 +245,11 @@ export async function GET(request: NextRequest) {
             nomeEmpresaOuIndicador: (e as any).nomeEmpresaOuIndicador ?? null,
             escolaMatricula: (e as any).escolaMatricula ?? null,
             escolaMatriculaOutro: (e as any).escolaMatriculaOutro ?? null,
+            faturamentoTipo: (e as any).faturamentoTipo ?? 'ALUNO',
+            faturamentoRazaoSocial: (e as any).faturamentoRazaoSocial ?? null,
+            faturamentoCnpj: (e as any).faturamentoCnpj ?? null,
+            faturamentoEmail: (e as any).faturamentoEmail ?? null,
+            faturamentoEndereco: (e as any).faturamentoEndereco ?? null,
             observacoes: (e as any).observacoes ?? null,
             activationDate: (e as any).activationDate?.toISOString?.() ?? null,
             alertsCount: (e as any)._count?.alerts ?? 0,
@@ -307,6 +312,10 @@ export async function POST(request: NextRequest) {
       emailResponsavel,
       cpf,
       cpfResponsavel,
+      idioma,
+      nivel,
+      objetivo,
+      disponibilidade,
       curso,
       frequenciaSemanal,
       tempoAulaMinutos,
@@ -332,6 +341,12 @@ export async function POST(request: NextRequest) {
       observacoes,
       status,
       couponId,
+      faturamentoTipo,
+      faturamentoRazaoSocial,
+      faturamentoCnpj,
+      faturamentoEmail,
+      faturamentoEndereco,
+      faturamentoDescricaoNfse,
     } = body
 
     if (!nome || !email || !whatsapp) {
@@ -384,6 +399,10 @@ export async function POST(request: NextRequest) {
         emailResponsavel: emailResponsavel?.trim()?.toLowerCase().slice(0, 255) || null,
         cpf: cpf?.trim()?.replace(/\D/g, '').slice(0, 14) || null,
         cpfResponsavel: cpfResponsavel?.trim()?.replace(/\D/g, '').slice(0, 14) || null,
+        idioma: idioma === 'ENGLISH' || idioma === 'SPANISH' ? idioma : null,
+        nivel: nivel?.trim()?.slice(0, 255) || null,
+        objetivo: objetivo?.trim()?.slice(0, 2000) || null,
+        disponibilidade: disponibilidade?.trim()?.slice(0, 2000) || null,
         curso: curso || null,
         frequenciaSemanal:
           frequenciaSemanal != null && frequenciaSemanal !== ''
@@ -426,6 +445,12 @@ export async function POST(request: NextRequest) {
         observacoes: observacoes?.trim() || null,
         pendenteAdicionarAulas: false,
         couponId: couponId && typeof couponId === 'string' ? couponId : null,
+        faturamentoTipo: faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO',
+        faturamentoRazaoSocial: faturamentoTipo === 'EMPRESA' && faturamentoRazaoSocial ? (String(faturamentoRazaoSocial).trim() || null) : null,
+        faturamentoCnpj: faturamentoTipo === 'EMPRESA' && faturamentoCnpj ? (String(faturamentoCnpj).replace(/\D/g, '').slice(0, 14) || null) : null,
+        faturamentoEmail: faturamentoTipo === 'EMPRESA' && faturamentoEmail ? (String(faturamentoEmail).trim().toLowerCase().slice(0, 255) || null) : null,
+        faturamentoEndereco: faturamentoTipo === 'EMPRESA' && faturamentoEndereco ? (String(faturamentoEndereco).trim().slice(0, 2000) || null) : null,
+        faturamentoDescricaoNfse: faturamentoTipo === 'EMPRESA' && faturamentoDescricaoNfse ? (String(faturamentoDescricaoNfse).trim().slice(0, 2000) || null) : null,
       },
     })
 

@@ -8,9 +8,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isValidEmail, normalizePhone, requireMinDigits } from '@/lib/validators'
+import { isValidCPF } from '@/lib/finance/validators'
 import { normalizeLanguage } from '@/lib/normalizeLanguage'
 import { createUniqueTrackingCode } from '@/lib/trackingCode'
 import { sendComprovanteMatricula } from '@/lib/email'
+import { createInvoice, type CoraInvoice } from '@/lib/cora/client'
 
 export async function POST(request: NextRequest) {
   // Proteção externa: garantir que SEMPRE retornamos JSON
@@ -38,6 +40,15 @@ export async function POST(request: NextRequest) {
       nivel,
       objetivo,
       disponibilidade,
+      melhoresDiasSemana,
+      melhoresHorarios,
+      metodoPagamento,
+      cep,
+      rua,
+      cidade,
+      estado,
+      numero,
+      complemento,
       updateExisting,
       dataNascimento,
       cpf,
@@ -51,6 +62,8 @@ export async function POST(request: NextRequest) {
       valorMensalidade: valorMensalidadeBody,
       diaPagamento,
       codigoCupom,
+      escolaMatricula: escolaMatriculaBody,
+      escolaMatriculaOutro: escolaMatriculaOutroBody,
     } = body
 
     // Log do payload (sanitizado - sem dados sensíveis demais)
@@ -105,13 +118,42 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!disponibilidade || typeof disponibilidade !== 'string' || !disponibilidade.trim()) {
+    const cepDigits = cep ? String(cep).replace(/\D/g, '').slice(0, 8) : ''
+    const disponibilidadeVal = disponibilidade && typeof disponibilidade === 'string' && disponibilidade.trim()
+      ? disponibilidade.trim()
+      : (melhoresDiasSemana && melhoresHorarios)
+        ? `Dias: ${melhoresDiasSemana}. Horários: ${melhoresHorarios}`
+        : null
+    if (!disponibilidadeVal) {
       if (!updateExisting) {
-        errors.push('Disponibilidade é obrigatória')
+        errors.push('Disponibilidade é obrigatória (dias e horários)')
       }
     }
 
-    // Menor de idade: exigir nome, CPF e e-mail do responsável
+    if (!updateExisting) {
+      if (!metodoPagamento || typeof metodoPagamento !== 'string' || !metodoPagamento.trim()) {
+        errors.push('Método de pagamento é obrigatório')
+      } else if (!['PIX', 'BOLETO'].includes(String(metodoPagamento).toUpperCase())) {
+        errors.push('Método de pagamento inválido. Use PIX ou Boleto.')
+      }
+      if (cepDigits.length !== 8) {
+        errors.push('CEP é obrigatório e deve ter 8 dígitos')
+      }
+      if (!rua || typeof rua !== 'string' || !rua.trim()) {
+        errors.push('Rua é obrigatória')
+      }
+      if (!numero || typeof numero !== 'string' || !numero.trim()) {
+        errors.push('Número é obrigatório')
+      }
+      if (!cidade || typeof cidade !== 'string' || !cidade.trim()) {
+        errors.push('Cidade é obrigatória')
+      }
+      if (!estado || typeof estado !== 'string' || !estado.trim()) {
+        errors.push('Estado é obrigatório')
+      }
+    }
+
+    // Menor de idade: exigir nome, CPF e e-mail do responsável. Maior: exigir CPF do aluno.
     const dataNasc = dataNascimento && typeof dataNascimento === 'string' && dataNascimento.trim() ? new Date(dataNascimento.trim()) : null
     const isMenor = dataNasc && !isNaN(dataNasc.getTime()) && (() => {
       const hoje = new Date()
@@ -120,22 +162,37 @@ export async function POST(request: NextRequest) {
       if (m < 0 || (m === 0 && hoje.getDate() < dataNasc.getDate())) idade--
       return idade < 18
     })()
-    if (isMenor && !updateExisting) {
-      if (!nomeResponsavel || typeof nomeResponsavel !== 'string' || !nomeResponsavel.trim()) {
-        errors.push('Nome do responsável é obrigatório para menores de 18 anos')
-      }
-      if (!cpfResponsavel || typeof cpfResponsavel !== 'string' || !cpfResponsavel.trim()) {
-        errors.push('CPF do responsável é obrigatório para menores de 18 anos')
-      } else {
-        const cpfDigits = String(cpfResponsavel).replace(/\D/g, '')
-        if (cpfDigits.length !== 11) {
-          errors.push('CPF do responsável deve ter 11 dígitos')
+    if (!updateExisting) {
+      if (isMenor) {
+        if (!nomeResponsavel || typeof nomeResponsavel !== 'string' || !nomeResponsavel.trim()) {
+          errors.push('Nome do responsável é obrigatório para menores de 18 anos')
         }
-      }
-      if (!emailResponsavel || typeof emailResponsavel !== 'string' || !emailResponsavel.trim()) {
-        errors.push('E-mail do responsável é obrigatório para menores de 18 anos')
-      } else if (!isValidEmail(emailResponsavel)) {
-        errors.push('E-mail do responsável inválido')
+        if (!cpfResponsavel || typeof cpfResponsavel !== 'string' || !cpfResponsavel.trim()) {
+          errors.push('CPF do responsável é obrigatório para menores de 18 anos')
+        } else {
+          const cpfDigits = String(cpfResponsavel).replace(/\D/g, '')
+          if (cpfDigits.length !== 11) {
+            errors.push('CPF do responsável deve ter 11 dígitos')
+          } else if (!isValidCPF(cpfDigits)) {
+            errors.push('CPF do responsável inválido')
+          }
+        }
+        if (!emailResponsavel || typeof emailResponsavel !== 'string' || !emailResponsavel.trim()) {
+          errors.push('E-mail do responsável é obrigatório para menores de 18 anos')
+        } else if (!isValidEmail(emailResponsavel)) {
+          errors.push('E-mail do responsável inválido')
+        }
+      } else {
+        if (!cpf || typeof cpf !== 'string' || !cpf.trim()) {
+          errors.push('CPF é obrigatório')
+        } else {
+          const cpfDigits = String(cpf).replace(/\D/g, '')
+          if (cpfDigits.length !== 11) {
+            errors.push('CPF deve ter 11 dígitos')
+          } else if (!isValidCPF(cpfDigits)) {
+            errors.push('CPF inválido')
+          }
+        }
       }
     }
 
@@ -156,6 +213,21 @@ export async function POST(request: NextRequest) {
 
     // Proteção específica para operação do Prisma
     let enrollment
+    let paymentData: {
+      boletoUrl: string | null
+      boletoBarcode: string | null
+      boletoDigitableLine: string | null
+      pixEmv: string | null
+      pixQrCodeUrl: string | null
+      coraInvoiceId: string | null
+    } = {
+      boletoUrl: null,
+      boletoBarcode: null,
+      boletoDigitableLine: null,
+      pixEmv: null,
+      pixQrCodeUrl: null,
+      coraInvoiceId: null,
+    }
     try {
       // Verificar se o Prisma Client está pronto
       if (!prisma) {
@@ -229,7 +301,16 @@ export async function POST(request: NextRequest) {
           idioma: normalizedLanguage,
           nivel: (nivel && typeof nivel === 'string') ? nivel.trim() : null,
           objetivo: objetivo?.trim() || null,
-          disponibilidade: disponibilidade?.trim() || null,
+          disponibilidade: disponibilidadeVal || null,
+        melhoresHorarios: melhoresHorarios?.trim()?.slice(0, 255) || null,
+        melhoresDiasSemana: melhoresDiasSemana?.trim()?.slice(0, 255) || null,
+        metodoPagamento: metodoPagamento?.trim()?.toUpperCase() || null,
+        cep: cepDigits.length === 8 ? cepDigits : null,
+        rua: rua?.trim()?.slice(0, 255) || null,
+        cidade: cidade?.trim()?.slice(0, 100) || null,
+        estado: estado?.trim()?.slice(0, 2) || null,
+        numero: numero?.trim()?.slice(0, 20) || null,
+        complemento: complemento?.trim()?.slice(0, 255) || null,
           status: 'ACTIVE',
           pendenteAdicionarAulas: true,
           trackingCode,
@@ -250,13 +331,19 @@ export async function POST(request: NextRequest) {
         if (emailResponsavel && typeof emailResponsavel === 'string' && emailResponsavel.trim()) {
           createData.emailResponsavel = emailResponsavel.trim().toLowerCase().slice(0, 255)
         }
+        if (normalizedLanguage === 'ENGLISH') createData.curso = 'INGLES'
+        if (normalizedLanguage === 'SPANISH') createData.curso = 'ESPANHOL'
         if (tipoAula === 'PARTICULAR' || tipoAula === 'GRUPO') {
           createData.tipoAula = tipoAula
           if (tipoAula === 'GRUPO' && nomeGrupo && typeof nomeGrupo === 'string' && nomeGrupo.trim()) {
             createData.nomeGrupo = nomeGrupo.trim().slice(0, 255)
           }
         }
-        createData.escolaMatricula = 'SEIDMANN'
+        const escolaValida = escolaMatriculaBody === 'YOUBECOME' || escolaMatriculaBody === 'HIGHWAY' || escolaMatriculaBody === 'OUTRO'
+        createData.escolaMatricula = escolaValida ? escolaMatriculaBody : 'SEIDMANN'
+        if (escolaValida && escolaMatriculaBody === 'OUTRO' && escolaMatriculaOutroBody && typeof escolaMatriculaOutroBody === 'string') {
+          createData.escolaMatriculaOutro = escolaMatriculaOutroBody.trim().slice(0, 255) || null
+        }
         if (tempoAulaMinutos != null && tempoAulaMinutos !== '') {
           const t = typeof tempoAulaMinutos === 'number' ? tempoAulaMinutos : parseInt(String(tempoAulaMinutos), 10)
           if (!Number.isNaN(t) && [30, 40, 60, 120].includes(t)) {
@@ -300,7 +387,80 @@ export async function POST(request: NextRequest) {
 
         console.log('[api/matricula] Enrollment criado com sucesso:', enrollment.id)
 
-        // Enviar e-mail de comprovante de matrícula ao aluno (não bloqueia a resposta)
+        // --- Gerar cobrança Cora (PIX + Boleto) ---
+        let coraInvoice: CoraInvoice | null = null
+        const valorCentavos = Math.round(Number(enrollment.valorMensalidade ?? 0) * 100)
+
+        // Cora exige mínimo de R$ 5,00 (500 centavos)
+        if (valorCentavos >= 500) {
+          try {
+            const cpfCobranca = (enrollment.cpfResponsavel ?? enrollment.cpf ?? '').replace(/\D/g, '')
+            const nomeCobranca = enrollment.nomeResponsavel ?? enrollment.nome ?? ''
+            const emailCobranca = (enrollment.emailResponsavel ?? enrollment.email ?? '').trim()
+
+            const hoje = new Date()
+            const diaPag = enrollment.diaPagamento ?? 10
+            const anoAtual = hoje.getFullYear()
+            const mesAtual = hoje.getMonth()
+            let mesVenc = mesAtual
+            let anoVenc = anoAtual
+            if (hoje.getDate() > diaPag) {
+              mesVenc = mesAtual + 1
+              if (mesVenc > 11) {
+                mesVenc = 0
+                anoVenc = anoAtual + 1
+              }
+            }
+            const dueDate = `${anoVenc}-${String(mesVenc + 1).padStart(2, '0')}-${String(diaPag).padStart(2, '0')}`
+
+            const invoiceCode = `MAT-${enrollment.trackingCode || enrollment.id}`
+
+            coraInvoice = await createInvoice({
+              code: invoiceCode,
+              customerName: nomeCobranca,
+              customerDocument: cpfCobranca,
+              customerEmail: emailCobranca,
+              serviceName: 'Mensalidade - Seidmann Institute',
+              amountCents: valorCentavos,
+              dueDate,
+              finePercent: 2,
+              interestPercent: 1,
+              address: (enrollment.rua && enrollment.cidade && enrollment.estado && enrollment.cep) ? {
+                street: enrollment.rua,
+                number: enrollment.numero || 'S/N',
+                city: enrollment.cidade,
+                state: enrollment.estado,
+                zipCode: enrollment.cep.replace(/\D/g, ''),
+                complement: enrollment.complemento || undefined,
+              } : undefined,
+            })
+
+            console.log('[api/matricula] Cobrança Cora criada:', coraInvoice?.id)
+
+            const bankSlip = coraInvoice?.payment_options?.bank_slip
+            const pixOpts = coraInvoice?.payment_options?.pix
+            const pixRoot = (coraInvoice as { pix?: { emv?: string } })?.pix
+            const emv = pixOpts?.emv ?? pixRoot?.emv ?? null
+
+            paymentData = {
+              boletoUrl: bankSlip?.url ?? null,
+              boletoBarcode: bankSlip?.barcode ?? null,
+              boletoDigitableLine: bankSlip?.digitable_line ?? null,
+              pixEmv: emv ?? null,
+              pixQrCodeUrl: emv
+                ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(emv)}`
+                : null,
+              coraInvoiceId: coraInvoice?.id ?? null,
+            }
+          } catch (coraError: unknown) {
+            const err = coraError as { message?: string }
+            console.error('[api/matricula] Erro ao criar cobrança Cora:', err?.message ?? coraError)
+          }
+        } else if (valorCentavos > 0) {
+          console.warn(`[api/matricula] Valor ${valorCentavos} centavos abaixo do mínimo Cora (500). Cobrança não gerada.`)
+        }
+
+        // Enviar e-mail de comprovante de matrícula ao aluno (com dados de pagamento)
         const emailEnviado = await sendComprovanteMatricula({
           nome: enrollment.nome,
           email: enrollment.email,
@@ -313,6 +473,10 @@ export async function POST(request: NextRequest) {
           disponibilidade: enrollment.disponibilidade ?? undefined,
           diaPagamento: enrollment.diaPagamento ?? undefined,
           nomeVendedor: enrollment.nomeVendedor ?? undefined,
+          boletoUrl: paymentData.boletoUrl ?? undefined,
+          boletoDigitableLine: paymentData.boletoDigitableLine ?? undefined,
+          pixEmv: paymentData.pixEmv ?? undefined,
+          pixQrCodeUrl: paymentData.pixQrCodeUrl ?? undefined,
         })
         if (emailEnviado) {
           console.log('[api/matricula] E-mail de comprovante enviado para:', enrollment.email)
@@ -402,17 +566,18 @@ export async function POST(request: NextRequest) {
           data: {
             enrollment: {
               id: enrollment.id,
-                  nome: enrollment.nome,
-                  email: enrollment.email,
-                  whatsapp: enrollment.whatsapp,
-                  idioma: enrollment.idioma,
-                  nivel: enrollment.nivel,
-                  objetivo: enrollment.objetivo,
-                  disponibilidade: enrollment.disponibilidade,
-                  status: enrollment.status,
-                  trackingCode: enrollment.trackingCode, // Incluir código de acompanhamento
-                  createdAt: enrollment.criadoEm.toISOString(),
+              nome: enrollment.nome,
+              email: enrollment.email,
+              whatsapp: enrollment.whatsapp,
+              idioma: enrollment.idioma,
+              nivel: enrollment.nivel,
+              objetivo: enrollment.objetivo,
+              disponibilidade: enrollment.disponibilidade,
+              status: enrollment.status,
+              trackingCode: enrollment.trackingCode,
+              createdAt: enrollment.criadoEm.toISOString(),
             },
+            payment: paymentData,
           },
         },
         { status: 201 }

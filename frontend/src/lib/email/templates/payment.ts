@@ -128,7 +128,7 @@ Identificamos que seu pagamento está em atraso há ${daysOverdue} ${daysOverdue
 Valor: ${valorStr}
 Data de vencimento: ${vencimentoStr}
 
-⚠️ Importante: Após 8 dias de atraso, a matrícula será suspensa automaticamente.
+⚠️ Importante: Após 30 dias (1 mês) de atraso, a matrícula será suspensa automaticamente.
 
 Por favor, regularize sua situação o quanto antes. Em caso de dúvidas ou dificuldades, entre em contato conosco.
 
@@ -143,7 +143,7 @@ Equipe Seidmann Institute`
       <p style="margin:0;"><strong>Data de vencimento:</strong> <span style="color:#dc2626;">${escapeHtml(vencimentoStr)}</span></p>
     </div>
     <p style="margin:16px 0;padding:12px;background:#fef2f2;border-radius:6px;font-size:14px;color:#991b1b;">
-      ⚠️ Após 8 dias de atraso, a matrícula será suspensa automaticamente.
+      ⚠️ Após 30 dias (1 mês) de atraso, a matrícula será suspensa automaticamente.
     </p>
     <p style="margin:0;">Por favor, regularize sua situação o quanto antes. Em caso de dúvidas ou dificuldades, entre em contato conosco.</p>`
 
@@ -203,7 +203,7 @@ export function buildEnrollmentDeactivatedEmail(enrollment: { nome: string }): {
 
   const text = `Olá, ${enrollment.nome},
 
-Infelizmente, sua matrícula foi suspensa automaticamente devido ao não pagamento dentro do prazo estipulado (após 8 dias de atraso).
+Infelizmente, sua matrícula foi suspensa automaticamente devido ao não pagamento dentro do prazo estipulado (após 30 dias / 1 mês de atraso).
 
 Para regularizar sua situação e reativar sua matrícula, entre em contato conosco o quanto antes:
 
@@ -217,7 +217,7 @@ Equipe Seidmann Institute`
 
   const content = `
     <p style="margin:0 0 16px;">Olá, <strong>${nome}</strong>,</p>
-    <p style="margin:0;">Infelizmente, sua matrícula foi suspensa automaticamente devido ao não pagamento dentro do prazo estipulado (após 8 dias de atraso).</p>
+    <p style="margin:0;">Infelizmente, sua matrícula foi suspensa automaticamente devido ao não pagamento dentro do prazo estipulado (após 30 dias / 1 mês de atraso).</p>
     <div style="margin:24px 0;padding:20px;background:#fef3c7;border-radius:8px;border-left:4px solid #f59e0b;">
       <p style="margin:0;"><strong>Para regularizar sua situação e reativar sua matrícula</strong>, entre em contato conosco o quanto antes:</p>
       <p style="margin:12px 0 0;">📞 WhatsApp: +55 19 97809-4000<br>📩 E-mail: atendimento@seidmanninstitute.com</p>

@@ -1,3 +1,4 @@
+/// <reference path="../../types/node-cron.d.ts" />
 /**
  * Scheduler de cron jobs usando node-cron.
  * Roda apenas no runtime Node.js do Next.js (não em edge).
@@ -11,7 +12,7 @@
  * - nfse-status: a cada 5 minutos
  */
 
-import cron from 'node-cron'
+import * as cron from 'node-cron'
 import {
   runMarkOverdue,
   runGenerateInvoices,

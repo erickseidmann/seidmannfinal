@@ -185,9 +185,9 @@ export async function POST(request: NextRequest) {
           if (bodyAmount != null && bodyAmount > 0) valorMensalidade = bodyAmount
         }
 
-        if (!finance.cpf) {
+        if (!finance.cpf && !finance.cnpj) {
           return NextResponse.json(
-            { ok: false, message: 'CPF do aluno/responsável não cadastrado' },
+            { ok: false, message: 'CPF do aluno/responsável ou CNPJ da empresa não cadastrado' },
             { status: 400 }
           )
         }
@@ -216,12 +216,17 @@ export async function POST(request: NextRequest) {
         const nota = await emitirNfseParaAluno({
           enrollmentId,
           studentName: finance.nome,
-          cpf: finance.cpf,
+          cpf: finance.cpf || undefined,
+          cnpj: finance.cnpj || undefined,
           email: finance.email || undefined,
           amount: valorMensalidade,
           year,
           month,
           extraDescription: extraDescription?.trim() || undefined,
+          alunoNome: enrollment.nome,
+          frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
+          curso: enrollment.curso ?? undefined,
+          customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
         })
 
         console.log('[api/admin/nfse POST] NFSe emitida (individual)', { enrollmentId, year, month, manual: !!manual })
@@ -304,12 +309,12 @@ export async function POST(request: NextRequest) {
             ? Number(enrollment.paymentInfo.valorMensal)
             : null
 
-      if (!finance.cpf || !valorMensalidade || valorMensalidade <= 0) {
+      if ((!finance.cpf && !finance.cnpj) || !valorMensalidade || valorMensalidade <= 0) {
         erros++
         detalhes.push({
           aluno: enrollment.nome,
           status: 'erro',
-          erro: !finance.cpf ? 'CPF não cadastrado' : 'Valor mensalidade não definido',
+          erro: (!finance.cpf && !finance.cnpj) ? 'CPF/CNPJ não cadastrado' : 'Valor mensalidade não definido',
         })
         continue
       }
@@ -319,12 +324,17 @@ export async function POST(request: NextRequest) {
         const nota = await emitirNfseParaAluno({
           enrollmentId: enrollment.id,
           studentName: finance.nome,
-          cpf: finance.cpf,
+          cpf: finance.cpf || undefined,
+          cnpj: finance.cnpj || undefined,
           email: finance.email || undefined,
           amount: valorMensalidade,
           year,
           month,
           extraDescription: obs || undefined,
+          alunoNome: enrollment.nome,
+          frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
+          curso: enrollment.curso ?? undefined,
+          customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
         })
         emitidas++
         detalhes.push({

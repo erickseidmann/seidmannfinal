@@ -54,7 +54,12 @@ export async function PATCH(
       dataUltimoPagamento,
       dataProximoPagamento,
       dueDay,
-      // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
+      faturamentoTipo,
+      faturamentoRazaoSocial,
+      faturamentoCnpj,
+      faturamentoEmail,
+      faturamentoEndereco,
+      faturamentoDescricaoNfse,
       year: bodyYear,
       month: bodyMonth,
     } = data
@@ -66,6 +71,12 @@ export async function PATCH(
     const updateEnrollment: Prisma.EnrollmentUpdateInput = {}
     if (metodoPagamento !== undefined) updateEnrollment.metodoPagamento = typeof metodoPagamento === 'string' ? metodoPagamento.trim() || null : null
     if (valorMensal !== undefined) updateEnrollment.valorMensalidade = valorMensal ?? null
+    if (faturamentoTipo !== undefined) updateEnrollment.faturamentoTipo = faturamentoTipo === 'ALUNO' || faturamentoTipo === 'EMPRESA' ? faturamentoTipo : 'ALUNO'
+    if (faturamentoRazaoSocial !== undefined) updateEnrollment.faturamentoRazaoSocial = typeof faturamentoRazaoSocial === 'string' ? faturamentoRazaoSocial.trim() || null : null
+    if (faturamentoCnpj !== undefined) updateEnrollment.faturamentoCnpj = typeof faturamentoCnpj === 'string' ? faturamentoCnpj.replace(/\D/g, '').slice(0, 14) || null : null
+    if (faturamentoEmail !== undefined) updateEnrollment.faturamentoEmail = typeof faturamentoEmail === 'string' ? faturamentoEmail.trim().toLowerCase().slice(0, 255) || null : null
+    if (faturamentoEndereco !== undefined) updateEnrollment.faturamentoEndereco = typeof faturamentoEndereco === 'string' ? faturamentoEndereco.trim().slice(0, 2000) || null : null
+    if (faturamentoDescricaoNfse !== undefined) updateEnrollment.faturamentoDescricaoNfse = typeof faturamentoDescricaoNfse === 'string' ? faturamentoDescricaoNfse.trim().slice(0, 2000) || null : null
 
     if (Object.keys(updateEnrollment).length > 0) {
       await prisma.enrollment.update({
@@ -76,10 +87,10 @@ export async function PATCH(
 
     const paymentData: Record<string, unknown> = {}
     if (quemPaga !== undefined) paymentData.quemPaga = typeof quemPaga === 'string' ? quemPaga.trim() || null : null
-    const newPaymentStatus = paymentStatus !== undefined && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
+    const newPaymentStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
     if (!hasMonthContext && paymentStatus !== undefined) paymentData.paymentStatus = newPaymentStatus
     if (banco !== undefined) paymentData.banco = typeof banco === 'string' ? banco.trim() || null : null
-    if (periodoPagamento !== undefined) paymentData.periodoPagamento = ['MENSAL', 'ANUAL', 'SEMESTRAL', 'TRIMESTRAL'].includes(periodoPagamento) ? periodoPagamento : null
+    if (periodoPagamento !== undefined) paymentData.periodoPagamento = periodoPagamento != null && ['MENSAL', 'ANUAL', 'SEMESTRAL', 'TRIMESTRAL'].includes(periodoPagamento) ? periodoPagamento : null
     if (valorHora !== undefined) paymentData.valorHora = valorHora ?? null
     if (dataUltimoPagamento !== undefined) paymentData.paidAt = dataUltimoPagamento ? new Date(dataUltimoPagamento) : null
     if (dataProximoPagamento !== undefined) paymentData.dueDate = dataProximoPagamento ? new Date(dataProximoPagamento) : null
@@ -110,7 +121,7 @@ export async function PATCH(
         where: { enrollmentId_year_month: { enrollmentId, year, month } },
         select: { paymentStatus: true },
       })
-      const newMonthStatus = paymentStatus !== undefined && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
+      const newMonthStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
       await prisma.enrollmentPaymentMonth.upsert({
         where: {
           enrollmentId_year_month: { enrollmentId, year, month },

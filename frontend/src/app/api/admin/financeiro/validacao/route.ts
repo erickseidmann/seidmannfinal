@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { getEnrollmentFinanceData } from '@/lib/finance'
-import { isValidCPF, validateEmail } from '@/lib/finance/validators'
+import { isValidCPF, isValidCNPJ, validateEmail } from '@/lib/finance/validators'
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,10 +44,18 @@ export async function GET(request: NextRequest) {
       const problemas: string[] = []
       const finance = getEnrollmentFinanceData(enrollment)
 
-      // Validação CPF (financeiro: aluno ou responsável)
+      // Validação CPF ou CNPJ (financeiro: aluno, responsável ou empresa)
       const cpf = finance.cpf
-      if (!cpf || !cpf.trim()) {
-        problemas.push('CPF não informado (aluno ou responsável)')
+      const cnpj = finance.cnpj
+      if (cnpj) {
+        const cnpjDigits = cnpj.replace(/\D/g, '')
+        if (cnpjDigits.length !== 14) {
+          problemas.push(`CNPJ inválido (${cnpjDigits.length} dígitos em vez de 14)`)
+        } else if (!isValidCNPJ(cnpjDigits)) {
+          problemas.push('CNPJ inválido (não passa na validação dos dígitos verificadores)')
+        }
+      } else if (!cpf || !cpf.trim()) {
+        problemas.push('CPF não informado (aluno ou responsável) ou CNPJ da empresa')
       } else {
         const cpfDigits = cpf.replace(/\D/g, '')
         if (cpfDigits.length !== 11) {
@@ -57,7 +65,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Validação Email (financeiro: aluno ou responsável)
+      // Validação Email (financeiro: aluno, responsável ou empresa)
       const email = finance.email
       if (!email || !email.trim()) {
         problemas.push('Email não informado (aluno ou responsável)')

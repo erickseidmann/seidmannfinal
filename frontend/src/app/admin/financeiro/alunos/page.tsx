@@ -6,6 +6,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
@@ -17,6 +18,12 @@ interface AlunoFinanceiro {
   id: string
   nome: string
   cpf: string | null
+  faturamentoTipo?: string
+  faturamentoRazaoSocial?: string | null
+  faturamentoCnpj?: string | null
+  faturamentoEmail?: string | null
+  faturamentoEndereco?: string | null
+  faturamentoDescricaoNfse?: string | null
   endereco: string | null
   tipoAula: string | null
   nomeGrupo: string | null
@@ -262,7 +269,12 @@ export default function FinanceiroAlunosPage() {
     valorHora: '' as string | number,
     dataUltimoPagamento: '',
     dataProximoPagamento: '',
-    // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
+    faturamentoTipo: 'ALUNO' as 'ALUNO' | 'EMPRESA',
+    faturamentoRazaoSocial: '',
+    faturamentoCnpj: '',
+    faturamentoEmail: '',
+    faturamentoEndereco: '',
+    faturamentoDescricaoNfse: '',
   })
 
   const anoAtual = new Date().getFullYear()
@@ -533,11 +545,39 @@ export default function FinanceiroAlunosPage() {
   ).map((c) => c.key)
   const [visibleFinanceKeys, setVisibleFinanceKeys] = useState<string[]>(() => defaultVisibleKeys)
   const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
+  const [columnsDropdownStyle, setColumnsDropdownStyle] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
+  const columnsTriggerRef = useRef<HTMLButtonElement>(null)
   const columnsDropdownRef = useRef<HTMLDivElement>(null)
+  const updateColumnsDropdownPosition = useCallback(() => {
+    if (!columnsTriggerRef.current || !columnsDropdownOpen) return
+    const rect = columnsTriggerRef.current.getBoundingClientRect()
+    const padding = 8
+    const maxH = Math.min(400, window.innerHeight * 0.6)
+    const spaceBelow = window.innerHeight - rect.bottom - padding
+    const openUpward = spaceBelow < 120 && rect.top > spaceBelow
+    const top = openUpward ? Math.max(padding, rect.top - maxH - 4) : rect.bottom + 4
+    const left = Math.max(padding, Math.min(rect.left, window.innerWidth - 220))
+    setColumnsDropdownStyle({ top, left, maxHeight: maxH })
+  }, [columnsDropdownOpen])
+  useEffect(() => {
+    if (columnsDropdownOpen) {
+      updateColumnsDropdownPosition()
+      window.addEventListener('scroll', updateColumnsDropdownPosition, true)
+      window.addEventListener('resize', updateColumnsDropdownPosition)
+    } else {
+      setColumnsDropdownStyle(null)
+    }
+    return () => {
+      window.removeEventListener('scroll', updateColumnsDropdownPosition, true)
+      window.removeEventListener('resize', updateColumnsDropdownPosition)
+    }
+  }, [columnsDropdownOpen, updateColumnsDropdownPosition])
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (columnsDropdownRef.current && !columnsDropdownRef.current.contains(e.target as Node)) setColumnsDropdownOpen(false)
-      if (cobrancaPopoverRef.current && !cobrancaPopoverRef.current.contains(e.target as Node)) setCobrancaPopoverOpen(null)
+      const target = e.target as Node
+      if (columnsTriggerRef.current?.contains(target) || columnsDropdownRef.current?.contains(target)) return
+      setColumnsDropdownOpen(false)
+      if (cobrancaPopoverRef.current && !cobrancaPopoverRef.current.contains(target)) setCobrancaPopoverOpen(null)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -547,10 +587,11 @@ export default function FinanceiroAlunosPage() {
     setRefreshCobrancasLoading(true)
     try {
       await fetchCobrancas(selectedAno, selectedMes)
+      await fetchAlunos(selectedAno, selectedMes)
     } finally {
       setRefreshCobrancasLoading(false)
     }
-  }, [fetchCobrancas, selectedAno, selectedMes])
+  }, [fetchCobrancas, fetchAlunos, selectedAno, selectedMes])
 
   /** Polling: a cada 60s, se há cobranças OPEN ou LATE. */
   const hasOpenOrLate = useMemo(() => {
@@ -563,9 +604,12 @@ export default function FinanceiroAlunosPage() {
 
   useEffect(() => {
     if (!hasOpenOrLate) return
-    const interval = setInterval(() => fetchCobrancas(selectedAno, selectedMes), 60_000)
+    const tick = () => {
+      fetchCobrancas(selectedAno, selectedMes).then(() => fetchAlunos(selectedAno, selectedMes))
+    }
+    const interval = setInterval(tick, 60_000)
     return () => clearInterval(interval)
-  }, [hasOpenOrLate, selectedAno, selectedMes, fetchCobrancas])
+  }, [hasOpenOrLate, selectedAno, selectedMes, fetchCobrancas, fetchAlunos])
   const visibleSet = new Set(visibleFinanceKeys)
   const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
   const toggleFinanceColumn = (key: string) => {
@@ -802,6 +846,13 @@ export default function FinanceiroAlunosPage() {
     }
   }, [editingCell, cellValue, patchCell])
 
+  const formatCNPJ = (cnpj: string | null | undefined): string => {
+    if (!cnpj) return ''
+    const d = cnpj.replace(/\D/g, '')
+    if (d.length !== 14) return cnpj
+    return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+  }
+
   const openEdit = (a: AlunoFinanceiro) => {
     setEditId(a.id)
     setForm({
@@ -814,7 +865,12 @@ export default function FinanceiroAlunosPage() {
       valorHora: '', // somente leitura (calculado na API)
       dataUltimoPagamento: a.dataUltimoPagamento ? a.dataUltimoPagamento.slice(0, 10) : '',
       dataProximoPagamento: a.dataProximoPagamento ? a.dataProximoPagamento.slice(0, 10) : '',
-      // notaFiscalEmitida removido: agora é calculado automaticamente (read-only)
+      faturamentoTipo: (a.faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO') as 'ALUNO' | 'EMPRESA',
+      faturamentoRazaoSocial: a.faturamentoRazaoSocial ?? '',
+      faturamentoCnpj: a.faturamentoCnpj ? formatCNPJ(a.faturamentoCnpj) : '',
+      faturamentoEmail: a.faturamentoEmail ?? '',
+      faturamentoEndereco: a.faturamentoEndereco ?? '',
+      faturamentoDescricaoNfse: a.faturamentoDescricaoNfse ?? '',
     })
   }
 
@@ -836,7 +892,12 @@ export default function FinanceiroAlunosPage() {
           valorMensal: form.valorMensal !== '' ? Number(form.valorMensal) : null,
           dataUltimoPagamento: form.dataUltimoPagamento || null,
           dataProximoPagamento: form.dataProximoPagamento || null,
-          // notaFiscalEmitida removido: agora é calculado automaticamente (read-only)
+          faturamentoTipo: form.faturamentoTipo,
+          faturamentoRazaoSocial: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoRazaoSocial.trim() || null : null,
+          faturamentoCnpj: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoCnpj.replace(/\D/g, '') || null : null,
+          faturamentoEmail: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoEmail.trim() || null : null,
+          faturamentoEndereco: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoEndereco.trim() || null : null,
+          faturamentoDescricaoNfse: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoDescricaoNfse.trim() || null : null,
           year: selectedAno,
           month: selectedMes,
         }),
@@ -1354,8 +1415,9 @@ export default function FinanceiroAlunosPage() {
                     <option value={500}>500</option>
                   </select>
                 </div>
-                <div className="relative" ref={columnsDropdownRef}>
+                <div className="relative">
                   <button
+                    ref={columnsTriggerRef}
                     type="button"
                     onClick={() => setColumnsDropdownOpen((v) => !v)}
                     className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
@@ -1364,16 +1426,23 @@ export default function FinanceiroAlunosPage() {
                     Colunas
                     <ChevronDown className="w-4 h-4" />
                   </button>
-                  {columnsDropdownOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-lg">
-                      <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase">Exibir colunas</p>
-                      {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
-                        <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
-                          <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
-                          <span className="text-sm text-gray-800">{col.label}</span>
-                        </label>
-                      ))}
-                    </div>
+                  {columnsDropdownOpen && columnsDropdownStyle && typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={columnsDropdownRef}
+                      className="fixed z-[100] min-w-[200px] w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-xl overflow-hidden"
+                      style={{ top: columnsDropdownStyle.top, left: columnsDropdownStyle.left, maxHeight: columnsDropdownStyle.maxHeight }}
+                    >
+                      <div className="overflow-y-auto h-full" style={{ maxHeight: columnsDropdownStyle.maxHeight }}>
+                        <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase sticky top-0 bg-white">Exibir colunas</p>
+                        {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
+                          <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                            <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
+                            <span className="text-sm text-gray-800">{col.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
                 <Button
@@ -1759,7 +1828,85 @@ export default function FinanceiroAlunosPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Data próximo pagamento</label>
                   <input type="date" value={form.dataProximoPagamento} onChange={(e) => setForm({ ...form, dataProximoPagamento: e.target.value })} className="input w-full" />
                 </div>
-                {/* notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only) */}
+              </div>
+
+              {/* Dados de Faturamento (NFSe) */}
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <h3 className="text-sm font-semibold text-gray-800 mb-3">Dados de Faturamento</h3>
+                <p className="text-xs text-gray-500 mb-3">Define em nome de quem a nota fiscal será emitida (aluno ou empresa).</p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Faturar para</label>
+                    <select
+                      value={form.faturamentoTipo}
+                      onChange={(e) => setForm({ ...form, faturamentoTipo: e.target.value as 'ALUNO' | 'EMPRESA' })}
+                      className="input w-full"
+                    >
+                      <option value="ALUNO">Aluno</option>
+                      <option value="EMPRESA">Empresa</option>
+                    </select>
+                  </div>
+                  {form.faturamentoTipo === 'EMPRESA' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Razão Social *</label>
+                        <input
+                          type="text"
+                          value={form.faturamentoRazaoSocial}
+                          onChange={(e) => setForm({ ...form, faturamentoRazaoSocial: e.target.value })}
+                          className="input w-full"
+                          placeholder="Razão social da empresa"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">CNPJ *</label>
+                        <input
+                          type="text"
+                          value={form.faturamentoCnpj}
+                          onChange={(e) => {
+                            const d = e.target.value.replace(/\D/g, '').slice(0, 14)
+                            const f = d.length <= 2 ? d : d.length <= 5 ? `${d.slice(0,2)}.${d.slice(2)}` : d.length <= 8 ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5)}` : d.length <= 12 ? `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8)}` : `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`
+                            setForm({ ...form, faturamentoCnpj: f })
+                          }}
+                          className="input w-full"
+                          placeholder="00.000.000/0001-00"
+                          maxLength={18}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Email para NF *</label>
+                        <input
+                          type="email"
+                          value={form.faturamentoEmail}
+                          onChange={(e) => setForm({ ...form, faturamentoEmail: e.target.value })}
+                          className="input w-full"
+                          placeholder="email@empresa.com"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Endereço fiscal (opcional)</label>
+                        <textarea
+                          value={form.faturamentoEndereco}
+                          onChange={(e) => setForm({ ...form, faturamentoEndereco: e.target.value })}
+                          className="input w-full min-h-[60px]"
+                          placeholder="Endereço completo da empresa"
+                          rows={2}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição da NF (opcional)</label>
+                        <textarea
+                          value={form.faturamentoDescricaoNfse}
+                          onChange={(e) => setForm({ ...form, faturamentoDescricaoNfse: e.target.value })}
+                          className="input w-full min-h-[80px] font-mono text-sm"
+                          placeholder={'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'}
+                          rows={3}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Use {'{aluno}'}, {'{frequencia}'}, {'{curso}'}, {'{mes}'}, {'{ano}'} como variáveis. Deixe vazio para usar o modelo padrão.</p>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </form>
           )}
@@ -1860,6 +2007,7 @@ export default function FinanceiroAlunosPage() {
               if (list.length === 0) return null
               const showVencimento = cubeModal === 'atrasado' || cubeModal === 'aReceber'
               const showUltimoPag = cubeModal === 'pago'
+              const isAtrasado = cubeModal === 'atrasado'
               const copyText =
                 (showVencimento
                   ? 'Aluno\tVencimento\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataProximoPagamento)}`).join('\n')
@@ -1867,7 +2015,20 @@ export default function FinanceiroAlunosPage() {
                     ? 'Aluno\tÚltimo pag.\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataUltimoPagamento)}`).join('\n')
                     : 'Aluno\n' + list.map((a) => a.nome).join('\n'))
               return (
-                <div className="flex justify-end w-full">
+                <div className="flex justify-between items-center w-full gap-2 flex-wrap">
+                  {isAtrasado && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setCubeModal(null)
+                        openCobrancaTodosModal()
+                      }}
+                      disabled={atrasadosComEmail.length === 0}
+                    >
+                      Enviar lembrança para todos
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -1910,18 +2071,34 @@ export default function FinanceiroAlunosPage() {
               <>
                 <ul className="space-y-2 max-h-80 overflow-y-auto">
                   {list.map((a) => (
-                    <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800 flex flex-wrap items-baseline justify-between gap-x-2">
-                      <span>{a.nome}</span>
-                      {(showVencimento || showUltimoPag) && (
-                        <span className="text-sm text-gray-600 shrink-0">
-                          {showVencimento && (
-                            <>Venc.: {formatDate(a.dataProximoPagamento)}</>
-                          )}
-                          {showUltimoPag && !showVencimento && (
-                            <>Últ. pag.: {formatDate(a.dataUltimoPagamento)}</>
-                          )}
-                        </span>
-                      )}
+                    <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                      <span className="min-w-0 flex-1">{a.nome}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {cubeModal === 'atrasado' && (
+                          <button
+                            type="button"
+                            onClick={() => openCobrancaModal(a.id, a.nome)}
+                            disabled={!a.email || loadingCobrancaForId === a.id}
+                            className="text-xs px-2 py-1 rounded bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {loadingCobrancaForId === a.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin inline" />
+                            ) : (
+                              'Enviar cobrança'
+                            )}
+                          </button>
+                        )}
+                        {(showVencimento || showUltimoPag) && (
+                          <span className="text-sm text-gray-600">
+                            {showVencimento && (
+                              <>Venc.: {formatDate(a.dataProximoPagamento)}</>
+                            )}
+                            {showUltimoPag && !showVencimento && (
+                              <>Últ. pag.: {formatDate(a.dataUltimoPagamento)}</>
+                            )}
+                          </span>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>

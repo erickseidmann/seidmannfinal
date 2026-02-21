@@ -285,6 +285,14 @@ model Enrollment {
   pendenteAdicionarAulas Boolean @default(false) @map("pendente_adicionar_aulas") // true = matriculado pelo formul├írio, ainda n├úo marcou "j├í adicionei aulas"
   linkPagamentoEnviadoAt DateTime? @map("link_pagamento_enviado_at") // data em que o admin marcou "enviei link pag"
 
+  // Dados de faturamento para NFSe em nome de empresa
+  faturamentoTipo       String?    @db.VarChar(20) @map("faturamento_tipo") @default("ALUNO") // ALUNO ou EMPRESA
+  faturamentoRazaoSocial String?   @db.VarChar(255) @map("faturamento_razao_social")
+  faturamentoCnpj       String?    @db.VarChar(18) @map("faturamento_cnpj")
+  faturamentoEmail      String?    @db.VarChar(255) @map("faturamento_email")
+  faturamentoEndereco   String?    @db.Text @map("faturamento_endereco")
+  faturamentoDescricaoNfse String? @db.Text @map("faturamento_descricao_nfse") // Modelo editável da descrição da NF (apenas quando faturamentoTipo=EMPRESA)
+
   status         EnrollmentStatus @default(LEAD)
   inactiveAt     DateTime?        @map("inactive_at") // Data em que foi marcado como inativo (para hist├│rico por m├¬s)
   pausedAt       DateTime?        @map("paused_at") // Data em que foi marcado como pausado (aulas n├úo contam para pagamento a partir desta data)
