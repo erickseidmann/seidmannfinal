@@ -127,7 +127,16 @@ export async function GET(request: NextRequest) {
     })
 
     const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
-    let recordsInRange: { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number; enrollment: { status: string; pausedAt: Date | null } } }[] = []
+    let recordsInRange: {
+      tempoAulaMinutos: number | null
+      presence: string
+      lesson: {
+        startAt: Date
+        durationMinutes: number
+        teacherId: string
+        enrollment: { status: string; pausedAt: Date | null; nome: string }
+      }
+    }[] = []
     if (lessonRecord?.findMany) {
       const records = await lessonRecord.findMany({
         where: {
@@ -145,6 +154,7 @@ export async function GET(request: NextRequest) {
         },
         select: {
           tempoAulaMinutos: true,
+          presence: true,
           lesson: {
             select: {
               teacherId: true,
@@ -154,12 +164,13 @@ export async function GET(request: NextRequest) {
                 select: {
                   status: true,
                   pausedAt: true,
+                  nome: true,
                 },
               },
             },
           },
         },
-      }) as { tempoAulaMinutos: number | null; lesson: { startAt: Date; durationMinutes: number; enrollment: { status: string; pausedAt: Date | null } } }[]
+      }) as typeof recordsInRange
       recordsInRange = records
     }
 
@@ -177,6 +188,42 @@ export async function GET(request: NextRequest) {
       valorExtra,
     })
     const valorPorHoras = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
+
+    // Detalhamento: aulas registradas com valor por aula (professor recebe valor completo mesmo em "não compareceu")
+    const registrosDetalhados: {
+      startAt: string
+      alunoNome: string
+      tempoAulaMinutos: number
+      presence: string
+      valorRecebido: number
+    }[] = []
+    for (const rec of recordsInRange) {
+      if (rec.lesson.teacherId !== teacher.id) continue
+      const startAt = new Date(rec.lesson.startAt)
+      if (startAt.getTime() < periodStartTime || startAt.getTime() > periodEndTime) continue
+      if (holidaySet.has(toDateKey(startAt))) continue
+      const asPayment: PaymentRecord = {
+        tempoAulaMinutos: rec.tempoAulaMinutos,
+        lesson: {
+          teacherId: rec.lesson.teacherId,
+          startAt: rec.lesson.startAt,
+          durationMinutes: rec.lesson.durationMinutes,
+          enrollment: { status: rec.lesson.enrollment.status, pausedAt: rec.lesson.enrollment.pausedAt },
+        },
+      }
+      if (!filterRecordsByPausedEnrollment([asPayment]).length) continue
+      const mins = rec.tempoAulaMinutos ?? rec.lesson.durationMinutes ?? 60
+      const horas = mins / 60
+      const valorRecebido = Math.round(horas * valorPorHora * 100) / 100
+      registrosDetalhados.push({
+        startAt: rec.lesson.startAt.toISOString(),
+        alunoNome: rec.lesson.enrollment.nome ?? '—',
+        tempoAulaMinutos: mins,
+        presence: rec.presence ?? 'PRESENTE',
+        valorRecebido,
+      })
+    }
+    registrosDetalhados.sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
 
     let totalMinutosEstimados = 0
     let totalRegistrosEsperados = 0
@@ -201,6 +248,7 @@ export async function GET(request: NextRequest) {
       valorPorPeriodo,
       valorExtra,
       valorAPagar,
+      registrosDetalhados,
       metodoPagamento: teacher.metodoPagamento ?? null,
       infosPagamento: teacher.infosPagamento ?? null,
       statusPagamento,

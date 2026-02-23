@@ -99,9 +99,13 @@ function getLessonStudentLabel(l: Lesson): string {
   return l.enrollment.nome
 }
 
-const statusColor = (s: string, hasPendingRequest?: boolean) => {
+const statusColor = (s: string, hasPendingRequest?: boolean, hasRecord?: boolean) => {
   if (hasPendingRequest) {
     return 'bg-purple-100 text-purple-800 border-purple-200'
+  }
+  // Aula já registrada (tem registro de aula): laranjinha
+  if (s === 'CONFIRMED' && hasRecord) {
+    return 'bg-orange-100 text-orange-800 border-orange-200'
   }
   return s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : s === 'CANCELLED' ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'
 }
@@ -667,7 +671,7 @@ export default function CalendarioProfessorPage() {
                           key={l.id}
                           type="button"
                           onClick={() => openLesson(l)}
-                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
+                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
                           title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ${t('professor.calendar.clickToView')}`}
                         >
                           {getLessonStudentLabel(l)} {formatTimeInTZ(l.startAt, dateLocale)}
@@ -720,7 +724,7 @@ export default function CalendarioProfessorPage() {
                             key={l.id}
                             type="button"
                             onClick={() => openLesson(l)}
-                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
+                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
                           >
                             {getLessonStudentLabel(l)}
                           </button>
@@ -756,7 +760,7 @@ export default function CalendarioProfessorPage() {
                         key={l.id}
                         type="button"
                         onClick={() => openLesson(l)}
-                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
+                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
                       >
                         {getLessonStudentLabel(l)} – {statusLabel(l.status)} {l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ({formatTimeInTZ(l.startAt, dateLocale)})
                       </button>
@@ -831,7 +835,7 @@ export default function CalendarioProfessorPage() {
               {formatDateTimeInTZ(selectedLesson.startAt, dateLocale)} — {selectedLesson.durationMinutes} min
             </p>
             <p className="text-sm">
-              {t('professor.calendar.status')}: <span className={statusColor(selectedLesson.status, selectedLesson.requests && selectedLesson.requests.length > 0)}>{statusLabel(selectedLesson.status)} {selectedLesson.requests && selectedLesson.requests.length > 0 ? '(Em processo de troca)' : ''}</span>
+              {t('professor.calendar.status')}: <span className={statusColor(selectedLesson.status, selectedLesson.requests && selectedLesson.requests.length > 0, !!selectedLesson.record)}>{statusLabel(selectedLesson.status)} {selectedLesson.requests && selectedLesson.requests.length > 0 ? '(Em processo de troca)' : ''}</span>
             </p>
             {selectedLesson.record && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

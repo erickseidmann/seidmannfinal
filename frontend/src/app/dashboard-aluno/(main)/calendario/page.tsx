@@ -35,6 +35,7 @@ interface Lesson {
   notes: string | null
   enrollment: { id: string; nome: string; tipoAula: string | null; nomeGrupo: string | null; escolaMatricula?: string | null; cancelamentoAntecedenciaHoras?: number | null }
   teacher: { id: string; nome: string }
+  record?: { id: string } | null
   requests?: Array<{ id: string; type: string; status: string }>
 }
 
@@ -99,9 +100,13 @@ const statusLabel: Record<string, string> = {
   REPOSICAO: 'Reposição',
 }
 
-const statusColor = (status: string, hasPendingRequest?: boolean): string => {
+const statusColor = (status: string, hasPendingRequest?: boolean, hasRecord?: boolean): string => {
   if (hasPendingRequest) {
     return 'bg-purple-100 text-purple-800 border-purple-200'
+  }
+  // Aula já registrada (tem registro de aula): laranjinha
+  if (status === 'CONFIRMED' && hasRecord) {
+    return 'bg-orange-100 text-orange-800 border-orange-200'
   }
   const colors: Record<string, string> = {
     CONFIRMED: 'bg-green-100 text-green-800 border-green-200',
@@ -563,7 +568,7 @@ export default function CalendarioAlunoPage() {
                         key={l.id}
                         type="button"
                         onClick={() => setSelectedLesson(l)}
-                        className={`w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status, l.requests && l.requests.length > 0)}`}
+                        className={`w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
                         title={`Clique para ver detalhes – ${l.teacher.nome} ${formatTimeInTZ(l.startAt, 'pt-BR')}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}`}
                       >
                         {l.teacher.nome} {formatTimeInTZ(l.startAt, 'pt-BR')}
