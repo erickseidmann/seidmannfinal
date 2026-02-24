@@ -295,6 +295,10 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
     select: { paymentStatus: true },
   })
   const oldStatus = existing?.paymentStatus ?? null
+  // Se já está marcado como PAGO manualmente ou por outro fluxo, não rebaixar para ATRASADO/PENDING
+  if (oldStatus === 'PAGO' && newStatus !== 'PAGO') {
+    return NextResponse.json({ ok: true, message: 'Status já está PAGO; atualização ignorada' }, { status: 200 })
+  }
   if (oldStatus === newStatus) {
     return NextResponse.json({ ok: true, message: 'Já processado' }, { status: 200 })
   }

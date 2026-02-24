@@ -139,6 +139,7 @@ export default function FinanceiroProfessoresPage() {
   const [filterBusca, setFilterBusca] = useState('')
   const [filterValorMin, setFilterValorMin] = useState('')
   const [filterValorMax, setFilterValorMax] = useState('')
+  const [filterProntoPagar, setFilterProntoPagar] = useState(false)
   const [filterProximosDias, setFilterProximosDias] = useState(false)
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -220,6 +221,10 @@ export default function FinanceiroProfessoresPage() {
       }
     }
 
+    if (filterProntoPagar) {
+      list = list.filter((p) => p.pagamentoProntoParaFazer)
+    }
+
     // Filtro por data de término (próximos dias)
     if (filterProximosDias) {
       const hoje = new Date()
@@ -234,7 +239,7 @@ export default function FinanceiroProfessoresPage() {
     }
 
     return list
-  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterValorMin, filterValorMax, filterProximosDias])
+  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterValorMin, filterValorMax, filterProntoPagar, filterProximosDias])
 
   const displayedData = useMemo(
     () => tabelaData.slice(0, itemsPerPage),
@@ -650,18 +655,31 @@ Equipe Seidmann Institute`
       key: 'pagamentoProntoParaFazer',
       label: 'Pronto p/ pagar',
       fixed: true,
-      render: (row) =>
-        row.pagamentoProntoParaFazer ? (
-          <span
-            className="inline-flex items-center gap-1 text-green-700"
-            title="Pagamento pronto para fazer (professor confirmou o valor)"
-          >
-            <ThumbsUp className="w-5 h-5" />
-            <span className="text-xs font-medium hidden sm:inline">Pronto p/ pagar</span>
-          </span>
-        ) : (
-          <span className="text-gray-300">—</span>
-        ),
+      render: (row) => {
+        if (row.statusPagamento === 'PAGO') {
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-green-700"
+              title="Pagamento realizado para este mês"
+            >
+              <ThumbsUp className="w-5 h-5" />
+              <span className="text-xs font-medium hidden sm:inline">Pago</span>
+            </span>
+          )
+        }
+        if (row.pagamentoProntoParaFazer) {
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-emerald-700"
+              title="Pagamento pronto para fazer (professor confirmou o valor)"
+            >
+              <ThumbsUp className="w-5 h-5" />
+              <span className="text-xs font-medium hidden sm:inline">Pronto p/ pagar</span>
+            </span>
+          )
+        }
+        return <span className="text-gray-300">—</span>
+      },
     },
     {
       key: 'metodoPagamento',
@@ -883,6 +901,15 @@ Equipe Seidmann Institute`
                           className="rounded border-gray-300 text-amber-600"
                         />
                         <span className="text-sm text-gray-700">Venc. próximos 7 dias</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={filterProntoPagar}
+                          onChange={(e) => setFilterProntoPagar(e.target.checked)}
+                          className="rounded border-gray-300 text-emerald-600"
+                        />
+                        <span className="text-sm text-gray-700">Prontos p/ pagar</span>
                       </label>
                     </div>
                   </div>

@@ -12,7 +12,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2 } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -224,6 +224,10 @@ export default function FinanceiroAlunosPage() {
   const [alunos, setAlunos] = useState<AlunoFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [confirmUnpay, setConfirmUnpay] = useState<AlunoFinanceiro | null>(null)
+  const [confirmBulkUnpay, setConfirmBulkUnpay] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [fullTableView, setFullTableView] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [sendingCobranca, setSendingCobranca] = useState<string | null>(null)
@@ -281,6 +285,7 @@ export default function FinanceiroAlunosPage() {
   const mesAtual = new Date().getMonth() + 1
   const [selectedAno, setSelectedAno] = useState<number>(anoAtual)
   const [selectedMes, setSelectedMes] = useState<number>(mesAtual)
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null)
 
   const fetchAlunos = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -504,11 +509,10 @@ export default function FinanceiroAlunosPage() {
 
   const [cubeModal, setCubeModal] = useState<'atrasado' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
-  const [filterProximos5Dias, setFilterProximos5Dias] = useState(false)
-  const [filterAtrasados, setFilterAtrasados] = useState(false)
   const [filterPeriodo, setFilterPeriodo] = useState<string>('')
   const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterInfoPagamento, setFilterInfoPagamento] = useState<string>('')
   const [filterEscola, setFilterEscola] = useState<string>('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(30)
   const [showDicas, setShowDicas] = useState(false)
@@ -641,26 +645,18 @@ export default function FinanceiroAlunosPage() {
           (a.quemPaga && a.quemPaga.toLowerCase().includes(busca))
       )
     }
-    if (filterProximos5Dias) {
-      const hoje = new Date()
-      hoje.setHours(0, 0, 0, 0)
-      const em5 = new Date(hoje)
-      em5.setDate(em5.getDate() + 5)
-      list = list.filter((a) => {
-        if (!a.dataProximoPagamento) return false
-        const d = new Date(a.dataProximoPagamento)
-        d.setHours(0, 0, 0, 0)
-        return d >= hoje && d <= em5
-      })
-    }
-    if (filterAtrasados) {
-      list = list.filter((a) => getEffectiveStatus(a) === 'ATRASADO')
-    }
     if (filterStatus) {
       list = list.filter((a) => getEffectiveStatus(a) === filterStatus)
     }
     if (filterPeriodo) {
       list = list.filter((a) => (a.periodoPagamento ?? '') === filterPeriodo)
+    }
+    if (filterInfoPagamento === 'comUltimoPag') {
+      list = list.filter((a) => !!a.dataUltimoPagamento)
+    } else if (filterInfoPagamento === 'semUltimoPag') {
+      list = list.filter((a) => !a.dataUltimoPagamento)
+    } else if (filterInfoPagamento === 'semValorMensal') {
+      list = list.filter((a) => a.valorMensal == null)
     }
     if (filterNfEmitida === 'emitida') {
       list = list.filter((a) => a.notaFiscalEmitida === true)
@@ -675,12 +671,105 @@ export default function FinanceiroAlunosPage() {
       }
     }
     return list
-  }, [alunosNoMes, filterBusca, filterProximos5Dias, filterAtrasados, filterStatus, filterPeriodo, filterNfEmitida, filterEscola])
+  }, [alunosNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
     [filteredAlunos, itemsPerPage]
   )
+
+  const allSelected = filteredAlunos.length > 0 && filteredAlunos.every((a) => selectedIds.has(a.id))
+  const someSelected = filteredAlunos.some((a) => selectedIds.has(a.id))
+
+  useEffect(() => {
+    const el = selectAllCheckboxRef.current
+    if (el) el.indeterminate = someSelected && !allSelected
+  }, [someSelected, allSelected])
+
+  useEffect(() => {
+    if (!fullTableView) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setFullTableView(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [fullTableView])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredAlunos.map((a) => a.id)))
+    }
+  }
+
+  const bulkMarkPaid = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) {
+      setToast({ message: 'Selecione ao menos um aluno.', type: 'error' })
+      return
+    }
+    setSaving(true)
+    try {
+      const hoje = new Date().toISOString().slice(0, 10)
+      let ok = 0
+      let err = 0
+      for (const id of ids) {
+        try {
+          await patchCellBody(id, { paymentStatus: 'PAGO', dataUltimoPagamento: hoje })
+          ok++
+        } catch {
+          err++
+        }
+      }
+      setToast({
+        message: err === 0 ? `Marcado como Pago para ${ok} aluno(s).` : `${ok} atualizado(s), ${err} erro(s).`,
+        type: err === 0 ? 'success' : 'error',
+      })
+      setSelectedIds(new Set())
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const bulkMarkPending = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) {
+      setToast({ message: 'Selecione ao menos um aluno.', type: 'error' })
+      return
+    }
+    setSaving(true)
+    try {
+      let ok = 0
+      let err = 0
+      for (const id of ids) {
+        try {
+          await patchCellBody(id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
+          ok++
+        } catch {
+          err++
+        }
+      }
+      setToast({
+        message: err === 0 ? `Marcado como Pendente para ${ok} aluno(s).` : `${ok} atualizado(s), ${err} erro(s).`,
+        type: err === 0 ? 'success' : 'error',
+      })
+      setSelectedIds(new Set())
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const selected = editId ? alunos.find((a) => a.id === editId) : null
 
@@ -796,7 +885,7 @@ export default function FinanceiroAlunosPage() {
     [fetchAlunos, selectedAno, selectedMes]
   )
 
-  const handlePagoCheck = useCallback(
+  const applyPagoStatus = useCallback(
     async (a: AlunoFinanceiro, checked: boolean) => {
       setSaving(true)
       try {
@@ -814,7 +903,18 @@ export default function FinanceiroAlunosPage() {
         setSaving(false)
       }
     },
-    [patchCellBody, selectedAno, selectedMes]
+    [patchCellBody]
+  )
+
+  const handlePagoCheck = useCallback(
+    (a: AlunoFinanceiro, checked: boolean) => {
+      if (!checked) {
+        setConfirmUnpay(a)
+        return
+      }
+      void applyPagoStatus(a, true)
+    },
+    [applyPagoStatus]
   )
 
   // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
@@ -1182,6 +1282,7 @@ export default function FinanceiroAlunosPage() {
         </Modal>
 
         {/* Seção: Resumo do mês (cubos) */}
+        {!fullTableView && (
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -1247,6 +1348,7 @@ export default function FinanceiroAlunosPage() {
             </div>
           </div>
         </section>
+        )}
 
         {loading ? (
           <div className="flex justify-center py-12">
@@ -1255,6 +1357,7 @@ export default function FinanceiroAlunosPage() {
         ) : (
           <>
             {/* Seção: Buscar e filtros (recolhível) */}
+            {!fullTableView && (
             <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               <button
                 type="button"
@@ -1278,26 +1381,7 @@ export default function FinanceiroAlunosPage() {
                         className="input w-full"
                       />
                     </div>
-                    <div className="flex flex-wrap items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={filterProximos5Dias}
-                          onChange={(e) => setFilterProximos5Dias(e.target.checked)}
-                          className="rounded border-gray-300 text-amber-600"
-                        />
-                        <span className="text-sm text-gray-700">Venc. em 5 dias</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={filterAtrasados}
-                          onChange={(e) => setFilterAtrasados(e.target.checked)}
-                          className="rounded border-gray-300 text-red-600"
-                        />
-                        <span className="text-sm text-gray-700">Atrasados</span>
-                      </label>
-                    </div>
+                    <div className="flex flex-wrap items-center gap-6" />
                     <Button
                       variant="primary"
                       onClick={openCobrancaTodosModal}
@@ -1348,6 +1432,19 @@ export default function FinanceiroAlunosPage() {
                       </select>
                     </div>
                     <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Info de pagamento</label>
+                    <select
+                      value={filterInfoPagamento}
+                      onChange={(e) => setFilterInfoPagamento(e.target.value)}
+                      className="input min-w-[160px] text-sm py-2"
+                    >
+                      <option value="">Todos</option>
+                      <option value="comUltimoPag">Com data de último pag.</option>
+                      <option value="semUltimoPag">Sem data de último pag.</option>
+                      <option value="semValorMensal">Sem valor mensal</option>
+                    </select>
+                  </div>
+                  <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
                       <select
                         value={filterEscola}
@@ -1365,6 +1462,7 @@ export default function FinanceiroAlunosPage() {
                 </div>
               )}
             </div>
+            )}
 
             {/* Dicas (recolhível) */}
             <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
@@ -1390,9 +1488,60 @@ export default function FinanceiroAlunosPage() {
             </div>
 
             {/* Seção: Lista de alunos */}
-            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <section className={`bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden ${fullTableView ? 'mt-2 h-[calc(100vh-220px)] flex flex-col' : ''}`}>
               <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
                 <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
+                <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      ref={selectAllCheckboxRef}
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={selectAll}
+                      className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+                    />
+                    <span className="text-xs font-medium text-gray-700">Selecionar todos</span>
+                  </label>
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {selectedIds.size} selecionado(s)
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={bulkMarkPaid}
+                      disabled={selectedIds.size === 0 || saving}
+                      className="rounded-lg bg-green-50 border border-green-200 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                    >
+                      Marcar selecionados como pagos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmBulkUnpay(true)}
+                      disabled={selectedIds.size === 0 || saving}
+                      className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                    >
+                      Desmarcar selecionados como pagos
+                    </button>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFullTableView((v) => !v)}
+                  className="ml-auto"
+                >
+                  {fullTableView ? (
+                    <>
+                      <Minimize2 className="w-4 h-4 mr-2" />
+                      Sair da janela cheia
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-4 h-4 mr-2" />
+                      Visualizar em janela cheia
+                    </>
+                  )}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1496,10 +1645,13 @@ export default function FinanceiroAlunosPage() {
                   </span>
                 )}
               </div>
-              <div className="overflow-x-auto px-5 pb-5">
+              <div className={`overflow-x-auto px-5 pb-5 ${fullTableView ? 'flex-1 overflow-y-auto' : ''}`}>
             <table className="w-full min-w-[1400px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
+                    {/* coluna de seleção */}
+                  </th>
                   {displayColumns.map((col) => (
                     <th
                       key={col.key}
@@ -1531,6 +1683,14 @@ export default function FinanceiroAlunosPage() {
                   const baseTd = `px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`
                   return (
                     <tr key={a.id} className={isAtrasado ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}>
+                      <td className={baseTd}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(a.id)}
+                          onChange={() => toggleSelect(a.id)}
+                          className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+                        />
+                      </td>
                       {displayColumns.some((c) => c.key === 'aluno') && <td className={`px-3 py-2 text-sm ${baseTd}`}><CellWithCopy value={a.nome ?? ''} onCopy={handleCopy} /></td>}
                       {displayColumns.some((c) => c.key === 'cpf') && <td className={`px-3 py-2 text-sm max-w-[140px] ${baseTd}`}><CellWithCopy value={a.cpf ?? ''} onCopy={handleCopy} truncate /></td>}
                       {displayColumns.some((c) => c.key === 'endereco') && <td className={`px-3 py-2 text-sm max-w-[220px] ${baseTd}`}><CellWithCopy value={a.endereco ?? ''} onCopy={handleCopy} truncate /></td>}
@@ -1729,15 +1889,35 @@ export default function FinanceiroAlunosPage() {
                         >
                           <MessageSquare className={`w-4 h-4 ${a.hasFinanceObservations ? 'fill-current' : ''}`} />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGerarCobrancaIndividual(a)}
-                          disabled={gerarCobrancaIndividualLoading === a.id}
-                          className="ml-1 text-gray-500 hover:text-brand-orange p-1 disabled:opacity-50"
-                          title="Gerar boleto/PIX na Cora"
-                        >
-                          {gerarCobrancaIndividualLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Receipt className="w-4 h-4" />}
-                        </button>
+                        {(() => {
+                          const cobranca = cobrancasMap.get(a.id) ?? null
+                          const hasBoleto = !!cobranca?.boletoUrl
+                          const isLoading = gerarCobrancaIndividualLoading === a.id && !hasBoleto
+                          const handleClick = () => {
+                            if (hasBoleto && cobranca?.boletoUrl) {
+                              window.open(cobranca.boletoUrl, '_blank', 'noopener,noreferrer')
+                            } else {
+                              void handleGerarCobrancaIndividual(a)
+                            }
+                          }
+                          return (
+                            <button
+                              type="button"
+                              onClick={handleClick}
+                              disabled={isLoading}
+                              className="ml-1 text-gray-500 hover:text-brand-orange p-1 disabled:opacity-50"
+                              title={hasBoleto ? 'Abrir boleto já gerado' : 'Gerar boleto/PIX na Cora'}
+                            >
+                              {isLoading ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : hasBoleto ? (
+                                <Download className="w-4 h-4" />
+                              ) : (
+                                <Receipt className="w-4 h-4" />
+                              )}
+                            </button>
+                          )
+                        })()}
                         <button
                           type="button"
                           onClick={() => openCobrancaModal(a.id, a.nome)}
@@ -1763,6 +1943,78 @@ export default function FinanceiroAlunosPage() {
             </section>
           </>
         )}
+
+        <Modal
+          isOpen={!!confirmUnpay}
+          onClose={() => setConfirmUnpay(null)}
+          title="Desmarcar como Pago"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmUnpay(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (confirmUnpay) {
+                    await applyPagoStatus(confirmUnpay, false)
+                    setConfirmUnpay(null)
+                  }
+                }}
+                disabled={saving}
+              >
+                {saving ? 'Salvando...' : 'Sim, desmarcar'}
+              </Button>
+            </>
+          }
+        >
+          {confirmUnpay && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">
+                Tem certeza que deseja <span className="font-semibold text-red-600">desmarcar como pago</span> o aluno{' '}
+                <span className="font-semibold">{confirmUnpay.nome}</span> neste mês?
+              </p>
+              <p className="text-xs text-gray-500">
+                Isso vai alterar o status para <strong>Pendente</strong> e remover a data do último pagamento.
+              </p>
+            </div>
+          )}
+        </Modal>
+
+        <Modal
+          isOpen={confirmBulkUnpay}
+          onClose={() => setConfirmBulkUnpay(false)}
+          title="Desmarcar selecionados como pagos"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmBulkUnpay(false)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  await bulkMarkPending()
+                  setConfirmBulkUnpay(false)
+                }}
+                disabled={saving || selectedIds.size === 0}
+              >
+                {saving ? 'Salvando...' : 'Sim, desmarcar selecionados'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-gray-700">
+              Tem certeza que deseja <span className="font-semibold text-red-600">desmarcar como pago</span> os{' '}
+              <span className="font-semibold">{selectedIds.size}</span> aluno(s) selecionado(s) neste mês?
+            </p>
+            <p className="text-xs text-gray-500">
+              Isso vai alterar o status para <strong>Pendente</strong> e remover a data do último pagamento de todos eles.
+            </p>
+          </div>
+        </Modal>
 
         <Modal
           isOpen={!!editId}

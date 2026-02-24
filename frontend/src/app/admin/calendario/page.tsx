@@ -342,6 +342,9 @@ export default function AdminCalendarioPage() {
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
   const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
   const [teacherFilterSearch, setTeacherFilterSearch] = useState('')
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null)
+  const [studentFilterOpen, setStudentFilterOpen] = useState(false)
+  const [studentFilterSearch, setStudentFilterSearch] = useState('')
   const [teacherAvailabilities, setTeacherAvailabilities] = useState<Record<string, boolean> | null>(null)
   const [teacherConflicts, setTeacherConflicts] = useState<Record<string, string>>({})
   const [selectedTeacherSlots, setSelectedTeacherSlots] = useState<Array<{ dayOfWeek: number; startMinutes: number; endMinutes: number }>>([])
@@ -416,6 +419,20 @@ export default function AdminCalendarioPage() {
   }, [activeTeachers, teacherFilterSearch])
   const selectedTeacher = selectedTeacherId
     ? activeTeachers.find((t) => t.id === selectedTeacherId)
+    : null
+
+  const filteredStudents = useMemo(() => {
+    if (!studentFilterSearch.trim()) return enrollments
+    const search = studentFilterSearch.toLowerCase().trim()
+    return enrollments.filter(
+      (e) =>
+        e.nome.toLowerCase().includes(search) ||
+        (e.nomeGrupo && e.nomeGrupo.toLowerCase().includes(search))
+    )
+  }, [enrollments, studentFilterSearch])
+
+  const selectedStudent = selectedStudentId
+    ? enrollments.find((e) => e.id === selectedStudentId)
     : null
 
   // Opções para o select de aluno: grupos ou aluno individual; exclui quem já tem frequência correta na semana
@@ -1380,15 +1397,23 @@ export default function AdminCalendarioPage() {
     )
   }, [selectedTeacherId, selectedTeacherSlots])
 
+  const visibleLessons = useMemo(
+    () =>
+      selectedStudentId
+        ? lessons.filter((l) => l.enrollmentId === selectedStudentId)
+        : lessons,
+    [lessons, selectedStudentId]
+  )
+
   const getLessonsForDay = (day: Date) =>
-    lessons.filter((l) => isSameDay(new Date(l.startAt), day))
+    visibleLessons.filter((l) => isSameDay(new Date(l.startAt), day))
 
   const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
     const slotStart = new Date(day)
     slotStart.setHours(slotHour, slotMinute, 0, 0)
     const slotEnd = new Date(day)
     slotEnd.setHours(slotMinute === 30 ? slotHour + 1 : slotHour, slotMinute === 30 ? 0 : 30, 0, 0)
-    return lessons.filter((l) => {
+    return visibleLessons.filter((l) => {
       const lessonStart = new Date(l.startAt)
       const lessonEnd = new Date(lessonStart.getTime() + (l.durationMinutes || 60) * 60 * 1000)
       // Aula aparece no slot se: começa no slot OU começou antes mas ainda está em andamento
@@ -1573,6 +1598,77 @@ export default function AdminCalendarioPage() {
                     )}
                     {activeTeachers.length === 0 && (
                       <p className="px-4 py-2 text-sm text-gray-500">Nenhum professor ativo</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="relative">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={
+                    studentFilterOpen
+                      ? studentFilterSearch
+                      : selectedStudent
+                        ? selectedStudent.nome
+                        : 'Todos os alunos'
+                  }
+                  onChange={(e) => {
+                    setStudentFilterSearch(e.target.value)
+                    if (!studentFilterOpen) setStudentFilterOpen(true)
+                  }}
+                  onFocus={() => {
+                    setStudentFilterOpen(true)
+                    setStudentFilterSearch('')
+                  }}
+                  placeholder="Filtrar por aluno..."
+                  className="flex items-center gap-2 pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow transition-shadow text-sm font-medium text-gray-700 w-[220px] focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange"
+                  title="Digite ou selecione um aluno"
+                />
+                <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+              </div>
+              {studentFilterOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    aria-hidden
+                    onClick={() => {
+                      setStudentFilterOpen(false)
+                      setStudentFilterSearch('')
+                    }}
+                  />
+                  <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] py-1 bg-white rounded-lg border border-gray-200 shadow-lg max-h-[280px] overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedStudentId(null)
+                        setStudentFilterOpen(false)
+                        setStudentFilterSearch('')
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm ${!selectedStudentId ? 'bg-brand-orange/10 text-brand-orange font-medium' : 'text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Todos os alunos
+                    </button>
+                    {filteredStudents.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentId(s.id)
+                          setStudentFilterOpen(false)
+                          setStudentFilterSearch('')
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm ${selectedStudentId === s.id ? 'bg-brand-orange/10 text-brand-orange font-medium' : 'text-gray-700 hover:bg-gray-100'}`}
+                      >
+                        {s.tipoAula === 'GRUPO' && s.nomeGrupo ? `${s.nomeGrupo} — ${s.nome}` : s.nome}
+                      </button>
+                    ))}
+                    {filteredStudents.length === 0 && enrollments.length > 0 && (
+                      <p className="px-4 py-2 text-sm text-gray-500">Nenhum aluno encontrado</p>
+                    )}
+                    {enrollments.length === 0 && (
+                      <p className="px-4 py-2 text-sm text-gray-500">Nenhum aluno cadastrado</p>
                     )}
                   </div>
                 </>

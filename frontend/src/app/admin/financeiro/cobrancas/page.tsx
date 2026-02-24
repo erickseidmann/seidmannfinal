@@ -67,6 +67,12 @@ interface Summary {
   thisMonth: number
 }
 
+interface GenerationError {
+  enrollmentId: string
+  name: string
+  error: string
+}
+
 export default function FinanceiroCobrancasPage() {
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
@@ -81,6 +87,7 @@ export default function FinanceiroCobrancasPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [webhookStatus, setWebhookStatus] = useState<unknown[] | null>(null)
   const [cancellingId, setCancellingId] = useState<string | null>(null)
+  const [generationErrors, setGenerationErrors] = useState<GenerationError[] | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -124,9 +131,21 @@ export default function FinanceiroCobrancasPage() {
       })
       const json = await res.json()
       if (res.ok && json.ok) {
-        setToast({ message: `${json.success} boletos gerados com sucesso`, type: 'success' })
+        const errors: GenerationError[] = Array.isArray(json.errors) ? json.errors : []
+        setGenerationErrors(errors.length > 0 ? errors : null)
+        let message = `${json.success} boletos gerados com sucesso.`
+        if (errors.length > 0) {
+          message += ` ${errors.length} aluno(s) não receberam cobrança por erros nos dados.`
+        }
+        setToast({
+          message,
+          type: errors.length > 0 ? 'error' : 'success',
+        })
         await fetchData()
       } else {
+        if (Array.isArray(json.errors) && json.errors.length > 0) {
+          setGenerationErrors(json.errors)
+        }
         setToast({
           message: json.message || 'Erro ao gerar boletos',
           type: 'error',
@@ -212,6 +231,64 @@ export default function FinanceiroCobrancasPage() {
 
         {toast && (
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+        )}
+
+        {generationErrors && generationErrors.length > 0 && (
+          <section className="rounded-xl border border-red-200 bg-red-50 p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-red-800">
+                  Cobranças não enviadas por erros nos dados
+                </p>
+                <p className="text-xs text-red-700 mt-1">
+                  {generationErrors.length} aluno(s) não tiveram boleto gerado. Corrija os dados (CPF, e-mail, valor, etc.) e gere novamente.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGenerationErrors(null)}
+                className="text-xs font-medium text-red-700 hover:text-red-900"
+              >
+                Limpar lista
+              </button>
+            </div>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[480px] text-sm">
+                <thead>
+                  <tr className="border-b border-red-200 text-xs uppercase text-red-800">
+                    <th className="py-2 px-2 text-left">Aluno</th>
+                    <th className="py-2 px-2 text-left">Motivo</th>
+                    <th className="py-2 px-2 text-left">ID matrícula</th>
+                    <th className="py-2 px-2 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generationErrors.map((err) => (
+                    <tr key={err.enrollmentId} className="border-b border-red-100 last:border-0">
+                      <td className="py-2 px-2 text-red-900">{err.name}</td>
+                      <td className="py-2 px-2 text-red-800 text-xs">{err.error}</td>
+                      <td className="py-2 px-2 text-red-800 text-xs font-mono">{err.enrollmentId}</td>
+                      <td className="py-2 px-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = `${err.name} – matrícula ${err.enrollmentId}: ${err.error}`
+                            navigator.clipboard.writeText(text).then(() => {
+                              setToast({ message: 'Resumo do erro copiado.', type: 'success' })
+                            })
+                          }}
+                          className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 border border-red-200"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copiar detalhes
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         )}
 
         {webhookStatus !== null && (

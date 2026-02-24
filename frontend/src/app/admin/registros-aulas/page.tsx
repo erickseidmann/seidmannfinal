@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
@@ -169,6 +169,9 @@ export default function AdminRegistrosAulasPage() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [studentsPresence, setStudentsPresence] = useState<{ enrollmentId: string; presence: string }[]>([])
   const [loadingGroup, setLoadingGroup] = useState(false)
+  const [filterProfessor, setFilterProfessor] = useState<string>('')
+  const [filterAluno, setFilterAluno] = useState<string>('')
+  const [filterMes, setFilterMes] = useState<string>('')
 
   const fetchRecords = useCallback(async () => {
     try {
@@ -222,6 +225,34 @@ export default function AdminRegistrosAulasPage() {
     ? lessonsWithoutRecord.find((l) => l.id === form.lessonId) ?? records.find((r) => r.lessonId === form.lessonId)?.lesson ?? null
     : null
   const isGroupLesson = selectedLessonForGroup?.enrollment?.tipoAula === 'GRUPO' && selectedLessonForGroup?.enrollment?.nomeGrupo?.trim()
+
+  const filteredRecords = useMemo(() => {
+    let list = [...records]
+    if (filterProfessor.trim()) {
+      const search = filterProfessor.toLowerCase()
+      list = list.filter((r) => r.lesson.teacher.nome.toLowerCase().includes(search))
+    }
+    if (filterAluno.trim()) {
+      const search = filterAluno.toLowerCase()
+      list = list.filter((r) => {
+        const isGroup = r.lesson.enrollment?.tipoAula === 'GRUPO' && r.lesson.enrollment?.nomeGrupo?.trim()
+        const alunoLabel = isGroup ? (r.lesson.enrollment.nomeGrupo?.trim() ?? r.lesson.enrollment.nome) : r.lesson.enrollment.nome
+        return alunoLabel.toLowerCase().includes(search)
+      })
+    }
+    if (filterMes) {
+      const [yearStr, monthStr] = filterMes.split('-')
+      const year = Number(yearStr)
+      const month = Number(monthStr)
+      if (!Number.isNaN(year) && !Number.isNaN(month)) {
+        list = list.filter((r) => {
+          const d = new Date(r.lesson.startAt)
+          return d.getFullYear() === year && d.getMonth() + 1 === month
+        })
+      }
+    }
+    return list
+  }, [records, filterProfessor, filterAluno, filterMes])
 
   useEffect(() => {
     if (!modalOpen || !isGroupLesson || !selectedLessonForGroup?.enrollment?.nomeGrupo) {
@@ -400,6 +431,50 @@ export default function AdminRegistrosAulasPage() {
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="px-4 pt-4 pb-2 border-b border-gray-200 flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Professor</label>
+                <input
+                  type="text"
+                  value={filterProfessor}
+                  onChange={(e) => setFilterProfessor(e.target.value)}
+                  placeholder="Nome do professor..."
+                  className="input w-[200px]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Aluno / Grupo</label>
+                <input
+                  type="text"
+                  value={filterAluno}
+                  onChange={(e) => setFilterAluno(e.target.value)}
+                  placeholder="Nome do aluno ou grupo..."
+                  className="input w-[220px]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Mês</label>
+                <input
+                  type="month"
+                  value={filterMes}
+                  onChange={(e) => setFilterMes(e.target.value)}
+                  className="input w-[160px]"
+                />
+              </div>
+              {(filterProfessor || filterAluno || filterMes) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterProfessor('')
+                    setFilterAluno('')
+                    setFilterMes('')
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-700 mt-5"
+                >
+                  Limpar filtros
+                </button>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -414,7 +489,7 @@ export default function AdminRegistrosAulasPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {records.map((r) => {
+                  {filteredRecords.map((r) => {
                     const isGroup = r.lesson.enrollment?.tipoAula === 'GRUPO' && r.lesson.enrollment?.nomeGrupo?.trim()
                     const alunoLabel = isGroup ? (r.lesson.enrollment.nomeGrupo?.trim() ?? r.lesson.enrollment.nome) : r.lesson.enrollment.nome
                     const presenceLabel = isGroup && r.studentPresences?.length
