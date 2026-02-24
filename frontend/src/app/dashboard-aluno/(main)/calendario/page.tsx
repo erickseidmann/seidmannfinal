@@ -6,7 +6,8 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, X, Bell } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronLeft, ChevronRight, X, Bell, Video } from 'lucide-react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
@@ -595,7 +596,25 @@ export default function CalendarioAlunoPage() {
         title="Informações da aula"
         size="md"
         footer={
-          selectedLesson && selectedLesson.status === 'CONFIRMED' && new Date(selectedLesson.startAt) > new Date() ? (
+          selectedLesson && (
+            <div className="space-y-2">
+              {(() => {
+                const lessonStart = new Date(selectedLesson.startAt)
+                const lessonEnd = new Date(lessonStart.getTime() + selectedLesson.durationMinutes * 60 * 1000)
+                const now = new Date()
+                const canJoin = now >= new Date(lessonStart.getTime() - 15 * 60 * 1000) && now <= new Date(lessonEnd.getTime() + 15 * 60 * 1000) && selectedLesson.status === 'CONFIRMED'
+                if (!canJoin) return null
+                return (
+                  <Link
+                    href={`/dashboard-aluno/aula/${selectedLesson.id}`}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-brand-orange text-white text-sm font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors"
+                  >
+                    <Video className="w-4 h-4" />
+                    Entrar na Aula
+                  </Link>
+                )
+              })()}
+              {selectedLesson.status === 'CONFIRMED' && new Date(selectedLesson.startAt) > new Date() ? (
             selectedLesson.enrollment.tipoAula === 'GRUPO' ? (
               <div className="p-3 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-700">
                 Aulas em grupo não podem ser canceladas nem trocadas pelo portal. Entre em contato com a gestão para alterações.
@@ -657,7 +676,9 @@ export default function CalendarioAlunoPage() {
               })()}
             </div>
             )
-          ) : undefined
+          ) : null}
+            </div>
+          )
         }
       >
         {selectedLesson && (

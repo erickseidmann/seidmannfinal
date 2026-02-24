@@ -17,6 +17,7 @@ import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
+import { validateMeetingLink } from '@/lib/meeting-link'
 
 const IDIOMAS_OPCOES = [
   { value: 'INGLES', label: 'Inglês' },
@@ -46,6 +47,7 @@ interface Teacher {
   alerts?: { id: string; message: string; level: string | null }[]
   idiomasFala?: string[] | null
   idiomasEnsina?: string[] | null
+  linkSala?: string | null
   criadoEm: string
   atualizadoEm: string
 }
@@ -90,6 +92,7 @@ export default function AdminProfessoresPage() {
     valorPorHora: '',
     metodoPagamento: '',
     infosPagamento: '',
+    linkSala: '',
     cpf: '',
     cnpj: '',
     nota: '',
@@ -324,6 +327,7 @@ export default function AdminProfessoresPage() {
       valorPorHora: '',
       metodoPagamento: '',
       infosPagamento: '',
+      linkSala: '',
       cpf: '',
       cnpj: '',
       nota: '',
@@ -380,6 +384,7 @@ export default function AdminProfessoresPage() {
       valorPorHora: teacher.valorPorHora != null ? String(teacher.valorPorHora) : '',
       metodoPagamento: teacher.metodoPagamento || '',
       infosPagamento: teacher.infosPagamento || '',
+      linkSala: teacher.linkSala || '',
       cpf: teacher.cpf || '',
       cnpj: teacher.cnpj || '',
       nota: teacher.nota != null ? String(teacher.nota) : '',
@@ -393,6 +398,12 @@ export default function AdminProfessoresPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const linkValidation = validateMeetingLink(formData.linkSala)
+    if (!linkValidation.valid) {
+      setToast({ message: linkValidation.error ?? 'Link inválido.', type: 'error' })
+      return
+    }
 
     try {
       const url = editingTeacher
@@ -2032,6 +2043,18 @@ export default function AdminProfessoresPage() {
                     : 'Dados bancários, chave PIX, etc.'
                 }
                 rows={3}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Link da sala (Google Meet, Zoom ou Teams) <span className="text-gray-400">(opcional)</span>
+              </label>
+              <input
+                type="url"
+                value={formData.linkSala}
+                onChange={(e) => setFormData({ ...formData, linkSala: e.target.value })}
+                className="input w-full"
+                placeholder="https://meet.google.com/..."
               />
             </div>
             <div>

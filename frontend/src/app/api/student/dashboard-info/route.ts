@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    let nextLesson: { startAt: string; teacherName: string; durationMinutes: number } | null = null
+    let nextLesson: { id: string; startAt: string; teacherName: string; durationMinutes: number } | null = null
     let lastLesson: {
       startAt: string
       teacherName: string
@@ -135,6 +135,7 @@ export async function GET(request: NextRequest) {
 
       if (next) {
         nextLesson = {
+          id: next.id,
           startAt: next.startAt.toISOString(),
           teacherName: next.teacher.nome,
           durationMinutes: next.durationMinutes ?? 60,

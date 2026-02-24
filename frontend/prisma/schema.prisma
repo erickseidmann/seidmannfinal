@@ -451,6 +451,7 @@ model Teacher {
   valorExtra              Decimal?  @db.Decimal(10, 2) @map("valor_extra") // Valores extras do per├¡odo (opcional)
   idiomasFala             Json?     @map("idiomas_fala") // ["INGLES","ESPANHOL","PORTUGUES","ITALIANO","FRANCES"]
   idiomasEnsina           Json?     @map("idiomas_ensina") // idiomas que o professor ensina
+  linkSala                String?   @db.Text @map("link_sala") // Link opcional: Google Meet, Zoom ou Teams
   criadoEm        DateTime     @default(now()) @map("created_at")
   atualizadoEm    DateTime     @updatedAt @map("updated_at")
   

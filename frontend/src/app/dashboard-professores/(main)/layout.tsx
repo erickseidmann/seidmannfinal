@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   User,
   Calendar,
+  Video,
   Wallet,
   BookOpen,
   MessageCircle,
@@ -24,6 +25,7 @@ const NAV = [
   { href: '/dashboard-professores', labelKey: 'professor.nav.home', icon: LayoutDashboard, showUnreadDot: true },
   { href: '/dashboard-professores/dados-pessoais', labelKey: 'professor.nav.personalData', icon: User },
   { href: '/dashboard-professores/calendario', labelKey: 'professor.nav.calendar', icon: Calendar },
+  { href: '/dashboard-professores/aula', labelKey: 'professor.nav.classroom', icon: Video },
   { href: '/dashboard-professores/financeiro', labelKey: 'professor.nav.financial', icon: Wallet },
   { href: '/dashboard-professores/material', labelKey: 'professor.nav.material', icon: BookOpen },
   { href: '/dashboard-professores/chat', labelKey: 'professor.nav.chat', icon: MessageCircle, showChatDot: true },
@@ -40,6 +42,42 @@ export default function DashboardProfessoresMainLayout({
   const [loading, setLoading] = useState(true)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [activeClassroomId, setActiveClassroomId] = useState<string | null>(null)
+  const [nextLessonStartAt, setNextLessonStartAt] = useState<number | null>(null)
+  const [tick, setTick] = useState(() => Date.now())
+
+  const checkActiveClassroom = useCallback(() => {
+    const start = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+    const end = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    fetch(`/api/professor/lessons?start=${start}&end=${end}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.lessons) {
+          const now = Date.now()
+          const lessons = json.data.lessons as { id: string; startAt: string; durationMinutes?: number; status: string }[]
+          const active = lessons.find((l) => {
+            const startMs = new Date(l.startAt).getTime()
+            const endMs = startMs + (l.durationMinutes || 60) * 60 * 1000
+            return l.status === 'CONFIRMED' && now >= startMs - 3 * 60 * 1000 && now <= endMs + 15 * 60 * 1000
+          })
+          if (active) {
+            setActiveClassroomId(active.id)
+            setNextLessonStartAt(null)
+          } else {
+            setActiveClassroomId(null)
+            const future = lessons
+              .filter((l) => l.status === 'CONFIRMED' && new Date(l.startAt).getTime() > now)
+              .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+            const next = future[0]
+            setNextLessonStartAt(next ? new Date(next.startAt).getTime() : null)
+          }
+        }
+      })
+      .catch(() => {
+        setActiveClassroomId(null)
+        setNextLessonStartAt(null)
+      })
+  }, [])
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -56,6 +94,19 @@ export default function DashboardProfessoresMainLayout({
       })
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    checkActiveClassroom()
+    const interval = setInterval(checkActiveClassroom, 60000)
+    return () => clearInterval(interval)
+  }, [checkActiveClassroom])
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const sidebarMinutesUntilNext = nextLessonStartAt != null ? (nextLessonStartAt - tick) / (1000 * 60) : null
 
   const fetchUnreadCount = useCallback(() => {
     fetch('/api/professor/alerts/unread-count', { credentials: 'include' })
@@ -128,15 +179,37 @@ export default function DashboardProfessoresMainLayout({
         <nav className="p-2 space-y-0.5">
           {NAV.map((item) => {
             const { href, labelKey, icon: Icon } = item
+            const isAula = href === '/dashboard-professores/aula'
+            const linkHref = isAula && activeClassroomId ? `/dashboard-professores/aula/${activeClassroomId}` : href
             const showUnreadDot = 'showUnreadDot' in item ? item.showUnreadDot : undefined
             const showChatDot = 'showChatDot' in item ? item.showChatDot : undefined
-            const isActive = href === '/dashboard-professores' ? pathname === href : pathname.startsWith(href)
+            const isActive = linkHref === '/dashboard-professores' ? pathname === linkHref : pathname.startsWith(linkHref)
             const showDot = (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
-            const label = t(labelKey)
+            const label = labelKey === 'professor.nav.classroom' ? (t(labelKey) || 'Sala de Aula') : t(labelKey)
+            if (isAula && !activeClassroomId) {
+              const showAvailableIn = sidebarMinutesUntilNext != null && sidebarMinutesUntilNext > 0
+              return (
+                <div
+                  key={href}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 cursor-not-allowed opacity-50"
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span className="flex-1 min-w-0">
+                    {label}
+                    {showAvailableIn && (
+                      <span className="block text-xs font-normal text-gray-500 mt-0.5">
+                        Disponível em {Math.ceil(sidebarMinutesUntilNext)} min
+                      </span>
+                    )}
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                </div>
+              )
+            }
             return (
               <Link
                 key={href}
-                href={href}
+                href={linkHref}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-brand-orange/10 text-brand-orange'
@@ -145,6 +218,9 @@ export default function DashboardProfessoresMainLayout({
               >
                 <Icon className="w-5 h-5 shrink-0" />
                 {label}
+                {isAula && activeClassroomId && (
+                  <span className="ml-auto w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                )}
                 {showDot && (
                   <span
                     className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"

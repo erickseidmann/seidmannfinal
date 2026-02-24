@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { validateMeetingLink } from '@/lib/meeting-link'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
@@ -46,6 +47,7 @@ export async function PATCH(
       valorExtra,
       idiomasFala,
       idiomasEnsina,
+      linkSala,
     } = body
 
     // Verificar se o model existe no Prisma Client
@@ -91,6 +93,16 @@ export async function PATCH(
       )
     }
 
+    if (linkSala !== undefined) {
+      const linkValidation = validateMeetingLink(linkSala)
+      if (!linkValidation.valid) {
+        return NextResponse.json(
+          { ok: false, message: linkValidation.error },
+          { status: 400 }
+        )
+      }
+    }
+
     const updateData: Record<string, unknown> = {}
     if (nome) updateData.nome = nome.trim()
     if (email) updateData.email = email.trim().toLowerCase()
@@ -118,6 +130,7 @@ export async function PATCH(
       const arr = Array.isArray(idiomasEnsina) ? idiomasEnsina : []
       updateData.idiomasEnsina = arr.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase()))
     }
+    if (linkSala !== undefined) updateData.linkSala = typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null
 
     const teacher = await prisma.teacher.update({
       where: { id },
@@ -181,6 +194,7 @@ export async function PATCH(
           valorExtra: teacher.valorExtra != null ? Number(teacher.valorExtra) : null,
           idiomasFala: Array.isArray(teacher.idiomasFala) ? teacher.idiomasFala : (teacher.idiomasFala ? [teacher.idiomasFala] : []),
           idiomasEnsina: Array.isArray(teacher.idiomasEnsina) ? teacher.idiomasEnsina : (teacher.idiomasEnsina ? [teacher.idiomasEnsina] : []),
+          linkSala: teacher.linkSala ?? null,
           criadoEm: teacher.criadoEm.toISOString(),
           atualizadoEm: teacher.atualizadoEm.toISOString(),
         },

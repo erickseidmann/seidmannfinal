@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import StudentHeader from '@/components/aluno/StudentHeader'
@@ -13,6 +13,7 @@ import {
   User,
   Wallet,
   Calendar,
+  Video,
   MessageCircle,
   BookOpen,
   LogOut,
@@ -23,6 +24,7 @@ const NAV = [
   { href: '/dashboard-aluno', label: 'Início', icon: LayoutDashboard },
   { href: '/dashboard-aluno/dados', label: 'Meus dados', icon: User },
   { href: '/dashboard-aluno/calendario', label: 'Calendário', icon: Calendar },
+  { href: '/dashboard-aluno/aula', label: 'Sala de Aula', icon: Video },
   { href: '/dashboard-aluno/material', label: 'Material', icon: BookOpen },
   { href: '/dashboard-aluno/chat', label: 'Chat', icon: MessageCircle },
   { href: '/dashboard-aluno/financeiro', label: 'Financeiro', icon: Wallet },
@@ -36,6 +38,40 @@ export default function DashboardAlunoMainLayout({
   const pathname = usePathname()
   const [aluno, setAluno] = useState<{ nome: string } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [activeClassroomId, setActiveClassroomId] = useState<string | null>(null)
+  const [nextLessonStartAt, setNextLessonStartAt] = useState<number | null>(null)
+  const [tick, setTick] = useState(() => Date.now())
+
+  const checkActiveClassroom = useCallback(() => {
+    fetch('/api/student/lessons?start=' + new Date(Date.now() - 15 * 60 * 1000).toISOString() + '&end=' + new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data?.lessons) {
+          const now = Date.now()
+          const lessons = json.data.lessons as { id: string; startAt: string; durationMinutes?: number; status: string }[]
+          const active = lessons.find((l) => {
+            const start = new Date(l.startAt).getTime()
+            const end = start + (l.durationMinutes || 60) * 60 * 1000
+            return l.status === 'CONFIRMED' && now >= start - 3 * 60 * 1000 && now <= end + 15 * 60 * 1000
+          })
+          if (active) {
+            setActiveClassroomId(active.id)
+            setNextLessonStartAt(null)
+          } else {
+            setActiveClassroomId(null)
+            const future = lessons
+              .filter((l) => l.status === 'CONFIRMED' && new Date(l.startAt).getTime() > now)
+              .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+            const next = future[0]
+            setNextLessonStartAt(next ? new Date(next.startAt).getTime() : null)
+          }
+        }
+      })
+      .catch(() => {
+        setActiveClassroomId(null)
+        setNextLessonStartAt(null)
+      })
+  }, [])
 
   useEffect(() => {
     fetch('/api/student/me', { credentials: 'include' })
@@ -52,8 +88,21 @@ export default function DashboardAlunoMainLayout({
   }, [])
 
   useEffect(() => {
+    checkActiveClassroom()
+    const interval = setInterval(checkActiveClassroom, 60000)
+    return () => clearInterval(interval)
+  }, [checkActiveClassroom])
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
     setSidebarOpen(false)
   }, [pathname])
+
+  const sidebarMinutesUntilNext = nextLessonStartAt != null ? (nextLessonStartAt - tick) / (1000 * 60) : null
 
   const handleLogout = () => {
     fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => {
@@ -105,11 +154,33 @@ export default function DashboardAlunoMainLayout({
             </div>
             <nav className="flex-1 p-2 space-y-0.5">
               {NAV.map(({ href, label, icon: Icon }) => {
-                const isActive = href === '/dashboard-aluno' ? pathname === href : pathname.startsWith(href)
+                const isAula = href === '/dashboard-aluno/aula'
+                const linkHref = isAula && activeClassroomId ? `/dashboard-aluno/aula/${activeClassroomId}` : href
+                const isActive = linkHref === '/dashboard-aluno' ? pathname === linkHref : pathname.startsWith(linkHref)
+                if (isAula && !activeClassroomId) {
+                  const showAvailableIn = sidebarMinutesUntilNext != null && sidebarMinutesUntilNext > 0
+                  return (
+                    <div
+                      key={href}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 cursor-not-allowed opacity-50"
+                    >
+                      <Icon className="w-5 h-5 shrink-0" />
+                      <span className="flex-1 min-w-0">
+                        {label}
+                        {showAvailableIn && (
+                          <span className="block text-xs font-normal text-gray-500 mt-0.5">
+                            Disponível em {Math.ceil(sidebarMinutesUntilNext)} min
+                          </span>
+                        )}
+                      </span>
+                      <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                    </div>
+                  )
+                }
                 return (
                   <Link
                     key={href}
-                    href={href}
+                    href={linkHref}
                     onClick={() => setSidebarOpen(false)}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                       isActive
@@ -119,6 +190,9 @@ export default function DashboardAlunoMainLayout({
                   >
                     <Icon className="w-5 h-5 shrink-0" />
                     {label}
+                    {isAula && activeClassroomId && (
+                      <span className="ml-auto w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    )}
                   </Link>
                 )
               })}

@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import Button from '@/components/ui/Button'
+import { validateMeetingLink } from '@/lib/meeting-link'
 
 interface Professor {
   id: string
@@ -18,13 +19,14 @@ interface Professor {
   valorPorHora: string | null
   metodoPagamento: string | null
   infosPagamento: string | null
+  linkSala: string | null
 }
 
 export default function DadosPessoaisPage() {
   const [professor, setProfessor] = useState<Professor | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ nome: '', nomePreferido: '', whatsapp: '', cpf: '', cnpj: '' })
+  const [form, setForm] = useState({ nome: '', nomePreferido: '', whatsapp: '', cpf: '', cnpj: '', linkSala: '' })
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
@@ -40,6 +42,7 @@ export default function DadosPessoaisPage() {
             whatsapp: p.whatsapp || '',
             cpf: p.cpf || '',
             cnpj: p.cnpj || '',
+            linkSala: p.linkSala || '',
           })
         }
       })
@@ -49,6 +52,11 @@ export default function DadosPessoaisPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setMessage(null)
+    const linkValidation = validateMeetingLink(form.linkSala)
+    if (!linkValidation.valid) {
+      setMessage({ type: 'error', text: linkValidation.error ?? 'Link inválido.' })
+      return
+    }
     setSaving(true)
     try {
       const res = await fetch('/api/professor/me', {
@@ -61,6 +69,7 @@ export default function DadosPessoaisPage() {
           whatsapp: form.whatsapp.trim() || null,
           cpf: form.cpf.trim() || null,
           cnpj: form.cnpj.trim() || null,
+          linkSala: form.linkSala.trim() || null,
         }),
       })
       const json = await res.json()
@@ -157,6 +166,17 @@ export default function DadosPessoaisPage() {
             className="input w-full"
             placeholder="00.000.000/0000-00"
           />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Link da sala (Google Meet, Zoom ou Teams)</label>
+          <input
+            type="url"
+            value={form.linkSala}
+            onChange={(e) => setForm({ ...form, linkSala: e.target.value })}
+            className="input w-full"
+            placeholder="https://meet.google.com/..."
+          />
+          <p className="text-xs text-gray-500 mt-1">Opcional. Use um link do Google Meet, Zoom ou Microsoft Teams.</p>
         </div>
 
         {(professor?.valorPorHora != null || professor?.metodoPagamento != null || (professor?.infosPagamento != null && professor.infosPagamento.trim() !== '')) && (

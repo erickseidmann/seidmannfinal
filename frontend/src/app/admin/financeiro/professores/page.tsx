@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
@@ -141,8 +141,13 @@ export default function FinanceiroProfessoresPage() {
   const [filterValorMax, setFilterValorMax] = useState('')
   const [filterProximosDias, setFilterProximosDias] = useState(false)
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [modalDataInicio, setModalDataInicio] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
+  const [modalDataTermino, setModalDataTermino] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
+  const [savingBulkDates, setSavingBulkDates] = useState(false)
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null)
   const COLUMN_KEYS_FINANCEIRO_PROF = [
-    'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
+    'select', 'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
     'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
   ] as const
@@ -429,7 +434,141 @@ Equipe Seidmann Institute`
     }
   }
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    const allSelected = tabelaData.length > 0 && tabelaData.every((p) => selectedIds.has(p.id))
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(tabelaData.map((p) => p.id)))
+    }
+  }
+
+  const allSelected = tabelaData.length > 0 && tabelaData.every((p) => selectedIds.has(p.id))
+  const someSelected = tabelaData.some((p) => selectedIds.has(p.id))
+
+  useEffect(() => {
+    const el = selectAllCheckboxRef.current
+    if (el) el.indeterminate = someSelected && !allSelected
+  }, [someSelected, allSelected])
+
+  const openModalDataInicio = () => {
+    setModalDataInicio({ open: true, data: '' })
+  }
+  const openModalDataTermino = () => {
+    setModalDataTermino({ open: true, data: '' })
+  }
+
+  const saveBulkDataInicio = async () => {
+    if (!modalDataInicio.data.trim()) {
+      setToast({ message: 'Informe a data de início.', type: 'error' })
+      return
+    }
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) {
+      setToast({ message: 'Selecione ao menos um professor.', type: 'error' })
+      return
+    }
+    setSavingBulkDates(true)
+    setToast(null)
+    try {
+      let ok = 0
+      let err = 0
+      for (const id of ids) {
+        const res = await fetch(`/api/admin/financeiro/professores/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            year: selectedAno,
+            month: selectedMes,
+            periodoInicio: modalDataInicio.data,
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) ok++
+        else err++
+      }
+      setToast({
+        message: err === 0 ? `Data de início definida para ${ok} professor(es).` : `${ok} atualizado(s), ${err} erro(s).`,
+        type: err === 0 ? 'success' : 'error',
+      })
+      await fetchData(selectedAno, selectedMes)
+      setModalDataInicio({ open: false, data: '' })
+      setSelectedIds(new Set())
+    } catch {
+      setToast({ message: 'Erro ao atualizar datas.', type: 'error' })
+    } finally {
+      setSavingBulkDates(false)
+    }
+  }
+
+  const saveBulkDataTermino = async () => {
+    if (!modalDataTermino.data.trim()) {
+      setToast({ message: 'Informe a data de término.', type: 'error' })
+      return
+    }
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) {
+      setToast({ message: 'Selecione ao menos um professor.', type: 'error' })
+      return
+    }
+    setSavingBulkDates(true)
+    setToast(null)
+    try {
+      let ok = 0
+      let err = 0
+      for (const id of ids) {
+        const res = await fetch(`/api/admin/financeiro/professores/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            year: selectedAno,
+            month: selectedMes,
+            periodoTermino: modalDataTermino.data,
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) ok++
+        else err++
+      }
+      setToast({
+        message: err === 0 ? `Data de término definida para ${ok} professor(es).` : `${ok} atualizado(s), ${err} erro(s).`,
+        type: err === 0 ? 'success' : 'error',
+      })
+      await fetchData(selectedAno, selectedMes)
+      setModalDataTermino({ open: false, data: '' })
+      setSelectedIds(new Set())
+    } catch {
+      setToast({ message: 'Erro ao atualizar datas.', type: 'error' })
+    } finally {
+      setSavingBulkDates(false)
+    }
+  }
+
   const columns: Column<ProfessorFinanceiro>[] = [
+    {
+      key: 'select',
+      label: ' ',
+      fixed: true,
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.id)}
+          onChange={() => toggleSelect(row.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+          aria-label={`Selecionar ${row.nome}`}
+        />
+      ),
+    },
     {
       key: 'nome',
       label: 'Professor',
@@ -781,6 +920,35 @@ Equipe Seidmann Institute`
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-6">
               <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
                 <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de professores</h2>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    ref={selectAllCheckboxRef}
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={selectAll}
+                    className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+                  />
+                  <span className="text-sm text-gray-700">Selecionar todos</span>
+                </label>
+                {selectedIds.size > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={openModalDataInicio}
+                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+                    >
+                      Definir data de início para todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openModalDataTermino}
+                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+                    >
+                      Definir data de término para todos selecionados
+                    </button>
+                    <span className="text-sm text-gray-500">{selectedIds.size} selecionado(s)</span>
+                  </>
+                )}
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Itens por página</label>
                   <select
@@ -926,6 +1094,70 @@ Equipe Seidmann Institute`
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={modalDataInicio.open}
+        onClose={() => setModalDataInicio({ open: false, data: '' })}
+        title="Definir data de início para todos selecionados"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setModalDataInicio({ open: false, data: '' })}>
+              Cancelar
+            </Button>
+            <Button onClick={saveBulkDataInicio} disabled={savingBulkDates}>
+              {savingBulkDates ? 'Salvando...' : 'Definir data de início'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Será aplicada a data de início para os {selectedIds.size} professor(es) selecionado(s) no mês {MESES_LABELS[selectedMes]} de {selectedAno}.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Data de início</label>
+            <input
+              type="date"
+              value={modalDataInicio.data}
+              onChange={(e) => setModalDataInicio((prev) => ({ ...prev, data: e.target.value }))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={modalDataTermino.open}
+        onClose={() => setModalDataTermino({ open: false, data: '' })}
+        title="Definir data de término para todos selecionados"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setModalDataTermino({ open: false, data: '' })}>
+              Cancelar
+            </Button>
+            <Button onClick={saveBulkDataTermino} disabled={savingBulkDates}>
+              {savingBulkDates ? 'Salvando...' : 'Definir data de término'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Será aplicada a data de término para os {selectedIds.size} professor(es) selecionado(s) no mês {MESES_LABELS[selectedMes]} de {selectedAno}.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Data de término</label>
+            <input
+              type="date"
+              value={modalDataTermino.data}
+              onChange={(e) => setModalDataTermino((prev) => ({ ...prev, data: e.target.value }))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+            />
+          </div>
+        </div>
       </Modal>
 
       {/* Modal Enviar notificação de pagamento (e-mail + anexo) */}

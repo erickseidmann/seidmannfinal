@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { validateMeetingLink } from '@/lib/meeting-link'
 
 export async function GET(request: NextRequest) {
   try {
@@ -49,6 +50,7 @@ export async function GET(request: NextRequest) {
           valorPorHora,
           metodoPagamento: t.metodoPagamento ?? null,
           infosPagamento: t.infosPagamento ?? null,
+          linkSala: (teacher as { linkSala?: string | null }).linkSala ?? null,
           status: teacher.status,
           criadoEm: teacher.criadoEm.toISOString(),
           mustChangePassword,
@@ -90,14 +92,25 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const { nome, nomePreferido, whatsapp, cpf, cnpj } = body
+    const { nome, nomePreferido, whatsapp, cpf, cnpj, linkSala } = body
 
-    const updateData: { nome?: string; nomePreferido?: string | null; whatsapp?: string | null; cpf?: string | null; cnpj?: string | null } = {}
+    if (linkSala !== undefined) {
+      const linkValidation = validateMeetingLink(linkSala)
+      if (!linkValidation.valid) {
+        return NextResponse.json(
+          { ok: false, message: linkValidation.error },
+          { status: 400 }
+        )
+      }
+    }
+
+    const updateData: { nome?: string; nomePreferido?: string | null; whatsapp?: string | null; cpf?: string | null; cnpj?: string | null; linkSala?: string | null } = {}
     if (typeof nome === 'string' && nome.trim()) updateData.nome = nome.trim()
     if (nomePreferido !== undefined) updateData.nomePreferido = typeof nomePreferido === 'string' ? nomePreferido.trim() || null : null
     if (whatsapp !== undefined) updateData.whatsapp = typeof whatsapp === 'string' ? whatsapp.trim() || null : null
     if (cpf !== undefined) updateData.cpf = typeof cpf === 'string' ? cpf.trim() || null : null
     if (cnpj !== undefined) updateData.cnpj = typeof cnpj === 'string' ? cnpj.trim() || null : null
+    if (linkSala !== undefined) updateData.linkSala = typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
@@ -120,6 +133,7 @@ export async function PATCH(request: NextRequest) {
         valorPorHora: true,
         metodoPagamento: true,
         infosPagamento: true,
+        linkSala: true,
         status: true,
         criadoEm: true,
       },
@@ -157,6 +171,7 @@ export async function PATCH(request: NextRequest) {
           valorPorHora,
           metodoPagamento: updated.metodoPagamento,
           infosPagamento: updated.infosPagamento,
+          linkSala: updated.linkSala ?? null,
           status: updated.status,
           criadoEm: updated.criadoEm.toISOString(),
         },

@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { User, Wallet, Calendar, MessageCircle, Bell, Clock, ChevronRight, Trash2, Loader2 } from 'lucide-react'
+import { User, Wallet, Calendar, MessageCircle, Bell, Clock, ChevronRight, Trash2, Loader2, Video } from 'lucide-react'
 
 interface Aluno {
   nome: string
@@ -22,6 +22,7 @@ interface AlertItem {
 }
 
 interface NextLesson {
+  id: string
   startAt: string
   teacherName: string
   durationMinutes: number
@@ -93,6 +94,12 @@ export default function DashboardAlunoInicioPage() {
   const [deletingAlertId, setDeletingAlertId] = useState<string | null>(null)
   const [lessonRequests, setLessonRequests] = useState<LessonRequest[]>([])
   const [loadingRequests, setLoadingRequests] = useState(true)
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     fetch('/api/student/me', { credentials: 'include' })
@@ -335,6 +342,19 @@ export default function DashboardAlunoInicioPage() {
                 <span className="text-gray-500"> · {new Date(nextLesson.startAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
               </p>
               <p className="text-sm text-gray-600 mt-1">Professor(a): {nextLesson.teacherName} · {nextLesson.durationMinutes} min</p>
+              {(() => {
+                const diffMs = new Date(nextLesson.startAt).getTime() - Date.now()
+                if (diffMs > 15 * 60 * 1000) return null
+                return (
+                  <Link
+                    href={`/dashboard-aluno/aula/${nextLesson.id}`}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-brand-orange text-white text-sm font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors mt-3"
+                  >
+                    <Video className="w-4 h-4" />
+                    Entrar na Aula
+                  </Link>
+                )
+              })()}
             </section>
           )}
         </div>

@@ -1,6 +1,8 @@
 /**
  * PATCH /api/admin/financeiro/professores/[id]
  * Atualiza status, valores e período do professor para um mês/ano (TeacherPaymentMonth).
+ * Quando periodoInicio/periodoTermino são alterados, propaga em cascata para os meses seguintes
+ * (ex.: fev 25/01–25/02 → mar 25/02–25/03, abr 25/03–25/04, etc.).
  * Também atualiza Teacher quando metodoPagamento ou infosPagamento são enviados.
  * Body: year, month, paymentStatus?, valorPorPeriodo?, valorExtra?, periodoInicio?, periodoTermino?, metodoPagamento?, infosPagamento?
  */
@@ -9,6 +11,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateTeacherPaymentSchema } from '@/lib/finance'
+
+/** Adiciona um mês à data mantendo o dia (ex.: 25/02 → 25/03). Usa UTC para não mudar o dia por causa do fuso. */
+function addMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()))
+}
+
+/** Retorna (year, month) do próximo mês. */
+function nextYearMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 12) return { year: year + 1, month: 1 }
+  return { year, month: month + 1 }
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -123,6 +136,50 @@ export async function PATCH(
         },
         update: updateData,
       })
+
+      // Propagação em cascata: ao alterar período deste mês, atualizar os próximos meses (ex.: fev 25/01–25/02 → mar 25/02–25/03)
+      const updatedPeriod =
+        updateData.periodoInicio !== undefined || updateData.periodoTermino !== undefined
+      if (updatedPeriod) {
+        const current = await prisma.teacherPaymentMonth.findUnique({
+          where: { teacherId_year_month: { teacherId, year, month } },
+        })
+        const terminoDate = current?.periodoTermino
+        if (terminoDate) {
+          let lastTermino = new Date(terminoDate)
+          let nextYm = nextYearMonth(year, month)
+          const maxMonths = 12
+          for (let i = 0; i < maxMonths; i++) {
+            const nextInicio = new Date(lastTermino)
+            const nextTermino = addMonth(lastTermino)
+            await prisma.teacherPaymentMonth.upsert({
+              where: {
+                teacherId_year_month: {
+                  teacherId,
+                  year: nextYm.year,
+                  month: nextYm.month,
+                },
+              },
+              create: {
+                teacherId,
+                year: nextYm.year,
+                month: nextYm.month,
+                paymentStatus: null,
+                valorPorPeriodo: null,
+                valorExtra: null,
+                periodoInicio: nextInicio,
+                periodoTermino: nextTermino,
+              },
+              update: {
+                periodoInicio: nextInicio,
+                periodoTermino: nextTermino,
+              },
+            })
+            lastTermino = nextTermino
+            nextYm = nextYearMonth(nextYm.year, nextYm.month)
+          }
+        }
+      }
 
       if (updateData.paymentStatus !== undefined) {
         logFinanceAction({

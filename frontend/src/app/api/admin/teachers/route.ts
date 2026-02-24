@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { validateMeetingLink } from '@/lib/meeting-link'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
@@ -96,6 +97,7 @@ export async function GET(request: NextRequest) {
           user: t.user,
           idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : (t.idiomasFala ? [t.idiomasFala] : []),
           idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : (t.idiomasEnsina ? [t.idiomasEnsina] : []),
+          linkSala: t.linkSala ?? null,
           attendancesCount: t._count.attendances,
           alertsCount: t._count.alerts,
           alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
@@ -139,6 +141,7 @@ export async function POST(request: NextRequest) {
       senha,
       idiomasFala,
       idiomasEnsina,
+      linkSala,
     } = body
 
     if (!nome || !email) {
@@ -168,6 +171,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (linkSala !== undefined) {
+      const linkValidation = validateMeetingLink(linkSala)
+      if (!linkValidation.valid) {
+        return NextResponse.json(
+          { ok: false, message: linkValidation.error },
+          { status: 400 }
+        )
+      }
+    }
+
     const IDIOMAS_VALIDOS = ['INGLES', 'ESPANHOL', 'PORTUGUES', 'ITALIANO', 'FRANCES']
     const arrFala = Array.isArray(idiomasFala) ? idiomasFala.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
     const arrEnsina = Array.isArray(idiomasEnsina) ? idiomasEnsina.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
@@ -187,6 +200,7 @@ export async function POST(request: NextRequest) {
         status: status || 'ACTIVE',
         idiomasFala: arrFala.length > 0 ? arrFala : undefined,
         idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : undefined,
+        linkSala: typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null,
       },
     })
 
@@ -229,6 +243,7 @@ export async function POST(request: NextRequest) {
           infosPagamento: teacher.infosPagamento,
           nota: teacher.nota,
           status: teacher.status,
+          linkSala: teacher.linkSala ?? null,
           criadoEm: teacher.criadoEm.toISOString(),
         },
       },

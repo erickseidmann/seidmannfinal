@@ -5,7 +5,8 @@
 'use client'
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft, Video } from 'lucide-react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
@@ -786,7 +787,23 @@ export default function CalendarioProfessorPage() {
         size={modalStep === 'registrar' ? 'xl' : 'md'}
         footer={
           modalStep === 'choose' ? (
-            <div className="flex flex-col sm:flex-row gap-2 w-full">
+            <div className="flex flex-col sm:flex-row gap-2 w-full flex-wrap">
+              {selectedLesson && (() => {
+                const lessonStart = new Date(selectedLesson.startAt).getTime()
+                const lessonEnd = lessonStart + (selectedLesson.durationMinutes || 60) * 60 * 1000
+                const now = Date.now()
+                const canJoin = selectedLesson.status === 'CONFIRMED' && now >= lessonStart - 15 * 60 * 1000 && now <= lessonEnd + 15 * 60 * 1000
+                if (!canJoin) return null
+                return (
+                  <Link
+                    href={`/dashboard-professores/aula/${selectedLesson.id}`}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-brand-orange text-white text-sm font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors"
+                  >
+                    <Video className="w-4 h-4" />
+                    Entrar na Aula
+                  </Link>
+                )
+              })()}
               <Button variant="outline" onClick={handleVerUltima} className="flex-1" disabled={ultimaLoading}>
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                 {t('professor.calendar.viewLastClass')}
