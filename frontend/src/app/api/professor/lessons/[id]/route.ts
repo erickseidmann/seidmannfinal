@@ -59,6 +59,7 @@ export async function GET(
             tipoAula: true,
             nomeGrupo: true,
             tempoAulaMinutos: true,
+            curso: true,
           },
         },
         teacher: { select: { id: true, nome: true, linkSala: true } },

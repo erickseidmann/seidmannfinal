@@ -150,6 +150,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Período já pago: não permitir criar registro
+    const lessonStart = new Date(lesson.startAt)
+    const lessonYear = lessonStart.getUTCFullYear()
+    const lessonMonth = lessonStart.getUTCMonth() + 1
+    const pm = await prisma.teacherPaymentMonth.findUnique({
+      where: { teacherId_year_month: { teacherId: teacher.id, year: lessonYear, month: lessonMonth } },
+      select: { paymentStatus: true },
+    })
+    if (pm?.paymentStatus === 'PAGO') {
+      return NextResponse.json(
+        { ok: false, message: 'Período já pago. Não é possível adicionar registros de aulas deste período.' },
+        { status: 403 }
+      )
+    }
+
     // Só permitir registro no dia atual (São Paulo) e a partir do horário de início da aula
     const BRAZIL_TZ = 'America/Sao_Paulo'
     const getPartsInTZ = (date: Date) => {
@@ -176,7 +191,6 @@ export async function POST(request: NextRequest) {
     }
     const now = new Date()
     const nowParts = getPartsInTZ(now)
-    const lessonStart = new Date(lesson.startAt)
     const lessonParts = getPartsInTZ(lessonStart)
     const lessonDateKey = `${lessonParts.year}-${String(lessonParts.month).padStart(2, '0')}-${String(lessonParts.day).padStart(2, '0')}`
     const nowDateKey = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`

@@ -19,12 +19,14 @@ import {
   BookOpen,
   MessageCircle,
   LogOut,
+  ClipboardList,
 } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard-professores', labelKey: 'professor.nav.home', icon: LayoutDashboard, showUnreadDot: true },
   { href: '/dashboard-professores/dados-pessoais', labelKey: 'professor.nav.personalData', icon: User },
   { href: '/dashboard-professores/calendario', labelKey: 'professor.nav.calendar', icon: Calendar },
+  { href: '/dashboard-professores/registrar-aulas', labelKey: 'professor.nav.registerClasses', icon: ClipboardList },
   { href: '/dashboard-professores/aula', labelKey: 'professor.nav.classroom', icon: Video },
   { href: '/dashboard-professores/financeiro', labelKey: 'professor.nav.financial', icon: Wallet },
   { href: '/dashboard-professores/material', labelKey: 'professor.nav.material', icon: BookOpen },

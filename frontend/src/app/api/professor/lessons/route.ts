@@ -62,10 +62,11 @@ export async function GET(request: NextRequest) {
             frequenciaSemanal: true,
             tipoAula: true,
             nomeGrupo: true,
+            curso: true,
           },
         },
         teacher: { select: { id: true, nome: true } },
-        record: { select: { id: true } },
+        record: { select: { id: true, criadoEm: true, atualizadoEm: true } },
         requests: {
           where: {
             status: { in: ['PENDING', 'TEACHER_APPROVED'] },

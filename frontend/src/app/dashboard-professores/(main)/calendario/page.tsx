@@ -6,6 +6,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft, Video } from 'lucide-react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
@@ -45,6 +46,7 @@ interface Lesson {
     nome: string
     tipoAula: string | null
     nomeGrupo: string | null
+    curso?: string | null
     groupMemberNames?: string[]
   }
   teacher: { id: string; nome: string }
@@ -132,7 +134,7 @@ export default function CalendarioProfessorPage() {
     type === 'NORMAL' ? t('professor.calendar.lessonTypeNormal') : type === 'CONVERSAÇÃO' ? t('professor.calendar.lessonTypeConversation') : type === 'REVISAO' ? t('professor.calendar.lessonTypeRevisao') : t('professor.calendar.lessonTypeAvaliacao')
   const getCursoLabel = (c: string) =>
     c === 'INGLES' ? t('professor.calendar.courseEnglish') : c === 'ESPANHOL' ? t('professor.calendar.courseSpanish') : t('professor.calendar.courseBoth')
-  const [view, setView] = useState<ViewType>('month')
+  const [view, setView] = useState<ViewType>('week')
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [lessons, setLessons] = useState<Lesson[]>([])
   const [loading, setLoading] = useState(true)
@@ -175,6 +177,7 @@ export default function CalendarioProfessorPage() {
   const [loadingGroup, setLoadingGroup] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  const searchParams = useSearchParams()
   const modalOpen = selectedLesson !== null
 
   const closeModal = useCallback(() => {
@@ -276,6 +279,52 @@ export default function CalendarioProfessorPage() {
   useEffect(() => {
     fetchLessons()
   }, [fetchLessons])
+
+  // Abrir modal "Registrar aula" quando a página é aberta com ?registrar=lessonId (vindo da lista em Registrar aulas)
+  useEffect(() => {
+    const lessonId = searchParams.get('registrar')
+    if (!lessonId) return
+    let cancelled = false
+    fetch(`/api/professor/lessons/${lessonId}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json?.ok || !json?.data?.lesson) return
+        const raw = json.data.lesson
+        const lesson: Lesson = {
+          id: raw.id,
+          enrollmentId: raw.enrollment?.id ?? '',
+          teacherId: raw.teacher?.id ?? '',
+          status: (raw.status === 'CANCELLED' || raw.status === 'REPOSICAO' ? raw.status : 'CONFIRMED') as Lesson['status'],
+          startAt: raw.startAt,
+          durationMinutes: raw.durationMinutes ?? 60,
+          notes: raw.notes ?? null,
+          enrollment: {
+            id: raw.enrollment?.id ?? '',
+            nome: raw.enrollment?.nome ?? '',
+            tipoAula: raw.enrollment?.tipoAula ?? null,
+            nomeGrupo: raw.enrollment?.nomeGrupo ?? null,
+            curso: raw.enrollment?.curso ?? null,
+            groupMemberNames: raw.enrollment?.groupMemberNames,
+          },
+          teacher: { id: raw.teacher?.id ?? '', nome: raw.teacher?.nome ?? '' },
+          record: raw.record ? { id: raw.record.id } : null,
+          requests: [],
+        }
+        setCurrentDate(new Date(raw.startAt))
+        setSelectedLesson(lesson)
+        setModalStep('registrar')
+        setForm({
+          ...emptyForm,
+          tempoAulaMinutos: raw.durationMinutes ?? '',
+          curso: raw.enrollment?.curso ?? '',
+        })
+        window.history.replaceState(null, '', '/dashboard-professores/calendario')
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams])
 
   const getHolidaysRange = useCallback(() => {
     let start: Date
@@ -387,6 +436,7 @@ export default function CalendarioProfessorPage() {
     setForm({
       ...emptyForm,
       tempoAulaMinutos: selectedLesson?.durationMinutes ?? '',
+      curso: selectedLesson?.enrollment?.curso ?? '',
     })
     setStudentsPresence([])
   }
@@ -435,11 +485,11 @@ export default function CalendarioProfessorPage() {
     try {
       const payload = {
         lessonId: selectedLesson.id,
-        status: form.status,
+        status: (selectedLesson.status === 'CANCELLED' || selectedLesson.status === 'REPOSICAO' ? selectedLesson.status : 'CONFIRMED') as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
         presence: form.presence,
         ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
         lessonType: form.lessonType,
-        curso: form.curso || null,
+        curso: (selectedLesson.enrollment?.curso || form.curso || null),
         tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
         book: form.book || null,
         lastPage: form.lastPage || null,
@@ -914,15 +964,6 @@ export default function CalendarioProfessorPage() {
               {t('professor.calendar.modalClass')}: <strong>{formatDateTimeInTZ(selectedLesson.startAt, dateLocale)}</strong> — {getLessonStudentLabel(selectedLesson)}
             </p>
 
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.classStatus')}</label>
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as typeof form.status })} className="input w-full">
-                <option value="CONFIRMED">{t('professor.calendar.statusConfirmed')}</option>
-                <option value="CANCELLED">{t('professor.calendar.statusCancelled')}</option>
-                <option value="REPOSICAO">{t('professor.calendar.statusReposicao')}</option>
-              </select>
-            </div>
-
             {!isGroupLesson && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')}</label>
@@ -985,7 +1026,12 @@ export default function CalendarioProfessorPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Curso</label>
-                <select value={form.curso} onChange={(e) => setForm({ ...form, curso: e.target.value })} className="input w-full">
+                <select
+                  value={selectedLesson?.enrollment?.curso ?? form.curso}
+                  disabled
+                  className="input w-full bg-gray-100 cursor-not-allowed"
+                  title="Curso definido pelo cadastro do aluno."
+                >
                   <option value="">Selecione</option>
                   <option value="INGLES">Inglês</option>
                   <option value="ESPANHOL">Espanhol</option>

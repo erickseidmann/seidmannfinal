@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays, Trash2, CheckCircle, XCircle, Clock, Video } from 'lucide-react'
+import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays, Trash2, CheckCircle, XCircle, Clock, Video, ClipboardList, AlertTriangle } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useTranslation } from '@/contexts/LanguageContext'
@@ -65,6 +65,7 @@ interface LessonItem {
   startAt: string
   durationMinutes?: number | null
   status?: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  record?: { id: string } | null
   enrollment: {
     nome: string
     tipoAula: string | null
@@ -108,6 +109,8 @@ export default function DashboardProfessoresInicioPage() {
   const [processingRequestId, setProcessingRequestId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [, setTick] = useState(0)
+  const [alertRegistros, setAlertRegistros] = useState<{ show: boolean; pendingCount: number } | null>(null)
+  const [loadingAlertRegistros, setLoadingAlertRegistros] = useState(true)
 
   useEffect(() => {
     const interval = setInterval(() => setTick((n) => n + 1), 30_000)
@@ -208,6 +211,50 @@ export default function DashboardProfessoresInicioPage() {
   useEffect(() => {
     fetchLessonRequests()
   }, [fetchLessonRequests])
+
+  // Alerta: data de pagamento chegando + aulas em aberto para registrar
+  useEffect(() => {
+    setLoadingAlertRegistros(true)
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+    fetch(`/api/professor/financeiro?year=${year}&month=${month}`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((finJson) => {
+        if (!finJson.ok || !finJson.data?.dataInicio || !finJson.data?.dataTermino) {
+          setAlertRegistros(null)
+          setLoadingAlertRegistros(false)
+          return
+        }
+        if (finJson.data.statusPagamento === 'PAGO') {
+          setAlertRegistros(null)
+          setLoadingAlertRegistros(false)
+          return
+        }
+        const dataTermino = new Date(finJson.data.dataTermino + 'T23:59:59.999Z')
+        const hoje = getStartOfDay(now)
+        const limite = addDays(hoje, 7)
+        const pagamentoChegando = dataTermino.getTime() <= limite.getTime()
+        if (!pagamentoChegando) {
+          setAlertRegistros(null)
+          setLoadingAlertRegistros(false)
+          return
+        }
+        const start = finJson.data.dataInicio + 'T00:00:00.000Z'
+        const end = finJson.data.dataTermino + 'T23:59:59.999Z'
+        return fetch(`/api/professor/lessons?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { credentials: 'include' })
+          .then((r) => r.json())
+          .then((lessonsJson) => {
+            const lessons: LessonItem[] = lessonsJson?.ok && Array.isArray(lessonsJson?.data?.lessons) ? lessonsJson.data.lessons : []
+            const pendingCount = lessons.filter(
+              (l) => !l.record?.id && l.status !== 'CANCELLED'
+            ).length
+            setAlertRegistros(pendingCount > 0 ? { show: true, pendingCount } : null)
+          })
+      })
+      .catch(() => setAlertRegistros(null))
+      .finally(() => setLoadingAlertRegistros(false))
+  }, [])
 
   const handleApproveRequest = useCallback(async (requestId: string) => {
     setProcessingRequestId(requestId)
@@ -329,7 +376,18 @@ export default function DashboardProfessoresInicioPage() {
       <p className="text-gray-600 mb-6">
         {t('professor.home.subtitle')}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mb-8">
+
+      {!loadingAlertRegistros && alertRegistros?.show && (
+        <Link
+          href="/dashboard-professores/registrar-aulas"
+          className="mb-6 flex items-center gap-3 w-full p-4 rounded-xl border-2 border-red-500 bg-red-50 hover:bg-red-100 text-red-800 font-semibold shadow-sm transition-colors"
+        >
+          <AlertTriangle className="w-6 h-6 shrink-0" />
+          <span>Atenção: aulas em aberto, registre para o pagamento</span>
+        </Link>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-3xl mb-8">
         <Link
           href="/dashboard-professores/dados-pessoais"
           className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow text-left"
@@ -343,6 +401,13 @@ export default function DashboardProfessoresInicioPage() {
         >
           <p className="font-semibold text-gray-900">{t('professor.home.calendar')}</p>
           <p className="text-sm text-gray-500 mt-1">{t('professor.home.calendarDesc')}</p>
+        </Link>
+        <Link
+          href="/dashboard-professores/registrar-aulas"
+          className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow text-left"
+        >
+          <p className="font-semibold text-gray-900">Registros</p>
+          <p className="text-sm text-gray-500 mt-1">Registrar aulas do período para o pagamento.</p>
         </Link>
       </div>
 
