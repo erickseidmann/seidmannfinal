@@ -134,6 +134,7 @@ export default function RegistrarAulasPage() {
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null)
   const [loadingRecord, setLoadingRecord] = useState(false)
   const [periodPaid, setPeriodPaid] = useState(false)
+  const [registeringLessonId, setRegisteringLessonId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -269,6 +270,10 @@ export default function RegistrarAulasPage() {
 
   const handleLessonClick = (lesson: Lesson) => {
     if (lesson.status === 'CANCELLED' || lesson.record?.id) return
+    if (registeringLessonId) {
+      setToast({ message: t('professor.registerClasses.waitRegistration'), type: 'error' })
+      return
+    }
     setShowPendingList(false)
     setEditingRecordId(null)
     setSelectedLesson(lesson)
@@ -284,6 +289,10 @@ export default function RegistrarAulasPage() {
   const handleEditClick = (e: React.MouseEvent, lesson: Lesson) => {
     e.stopPropagation()
     if (!lesson.record?.id) return
+    if (registeringLessonId) {
+      setToast({ message: t('professor.registerClasses.waitRegistration'), type: 'error' })
+      return
+    }
     setShowPendingList(false)
     setSelectedLesson(lesson)
     setEditingRecordId(lesson.record.id)
@@ -394,7 +403,7 @@ export default function RegistrarAulasPage() {
     setToast({ message: 'Formulário preenchido com os dados da última aula', type: 'success' })
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedLesson) return
     if (!editingRecordId && selectedLessonIsHoliday) {
@@ -405,81 +414,79 @@ export default function RegistrarAulasPage() {
       setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
       return
     }
-    setSaving(true)
-    try {
-      if (editingRecordId) {
-        const payload = {
-          presence: form.presence,
-          ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
-          lessonType: form.lessonType,
-          tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
-          book: form.book || null,
-          lastPage: form.lastPage || null,
-          assignedHomework: form.assignedHomework || null,
-          homeworkDone: form.homeworkDone || null,
-          conversationDescription: form.lessonType === 'CONVERSAÇÃO' ? (form.conversationDescription || null) : null,
-          notes: form.notes || null,
-          notesForStudent: form.notesForStudent || null,
-          notesForParents: form.notesForParents || null,
-          gradeGrammar: form.lessonType === 'AVALIACAO' && form.gradeGrammar !== '' ? Number(form.gradeGrammar) : null,
-          gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
-          gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
-          gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
-        }
-        const res = await fetch(`/api/professor/lesson-records/${editingRecordId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload),
-        })
-        const json = await res.json()
-        if (!res.ok || !json.ok) {
-          setToast({ message: json.message || 'Erro ao salvar', type: 'error' })
-          return
-        }
-        setToast({ message: 'Registro atualizado', type: 'success' })
-      } else {
-        const payload = {
-          lessonId: selectedLesson.id,
-          status: (selectedLesson.status === 'CANCELLED' || selectedLesson.status === 'REPOSICAO' ? selectedLesson.status : 'CONFIRMED') as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
-          presence: form.presence,
-          ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
-          lessonType: form.lessonType,
-          curso: (selectedLesson.enrollment?.curso || form.curso || null),
-          tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
-          book: form.book || null,
-          lastPage: form.lastPage || null,
-          assignedHomework: form.assignedHomework || null,
-          homeworkDone: form.homeworkDone || null,
-          conversationDescription: form.lessonType === 'CONVERSAÇÃO' ? (form.conversationDescription || null) : null,
-          notes: form.notes || null,
-          notesForStudent: form.notesForStudent || null,
-          notesForParents: form.notesForParents || null,
-          gradeGrammar: form.lessonType === 'AVALIACAO' && form.gradeGrammar !== '' ? Number(form.gradeGrammar) : null,
-          gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
-          gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
-          gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
-        }
-        const res = await fetch('/api/professor/lesson-records', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload),
-        })
-        const json = await res.json()
-        if (!res.ok || !json.ok) {
-          setToast({ message: json.message || 'Erro ao salvar', type: 'error' })
-          return
-        }
-        setToast({ message: 'Registro de aula criado', type: 'success' })
+
+    const lessonIdToRegister = selectedLesson.id
+    let url: string
+    let method: string
+    let payload: object
+
+    if (editingRecordId) {
+      url = `/api/professor/lesson-records/${editingRecordId}`
+      method = 'PATCH'
+      payload = {
+        presence: form.presence,
+        ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
+        lessonType: form.lessonType,
+        tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
+        book: form.book || null,
+        lastPage: form.lastPage || null,
+        assignedHomework: form.assignedHomework || null,
+        homeworkDone: form.homeworkDone || null,
+        conversationDescription: form.lessonType === 'CONVERSAÇÃO' ? (form.conversationDescription || null) : null,
+        notes: form.notes || null,
+        notesForStudent: form.notesForStudent || null,
+        notesForParents: form.notesForParents || null,
+        gradeGrammar: form.lessonType === 'AVALIACAO' && form.gradeGrammar !== '' ? Number(form.gradeGrammar) : null,
+        gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
+        gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
+        gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
       }
-      closeModal()
-      fetchData()
-    } catch {
-      setToast({ message: 'Erro ao salvar', type: 'error' })
-    } finally {
-      setSaving(false)
+    } else {
+      url = '/api/professor/lesson-records'
+      method = 'POST'
+      payload = {
+        lessonId: selectedLesson.id,
+        status: (selectedLesson.status === 'CANCELLED' || selectedLesson.status === 'REPOSICAO' ? selectedLesson.status : 'CONFIRMED') as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
+        presence: form.presence,
+        ...(isGroupLesson && studentsPresence.length > 0 ? { studentsPresence } : {}),
+        lessonType: form.lessonType,
+        curso: (selectedLesson.enrollment?.curso || form.curso || null),
+        tempoAulaMinutos: selectedLesson.durationMinutes ?? null,
+        book: form.book || null,
+        lastPage: form.lastPage || null,
+        assignedHomework: form.assignedHomework || null,
+        homeworkDone: form.homeworkDone || null,
+        conversationDescription: form.lessonType === 'CONVERSAÇÃO' ? (form.conversationDescription || null) : null,
+        notes: form.notes || null,
+        notesForStudent: form.notesForStudent || null,
+        notesForParents: form.notesForParents || null,
+        gradeGrammar: form.lessonType === 'AVALIACAO' && form.gradeGrammar !== '' ? Number(form.gradeGrammar) : null,
+        gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
+        gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
+        gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
+      }
     }
+
+    closeModal()
+    setRegisteringLessonId(lessonIdToRegister)
+
+    fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (!json.ok) {
+          setToast({ message: json.message || 'Erro ao salvar', type: 'error' })
+          return
+        }
+        setToast({ message: editingRecordId ? 'Registro atualizado' : 'Registro de aula criado', type: 'success' })
+        fetchData()
+      })
+      .catch(() => setToast({ message: 'Erro ao salvar', type: 'error' }))
+      .finally(() => setRegisteringLessonId(null))
   }
 
   const hasPeriod = periodStart != null && periodEnd != null
@@ -632,7 +639,12 @@ export default function RegistrarAulasPage() {
                         {getLessonStudentLabel(lesson)}
                       </td>
                       <td className="px-4 py-3">
-                        {hasRecord ? (
+                        {registeringLessonId === lesson.id ? (
+                          <span className="inline-flex items-center gap-2 text-blue-700 text-sm">
+                            <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                            {t('professor.registerClasses.registeringInBackground')}
+                          </span>
+                        ) : hasRecord ? (
                           <span className="inline-flex flex-wrap items-center gap-2">
                             <span className="inline-flex items-center gap-1 text-green-700 text-sm">
                               <CheckCircle className="w-4 h-4 shrink-0" />

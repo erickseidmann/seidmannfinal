@@ -213,21 +213,29 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<CoraIn
     }
   }
 
+  const street = params.address?.street?.trim()
+  const number = params.address?.number != null && String(params.address.number).trim() !== '' ? String(params.address.number).trim() : null
+  const district = params.address?.district?.trim()
+  const city = params.address?.city?.trim()
+  const state = params.address?.state?.replace(/\s/g, '').slice(0, 2).toUpperCase()
+  const zipCode = params.address?.zipCode?.replace(/\D/g, '').trim()
+  const hasCompleteAddress = !!(street && number && district && city && state && zipCode)
+
   const customer: Record<string, unknown> = {
     name: params.customerName,
     document: { identity: params.customerDocument.replace(/\D/g, ''), type: 'CPF' },
     email: params.customerEmail,
-  }
-  if (params.address) {
-    customer.address = {
-      street: params.address.street,
-      number: String(params.address.number || 'S/N'),
-      district: params.address.district ?? '',
-      city: params.address.city,
-      state: params.address.state.replace(/\s/g, '').slice(0, 2).toUpperCase(),
-      zip_code: params.address.zipCode.replace(/\D/g, ''),
-      ...(params.address.complement && { complement: params.address.complement }),
-    }
+    ...(hasCompleteAddress && {
+      address: {
+        street,
+        number,
+        district,
+        city,
+        state,
+        zip_code: zipCode,
+        ...(params.address!.complement?.trim() && { complement: params.address!.complement.trim() }),
+      },
+    }),
   }
   const payload: Record<string, unknown> = {
     code: params.code,
