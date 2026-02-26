@@ -150,15 +150,32 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Período já pago: não permitir criar registro
+    // Período já pago: bloquear só se a aula cair DENTRO de um período marcado como pago (pelas datas reais do período)
     const lessonStart = new Date(lesson.startAt)
     const lessonYear = lessonStart.getUTCFullYear()
-    const lessonMonth = lessonStart.getUTCMonth() + 1
-    const pm = await prisma.teacherPaymentMonth.findUnique({
-      where: { teacherId_year_month: { teacherId: teacher.id, year: lessonYear, month: lessonMonth } },
-      select: { paymentStatus: true },
+    const paymentMonths = await prisma.teacherPaymentMonth.findMany({
+      where: { teacherId: teacher.id, year: { gte: lessonYear - 1, lte: lessonYear + 1 } },
+      select: { year: true, month: true, periodoInicio: true, periodoTermino: true, paymentStatus: true },
     })
-    if (pm?.paymentStatus === 'PAGO') {
+    const lessonTime = lessonStart.getTime()
+    const isInPaidPeriod = paymentMonths.some((pm) => {
+      let start: number
+      let end: number
+      if (pm.periodoInicio && pm.periodoTermino) {
+        const s = new Date(pm.periodoInicio)
+        s.setUTCHours(0, 0, 0, 0)
+        const e = new Date(pm.periodoTermino)
+        e.setUTCHours(23, 59, 59, 999)
+        start = s.getTime()
+        end = e.getTime()
+      } else {
+        start = new Date(Date.UTC(pm.year, pm.month - 1, 1)).getTime()
+        end = new Date(Date.UTC(pm.year, pm.month, 0, 23, 59, 59, 999)).getTime()
+      }
+      const inside = lessonTime >= start && lessonTime <= end
+      return inside && pm.paymentStatus === 'PAGO'
+    })
+    if (isInPaidPeriod) {
       return NextResponse.json(
         { ok: false, message: 'Período já pago. Não é possível adicionar registros de aulas deste período.' },
         { status: 403 }
