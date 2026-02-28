@@ -17,6 +17,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
+import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 
 interface StudentAlertItem {
   id: string
@@ -53,6 +54,7 @@ interface Student {
   agenda?: string | null
   cep?: string | null
   rua?: string | null
+  bairro?: string | null
   cidade?: string | null
   estado?: string | null
   numero?: string | null
@@ -122,7 +124,7 @@ function getMonday(d: Date): Date {
   return date
 }
 
-async function buscarCep(cep: string): Promise<{ logradouro: string; localidade: string; uf: string } | null> {
+async function buscarCep(cep: string): Promise<{ logradouro: string; bairro: string; localidade: string; uf: string } | null> {
   const limpo = cep.replace(/\D/g, '')
   if (limpo.length !== 8) return null
   try {
@@ -131,6 +133,7 @@ async function buscarCep(cep: string): Promise<{ logradouro: string; localidade:
     if (data.erro) return null
     return {
       logradouro: data.logradouro || '',
+      bairro: data.bairro || '',
       localidade: data.localidade || '',
       uf: data.uf || '',
     }
@@ -177,6 +180,7 @@ function formatEndereco(s: Student): string {
     (s as { rua?: string | null }).rua,
     (s as { numero?: string | null }).numero,
     (s as { complemento?: string | null }).complemento,
+    (s as { bairro?: string | null }).bairro,
     (s as { cep?: string | null }).cep,
     (s as { cidade?: string | null }).cidade,
     (s as { estado?: string | null }).estado,
@@ -197,7 +201,7 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'endereco', label: 'Endereço', getValue: (s) => formatEndereco(s).replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'valorMensalidade', label: 'Valor', getValue: (s) => (s.valorMensalidade != null ? String(s.valorMensalidade).replace('.', ',') : '—') },
   { key: 'tipoAula', label: 'Tipo', getValue: (s) => (s.tipoAula === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : s.tipoAula ?? '—') },
-  { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.teacherNameForWeek ?? 's/ professor').replace(/;/g, ',') },
+  { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.status === 'INACTIVE' ? '—' : (s.teacherNameForWeek ?? 's/ professor')).replace(/;/g, ',') },
   { key: 'agenda', label: 'Agenda', getValue: (s) => (s.agenda ?? '—').replace(/;/g, ',') },
   { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
   { key: 'trackingCode', label: 'Código', getValue: (s) => (s.trackingCode ?? '').replace(/;/g, ',') },
@@ -225,6 +229,7 @@ const initialForm = {
   nomeGrupo: '',
   cep: '',
   rua: '',
+  bairro: '',
   cidade: '',
   estado: '',
   numero: '',
@@ -515,6 +520,7 @@ export default function AdminAlunosPage() {
       nomeGrupo: s.nomeGrupo ?? '',
       cep: s.cep ?? '',
       rua: s.rua ?? '',
+      bairro: s.bairro ?? '',
       cidade: s.cidade ?? '',
       estado: s.estado ?? '',
       numero: s.numero ?? '',
@@ -924,6 +930,7 @@ export default function AdminAlunosPage() {
         setFormData((prev) => ({
           ...prev,
           rua: end.logradouro || prev.rua,
+          bairro: end.bairro || prev.bairro,
           cidade: end.localidade || prev.cidade,
           estado: end.uf || prev.estado,
         }))
@@ -937,6 +944,16 @@ export default function AdminAlunosPage() {
     e.preventDefault()
     setSubmitLoading(true)
     try {
+      const emailTrim = formData.email.trim()
+      const whatsappTrim = formData.whatsapp.trim()
+      if (!isValidEmail(emailTrim)) {
+        setToast({ message: 'Informe um e-mail válido.', type: 'error' })
+        return
+      }
+      if (!isValidWhatsApp(whatsappTrim)) {
+        setToast({ message: 'Informe um WhatsApp válido (10 ou 11 dígitos).', type: 'error' })
+        return
+      }
       // Validar se status PAUSED tem activationDate
       if (formData.status === 'PAUSED' && !formData.activationDate) {
         setToast({
@@ -957,8 +974,8 @@ export default function AdminAlunosPage() {
 
       const payload = {
         nome: formData.nome.trim(),
-        email: formData.email.trim(),
-        whatsapp: formData.whatsapp.trim(),
+        email: emailTrim,
+        whatsapp: whatsappTrim,
         dataNascimento: formData.dataNascimento || null,
         nomeResponsavel: formData.nomeResponsavel.trim() || null,
         emailResponsavel: isMinor ? (formData.emailResponsavel.trim() || null) : null,
@@ -975,6 +992,7 @@ export default function AdminAlunosPage() {
         nomeGrupo: formData.tipoAula === 'GRUPO' ? (formData.nomeGrupo.trim() || null) : null,
         cep: formData.moraNoExterior ? null : (formData.cep.trim() || null),
         rua: formData.moraNoExterior ? null : (formData.rua.trim() || null),
+        bairro: formData.moraNoExterior ? null : (formData.bairro.trim() || null),
         cidade: formData.moraNoExterior ? null : (formData.cidade.trim() || null),
         estado: formData.moraNoExterior ? null : (formData.estado.trim() || null),
         numero: formData.moraNoExterior ? null : (formData.numero.trim() || null),
@@ -1347,9 +1365,11 @@ export default function AdminAlunosPage() {
       key: 'teacherNameForWeek',
       label: 'Professor',
       sortable: true,
-      sortValue: (s: Student) => (s.teacherNameForWeek ?? '').toLowerCase(),
+      sortValue: (s: Student) => (s.status === 'INACTIVE' ? '' : (s.teacherNameForWeek ?? '')).toLowerCase(),
       render: (s: Student) =>
-        s.teacherNameForWeek ? (
+        s.status === 'INACTIVE' ? (
+          <span>—</span>
+        ) : s.teacherNameForWeek ? (
           <span>{s.teacherNameForWeek}</span>
         ) : (
           <span className="text-red-600 font-medium">s/ professor</span>
@@ -2467,6 +2487,15 @@ export default function AdminAlunosPage() {
                       type="text"
                       value={formData.rua}
                       onChange={(e) => setFormData({ ...formData, rua: e.target.value })}
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Bairro</label>
+                    <input
+                      type="text"
+                      value={formData.bairro}
+                      onChange={(e) => setFormData({ ...formData, bairro: e.target.value })}
                       className="input w-full"
                     />
                   </div>

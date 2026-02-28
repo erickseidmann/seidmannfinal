@@ -23,6 +23,7 @@ import {
   Wallet,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   MessageCircle,
   Menu,
   X,
@@ -116,7 +117,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [adminPages, setAdminPages] = useState<string[]>([])
   const [meLoaded, setMeLoaded] = useState(false)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+
+  // No mobile, começar com sidebar fechado
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setSidebarOpen(false)
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -206,8 +214,11 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   const isFinanceiroExpanded = pathname?.startsWith('/admin/financeiro')
 
+  // Fechar sidebar ao navegar apenas em mobile
   useEffect(() => {
-    setSidebarOpen(false)
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setSidebarOpen(false)
+    }
   }, [pathname])
 
   return (
@@ -224,22 +235,37 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         />
       )}
 
+      {/* Botão seta laranja piscando para abrir sidebar quando fechado */}
+      {!sidebarOpen && (
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className="fixed left-0 top-20 z-40 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-orange-500 rounded-r-lg shadow-lg text-white hover:bg-orange-600 transition-colors animate-pulse"
+          title="Abrir menu"
+          aria-label="Abrir menu"
+        >
+          <ChevronRight className="w-6 h-6" strokeWidth={2.5} />
+        </button>
+      )}
+
       <div className="flex pt-16">
         <aside
-          className={`fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-64 transform bg-white shadow-lg transition-transform duration-200 ease-out lg:translate-x-0 ${
+          className={`fixed left-0 top-16 z-40 h-[calc(100vh-4rem)] w-64 transform bg-white shadow-lg transition-transform duration-200 ease-out ${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
           <div className="flex h-full flex-col overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-gray-100 p-4 lg:hidden">
-              <span className="font-semibold text-gray-800">Menu</span>
+            <div className="flex items-center justify-between border-b border-gray-100 p-4">
+              <span className="font-semibold text-gray-800 lg:flex-1">Menu</span>
               <button
                 type="button"
                 onClick={() => setSidebarOpen(false)}
-                className="rounded-lg p-2 text-gray-600 hover:bg-gray-100"
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 shrink-0"
                 aria-label="Fechar menu"
+                title="Fechar menu"
               >
-                <X className="w-5 h-5" />
+                <span className="lg:hidden"><X className="w-5 h-5" /></span>
+                <span className="hidden lg:inline"><ChevronLeft className="w-5 h-5" /></span>
               </button>
             </div>
             <nav className="flex-1 p-4 space-y-2">
@@ -333,7 +359,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 p-3 sm:p-4 md:p-6 lg:ml-64 overflow-x-hidden">
+        <main className={`min-w-0 flex-1 p-3 sm:p-4 md:p-6 overflow-x-hidden transition-[margin] duration-200 ${sidebarOpen ? 'lg:ml-64' : ''}`}>
           <div className="mx-auto w-full max-w-[1600px] min-w-0">
             {children}
           </div>

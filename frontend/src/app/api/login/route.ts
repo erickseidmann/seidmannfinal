@@ -184,13 +184,12 @@ export async function POST(request: NextRequest) {
       return response
     }
 
-    // Para aluno (STUDENT): verificar status do usuário
+    // Bloquear login de qualquer usuário inativo (aluno, professor ou admin)
     if (user.status !== 'ACTIVE') {
-      const statusMessage = 'Aguarde liberação do acesso. Entre em contato com a escola se necessário.'
       return NextResponse.json(
         {
           ok: false,
-          message: statusMessage
+          message: 'Conta inativa. Entre em contato com a gestão.'
         },
         { status: 403 }
       )
@@ -207,7 +206,11 @@ export async function POST(request: NextRequest) {
 
     // Se não tem Enrollment ou status não é ACTIVE, bloquear login
     if (!enrollment || enrollment.status !== 'ACTIVE') {
-      const statusMessage = 'Seu acesso ainda não foi liberado. Finalize contrato/pagamento ou aguarde confirmação.'
+      // Aluno inativado/pausado/bloqueado pelo admin → mesma mensagem de conta inativa
+      const inactiveEnrollmentStatuses = ['INACTIVE', 'PAUSED', 'BLOCKED']
+      const statusMessage = enrollment && inactiveEnrollmentStatuses.includes(enrollment.status)
+        ? 'Conta inativa. Entre em contato com a gestão.'
+        : 'Seu acesso ainda não foi liberado. Finalize contrato/pagamento ou aguarde confirmação.'
       return NextResponse.json(
         {
           ok: false,

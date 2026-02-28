@@ -19,6 +19,8 @@ import {
   MessageCircle,
   LogOut,
   ClipboardList,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 
 const NAV = [
@@ -42,6 +44,7 @@ export default function DashboardProfessoresMainLayout({
   const [loading, setLoading] = useState(true)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -121,13 +124,42 @@ export default function DashboardProfessoresMainLayout({
     <div className="min-h-screen bg-gray-50">
       <ProfessorHeader />
       <div className="flex flex-col md:flex-row pt-16">
+        {/* Botão seta para abrir sidebar quando está fechado — laranja forte piscando */}
+        {!sidebarOpen && (
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="fixed left-0 top-20 z-30 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-orange-500 rounded-r-lg shadow-lg text-white hover:bg-orange-600 transition-colors animate-pulse"
+            title={t('professor.openMenu')}
+            aria-label={t('professor.openMenu')}
+          >
+            <ChevronRight className="w-6 h-6" strokeWidth={2.5} />
+          </button>
+        )}
         {/* Sidebar */}
-        <aside className="w-full md:w-56 lg:w-64 bg-white border-b md:border-b-0 md:border-r border-gray-200 shrink-0 md:min-h-[calc(100vh-4rem)]">
-        <div className="p-4 border-b border-gray-100">
-          <h1 className="text-lg font-bold text-gray-900">{t('professor.dashboardTitle')}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{displayName}</p>
-        </div>
-        <nav className="p-2 space-y-0.5">
+        <aside
+          className={`bg-white border-b md:border-b-0 md:border-r border-gray-200 shrink-0 transition-[width] duration-200 ease-out md:min-h-[calc(100vh-4rem)] ${
+            sidebarOpen
+              ? 'w-full md:w-56 lg:w-64'
+              : 'hidden'
+          }`}
+        >
+          <div className="p-4 border-b border-gray-100 flex items-center justify-between gap-2 md:w-56 lg:w-64">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-bold text-gray-900 truncate">{t('professor.dashboardTitle')}</h1>
+              <p className="text-sm text-gray-500 mt-0.5 truncate">{displayName}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 shrink-0"
+              title={t('professor.closeMenu')}
+              aria-label={t('professor.closeMenu')}
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          </div>
+          <nav className="p-2 space-y-0.5 w-56 lg:w-64">
           {NAV.map((item) => {
             const { href, labelKey, icon: Icon } = item
             const showUnreadDot = 'showUnreadDot' in item ? item.showUnreadDot : undefined
@@ -157,7 +189,7 @@ export default function DashboardProfessoresMainLayout({
             )
           })}
         </nav>
-        <div className="p-2 mt-auto border-t border-gray-100">
+        <div className="p-2 mt-auto border-t border-gray-100 w-56 lg:w-64">
           <button
             type="button"
             onClick={handleLogout}
@@ -167,7 +199,7 @@ export default function DashboardProfessoresMainLayout({
             {t('nav.logout')}
           </button>
         </div>
-      </aside>
+        </aside>
 
         {/* Main content */}
         <main className="min-w-0 flex-1 overflow-auto">

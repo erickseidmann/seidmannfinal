@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -230,6 +231,7 @@ export async function GET(request: NextRequest) {
             agenda: agendaByEnrollment[e.id] ?? null,
             cep: (e as any).cep ?? null,
             rua: (e as any).rua ?? null,
+            bairro: (e as any).bairro ?? null,
             cidade: (e as any).cidade ?? null,
             estado: (e as any).estado ?? null,
             numero: (e as any).numero ?? null,
@@ -323,6 +325,7 @@ export async function POST(request: NextRequest) {
       nomeGrupo,
       cep,
       rua,
+      bairro,
       cidade,
       estado,
       numero,
@@ -355,8 +358,19 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-
     const normalizedEmail = String(email).trim().toLowerCase()
+    if (!isValidEmail(normalizedEmail)) {
+      return NextResponse.json(
+        { ok: false, message: 'Informe um e-mail válido.' },
+        { status: 400 }
+      )
+    }
+    if (!isValidWhatsApp(String(whatsapp))) {
+      return NextResponse.json(
+        { ok: false, message: 'Informe um WhatsApp válido (10 ou 11 dígitos).' },
+        { status: 400 }
+      )
+    }
     const outroAluno = await prisma.enrollment.findFirst({
       where: { email: normalizedEmail },
       select: { id: true },
@@ -418,6 +432,7 @@ export async function POST(request: NextRequest) {
         nomeGrupo: nomeGrupo?.trim() || null,
         cep: cep?.trim()?.replace(/\D/g, '').slice(0, 9) || null,
         rua: rua?.trim() || null,
+        bairro: bairro?.trim() || null,
         cidade: cidade?.trim() || null,
         estado: estado?.trim()?.slice(0, 2) || null,
         numero: numero?.trim() || null,

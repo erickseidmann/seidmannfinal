@@ -245,6 +245,14 @@ export default function LoginPage() {
                   {errors.password && (
                     <p className="mt-1 text-sm text-red-600">{errors.password}</p>
                   )}
+                  <div className="mt-2 text-right">
+                    <Link
+                      href="/recuperar-senha"
+                      className="text-sm font-medium text-brand-orange hover:text-orange-700 transition-colors"
+                    >
+                      {t('login.forgotPassword')}
+                    </Link>
+                  </div>
                 </div>
 
                 {/* Botões */}

@@ -18,6 +18,8 @@ export interface Column<T> {
   sortValue?: (item: T) => string | number
   /** Se true, coluna sempre visível e não aparece no seletor de colunas */
   fixed?: boolean
+  /** Alinhamento do cabeçalho e células (padrão: left) */
+  align?: 'left' | 'right' | 'center'
 }
 
 interface TableProps<T> {
@@ -187,10 +189,12 @@ export default function Table<T extends { id: string }>({
                 {displayColumns.map((column) => {
                   const isSorted = sortKey === column.key
                   const canSort = column.sortable && onSort
+                  const align = column.align ?? 'left'
+                  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
                   return (
                     <th
                       key={column.key}
-                      className={`whitespace-nowrap text-left py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
+                      className={`whitespace-nowrap ${alignClass} py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
                       onClick={() => canSort && onSort(column.key)}
                     >
                       <span className="inline-flex items-center gap-1">
@@ -217,11 +221,15 @@ export default function Table<T extends { id: string }>({
                     onRowClick ? 'cursor-pointer' : ''
                   } ${getRowClassName ? getRowClassName(item) : ''}`}
                 >
-                  {displayColumns.map((column) => (
-                    <td key={column.key} className="py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm text-gray-900 whitespace-nowrap">
-                      {column.render ? column.render(item) : (item as any)[column.key]}
-                    </td>
-                  ))}
+                  {displayColumns.map((column) => {
+                    const align = column.align ?? 'left'
+                    const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
+                    return (
+                      <td key={column.key} className={`py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm text-gray-900 whitespace-nowrap ${alignClass}`}>
+                        {column.render ? column.render(item) : (item as any)[column.key]}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>

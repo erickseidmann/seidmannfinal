@@ -98,12 +98,27 @@ model User {
   lessonsCreated Lesson[]
   lessonRequestsCreated LessonRequest[] @relation("LessonRequestsCreated")
   lessonRequestsProcessed LessonRequest[] @relation("LessonRequestsProcessed")
+  passwordResetTokens   PasswordResetToken[]
   
   // ├ìndices
   @@index([email])
   @@index([role])
   @@index([status])
   @@map("users")
+}
+
+// Token para recuperação de senha (alunos e professores)
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique @db.VarChar(64)
+  expiresAt DateTime @map("expires_at")
+  criadoEm  DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
 
 // Valor por m├¬s para usu├írios do ADM (exceto super admin) ÔÇô Financeiro Administra├º├úo
@@ -265,6 +280,7 @@ model Enrollment {
   nomeGrupo        String?        @db.VarChar(255) @map("nome_grupo") // quando tipoAula = GRUPO
   cep               String?       @db.VarChar(9)
   rua               String?      @db.VarChar(255)
+  bairro            String?      @db.VarChar(100)
   cidade            String?      @db.VarChar(100)
   estado            String?      @db.VarChar(2)
   numero            String?      @db.VarChar(20)

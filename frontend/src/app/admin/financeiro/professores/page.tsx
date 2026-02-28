@@ -11,7 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Search, Bell } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Bell, RefreshCw } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -137,11 +137,13 @@ export default function FinanceiroProfessoresPage() {
   const [notifyFile, setNotifyFile] = useState<File | null>(null)
   const [sendingNotify, setSendingNotify] = useState(false)
   const [filterBusca, setFilterBusca] = useState('')
-  const [filterValorMin, setFilterValorMin] = useState('')
-  const [filterValorMax, setFilterValorMax] = useState('')
+  const [filterPago, setFilterPago] = useState(false)
   const [filterProntoPagar, setFilterProntoPagar] = useState(false)
   const [filterProximosDias, setFilterProximosDias] = useState(false)
-  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
+  const [filterDataDe, setFilterDataDe] = useState('')
+  const [filterDataAte, setFilterDataAte] = useState('')
+  const [showFilterData, setShowFilterData] = useState(false)
+  const filterDataRef = useRef<HTMLDivElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [modalDataInicio, setModalDataInicio] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
   const [modalDataTermino, setModalDataTermino] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
@@ -152,7 +154,12 @@ export default function FinanceiroProfessoresPage() {
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
     'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
   ] as const
-  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => [...COLUMN_KEYS_FINANCEIRO_PROF])
+  // Por padrão ocultar: Registros esperados, Valor por período, Valores extras (podem ser exibidas em Colunas)
+  const DEFAULT_VISIBLE_FINANCEIRO_PROF = [
+    'select', 'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
+    'valorAPagar', 'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
+  ]
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => [...DEFAULT_VISIBLE_FINANCEIRO_PROF])
 
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -176,6 +183,18 @@ export default function FinanceiroProfessoresPage() {
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
 
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filterDataRef.current && !filterDataRef.current.contains(e.target as Node)) {
+        setShowFilterData(false)
+      }
+    }
+    if (showFilterData) {
+      document.addEventListener('click', handleClickOutside)
+    }
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [showFilterData])
+
   const cubos = useMemo(() => {
     const totalAPagar = professores.reduce((s, p) => s + p.valorAPagar, 0)
     const valoresPagos = professores
@@ -196,6 +215,30 @@ export default function FinanceiroProfessoresPage() {
     return { proximoPagamento: proximo, atrasados: atrasadosList }
   }, [professores])
 
+  /** Próxima data de vencimento (data término) entre os em aberto, e valor estimado nessa data */
+  const { proximaDataPagamento, valorEstimadoProximoPagamento } = useMemo(() => {
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
+    const comVencimentoFuturo = emAberto.filter((p) => {
+      const termino = new Date(p.dataTermino + 'T12:00:00')
+      termino.setHours(0, 0, 0, 0)
+      return termino.getTime() >= hoje.getTime()
+    })
+    if (comVencimentoFuturo.length === 0) {
+      return { proximaDataPagamento: null as string | null, valorEstimadoProximoPagamento: 0 }
+    }
+    const datasOrdenadas = [...new Set(comVencimentoFuturo.map((p) => p.dataTermino))].sort()
+    const proximaData = datasOrdenadas[0]
+    const valor = comVencimentoFuturo
+      .filter((p) => p.dataTermino === proximaData)
+      .reduce((s, p) => s + p.valorAPagar, 0)
+    return {
+      proximaDataPagamento: proximaData,
+      valorEstimadoProximoPagamento: Math.round(valor * 100) / 100,
+    }
+  }, [professores])
+
   const tabelaData = useMemo(() => {
     let list = professores
     if (filterAlerta === 'proximo') list = proximoPagamento
@@ -207,22 +250,11 @@ export default function FinanceiroProfessoresPage() {
       list = list.filter((p) => p.nome.toLowerCase().includes(busca))
     }
 
-    // Filtro por valor
-    if (filterValorMin) {
-      const min = Number(filterValorMin)
-      if (!isNaN(min)) {
-        list = list.filter((p) => p.valorAPagar >= min)
-      }
+    if (filterPago) {
+      list = list.filter((p) => p.statusPagamento === 'PAGO')
     }
-    if (filterValorMax) {
-      const max = Number(filterValorMax)
-      if (!isNaN(max)) {
-        list = list.filter((p) => p.valorAPagar <= max)
-      }
-    }
-
     if (filterProntoPagar) {
-      list = list.filter((p) => p.pagamentoProntoParaFazer)
+      list = list.filter((p) => p.pagamentoProntoParaFazer && p.statusPagamento === 'EM_ABERTO')
     }
 
     // Filtro por data de término (próximos dias)
@@ -238,8 +270,27 @@ export default function FinanceiroProfessoresPage() {
       })
     }
 
+    // Filtro por data de pagamento (vencimento)
+    if (filterDataDe) {
+      const de = new Date(filterDataDe + 'T12:00:00')
+      de.setHours(0, 0, 0, 0)
+      list = list.filter((p) => {
+        const termino = new Date(p.dataTermino + 'T12:00:00')
+        termino.setHours(0, 0, 0, 0)
+        return termino.getTime() >= de.getTime()
+      })
+    }
+    if (filterDataAte) {
+      const ate = new Date(filterDataAte + 'T23:59:59')
+      ate.setHours(23, 59, 59, 999)
+      list = list.filter((p) => {
+        const termino = new Date(p.dataTermino + 'T12:00:00')
+        return termino.getTime() <= ate.getTime()
+      })
+    }
+
     return list
-  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterValorMin, filterValorMax, filterProntoPagar, filterProximosDias])
+  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterPago, filterProntoPagar, filterProximosDias, filterDataDe, filterDataAte])
 
   const displayedData = useMemo(
     () => tabelaData.slice(0, itemsPerPage),
@@ -647,14 +698,16 @@ Equipe Seidmann Institute`
       key: 'valorAPagar',
       label: 'Valor a pagar',
       fixed: true,
+      align: 'right',
       render: (row) => (
         <CellWithCopy value={formatMoney(row.valorAPagar)} onCopy={handleCopy} />
       ),
     },
     {
       key: 'pagamentoProntoParaFazer',
-      label: 'Pronto p/ pagar',
+      label: 'Status',
       fixed: true,
+      align: 'center',
       render: (row) => {
         if (row.statusPagamento === 'PAGO') {
           return (
@@ -683,7 +736,7 @@ Equipe Seidmann Institute`
     },
     {
       key: 'metodoPagamento',
-      label: 'Método de pagamento',
+      label: 'Metodo',
       render: (row) => (
         <CellWithCopy value={row.metodoPagamento ?? ''} onCopy={handleCopy} />
       ),
@@ -810,7 +863,7 @@ Equipe Seidmann Institute`
         {/* Seção: Resumo do mês (cubos) */}
         <section className="mt-6">
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
             <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total a pagar (estimado)</p>
               <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.totalAPagar)}</p>
@@ -859,6 +912,20 @@ Equipe Seidmann Institute`
                 <p className="mt-1 text-xs text-red-700">Venc. já passou • clique para filtrar</p>
               </div>
             </button>
+            <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Próxima data de pagamento</p>
+              <p className="mt-1 text-xl font-bold text-blue-900">
+                {loading ? '—' : proximaDataPagamento ? formatDate(proximaDataPagamento) : '—'}
+              </p>
+              <p className="mt-1 text-xs text-blue-700">Venc. mais próximo em aberto</p>
+            </div>
+            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Valor estimado próximo pagamento</p>
+              <p className="mt-1 text-xl font-bold text-indigo-900">
+                {loading ? '—' : formatMoney(valorEstimadoProximoPagamento)}
+              </p>
+              <p className="mt-1 text-xs text-indigo-700">Soma na data do próximo venc.</p>
+            </div>
           </div>
         </section>
 
@@ -868,120 +935,127 @@ Equipe Seidmann Institute`
           </div>
         ) : (
           <>
-            {/* Seção: Buscar e filtros (recolhível) */}
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden mt-6">
-              <button
-                type="button"
-                onClick={() => setShowBuscarFiltros((v) => !v)}
-                className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
-              >
-                <Search className="w-5 h-5 text-brand-orange shrink-0" />
-                <span>Buscar e filtros</span>
-                {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
-              </button>
-              {showBuscarFiltros && (
-                <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
-                  <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
-                    <div className="flex-1 min-w-0">
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Nome do professor</label>
-                      <input
-                        type="text"
-                        value={filterBusca}
-                        onChange={(e) => setFilterBusca(e.target.value)}
-                        placeholder="Digite para filtrar..."
-                        className="input w-full"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={filterProximosDias}
-                          onChange={(e) => setFilterProximosDias(e.target.checked)}
-                          className="rounded border-gray-300 text-amber-600"
-                        />
-                        <span className="text-sm text-gray-700">Venc. próximos 7 dias</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={filterProntoPagar}
-                          onChange={(e) => setFilterProntoPagar(e.target.checked)}
-                          className="rounded border-gray-300 text-emerald-600"
-                        />
-                        <span className="text-sm text-gray-700">Prontos p/ pagar</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-gray-100">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Valor mínimo (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={filterValorMin}
-                        onChange={(e) => setFilterValorMin(e.target.value)}
-                        placeholder="0,00"
-                        className="input min-w-[140px] text-sm py-2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Valor máximo (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={filterValorMax}
-                        onChange={(e) => setFilterValorMax(e.target.value)}
-                        placeholder="0,00"
-                        className="input min-w-[140px] text-sm py-2"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
             {/* Seção: Lista de professores */}
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mt-6">
               <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
-                <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de professores</h2>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
+                <div className="min-w-0 flex-1 sm:flex-initial sm:w-48">
+                  <input
+                    type="text"
+                    value={filterBusca}
+                    onChange={(e) => setFilterBusca(e.target.value)}
+                    placeholder="Nome do professor"
+                    className="input w-full h-9 text-sm"
+                  />
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
                   <input
                     ref={selectAllCheckboxRef}
                     type="checkbox"
                     checked={allSelected}
                     onChange={selectAll}
-                    className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+                    className="rounded border-gray-300 text-brand-orange focus:ring-orange-500 h-4 w-4"
                   />
                   <span className="text-sm text-gray-700">Selecionar todos</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={filterPago}
+                    onChange={(e) => setFilterPago(e.target.checked)}
+                    className="rounded border-gray-300 text-green-600 h-4 w-4"
+                  />
+                  <span className="text-sm text-gray-700">Pago</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={filterProntoPagar}
+                    onChange={(e) => setFilterProntoPagar(e.target.checked)}
+                    className="rounded border-gray-300 text-emerald-600 h-4 w-4"
+                  />
+                  <span className="text-sm text-gray-700">Pronto para pagar</span>
+                </label>
+                <div className="relative shrink-0" ref={filterDataRef}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowFilterData((v) => !v) }}
+                    className={`flex items-center gap-2 h-9 px-3 rounded-lg border text-sm font-medium transition-colors ${
+                      filterDataDe || filterDataAte
+                        ? 'border-brand-orange bg-brand-orange/10 text-brand-orange'
+                        : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                    title="Filtrar por data de pagamento"
+                    aria-expanded={showFilterData}
+                    aria-haspopup="true"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    <span>Data de pagamento</span>
+                    {filterDataDe || filterDataAte ? (
+                      <span className="text-xs bg-brand-orange/20 px-1 rounded">ativo</span>
+                    ) : null}
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showFilterData ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showFilterData && (
+                    <div
+                      className="absolute left-0 top-full mt-1 z-50 min-w-[240px] rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Filtrar por vencimento</p>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">De</label>
+                          <input
+                            type="date"
+                            value={filterDataDe}
+                            onChange={(e) => setFilterDataDe(e.target.value)}
+                            className="input w-full h-9 text-sm py-0 px-2"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">Até</label>
+                          <input
+                            type="date"
+                            value={filterDataAte}
+                            onChange={(e) => setFilterDataAte(e.target.value)}
+                            className="input w-full h-9 text-sm py-0 px-2"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setFilterDataDe(''); setFilterDataAte(''); setShowFilterData(false) }}
+                          className="text-xs text-gray-500 hover:text-orange-600"
+                        >
+                          Limpar datas
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {selectedIds.size > 0 && (
                   <>
                     <button
                       type="button"
                       onClick={openModalDataInicio}
-                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 h-9"
                     >
                       Definir data de início para todos
                     </button>
                     <button
                       type="button"
                       onClick={openModalDataTermino}
-                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 h-9"
                     >
                       Definir data de término para todos selecionados
                     </button>
                     <span className="text-sm text-gray-500">{selectedIds.size} selecionado(s)</span>
                   </>
                 )}
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500">Itens por página</label>
+                <div className="flex items-center gap-2 shrink-0 h-9">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">Itens por página</label>
                   <select
                     value={itemsPerPage}
                     onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                    className="input min-w-[72px] text-sm py-1.5"
+                    className="input min-w-[72px] text-sm h-9 py-0 px-2"
                   >
                     <option value={5}>5</option>
                     <option value={10}>10</option>
@@ -992,15 +1066,17 @@ Equipe Seidmann Institute`
                 <button
                   type="button"
                   onClick={() => fetchData(selectedAno, selectedMes)}
-                  className="rounded-lg bg-brand-orange px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="rounded-lg bg-brand-orange p-2 h-9 w-9 flex items-center justify-center text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 shrink-0"
+                  title="Atualizar lista"
+                  aria-label="Atualizar lista"
                 >
-                  Atualizar lista
+                  <RefreshCw className="w-5 h-5" />
                 </button>
                 {filterAlerta !== 'todos' && (
                   <button
                     type="button"
                     onClick={() => setFilterAlerta('todos')}
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    className="rounded-lg border border-gray-300 px-4 h-9 text-sm font-medium text-gray-700 hover:bg-gray-50 shrink-0"
                   >
                     Limpar filtro • Ver todos
                   </button>

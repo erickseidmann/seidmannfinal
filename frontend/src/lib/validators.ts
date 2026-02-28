@@ -23,3 +23,11 @@ export function requireMinDigits(phone: string, min: number = 10): boolean {
   const normalized = normalizePhone(phone)
   return normalized.length >= min
 }
+
+/**
+ * Valida WhatsApp (telefone): apenas números, entre 10 e 11 dígitos (BR)
+ */
+export function isValidWhatsApp(phone: string): boolean {
+  const normalized = normalizePhone(phone)
+  return normalized.length >= 10 && normalized.length <= 11
+}

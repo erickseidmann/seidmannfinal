@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -36,6 +37,7 @@ function buildUpdateData(body: Record<string, unknown>) {
     nomeGrupo,
     cep,
     rua,
+    bairro,
     cidade,
     estado,
     numero,
@@ -83,6 +85,7 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (nomeGrupo !== undefined) update.nomeGrupo = nomeGrupo ? String(nomeGrupo).trim() : null
   if (cep !== undefined) update.cep = cep ? String(cep).trim().replace(/\D/g, '').slice(0, 9) : null
   if (rua !== undefined) update.rua = rua ? String(rua).trim() : null
+  if (bairro !== undefined) update.bairro = bairro ? String(bairro).trim() : null
   if (cidade !== undefined) update.cidade = cidade ? String(cidade).trim() : null
   if (estado !== undefined) update.estado = estado ? String(estado).trim().slice(0, 2) : null
   if (numero !== undefined) update.numero = numero ? String(numero).trim() : null
@@ -174,6 +177,19 @@ export async function PATCH(
       if (!body.nome || !body.email || !body.whatsapp) {
         return NextResponse.json(
           { ok: false, message: 'Nome, email e WhatsApp são obrigatórios' },
+          { status: 400 }
+        )
+      }
+      const emailTrim = String(body.email).trim().toLowerCase()
+      if (!isValidEmail(emailTrim)) {
+        return NextResponse.json(
+          { ok: false, message: 'Informe um e-mail válido.' },
+          { status: 400 }
+        )
+      }
+      if (!isValidWhatsApp(String(body.whatsapp))) {
+        return NextResponse.json(
+          { ok: false, message: 'Informe um WhatsApp válido (10 ou 11 dígitos).' },
           { status: 400 }
         )
       }
