@@ -194,12 +194,12 @@ export async function GET(request: NextRequest) {
             lesson: {
               teacherId: { in: teachers.map((t) => t.id) },
               startAt: { gte: periodStart, lte: periodEnd },
-              status: 'CONFIRMED',
+              status: { in: ['CONFIRMED', 'REPOSICAO'] },
               enrollment: {
                 OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
               },
             },
-            status: 'CONFIRMED',
+            status: { in: ['CONFIRMED', 'REPOSICAO'] },
           },
           select: {
             tempoAulaMinutos: true,

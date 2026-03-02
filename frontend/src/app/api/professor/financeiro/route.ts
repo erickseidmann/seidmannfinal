@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
       where: {
         teacherId: teacher.id,
         startAt: { gte: periodStart, lte: periodEnd },
-        status: 'CONFIRMED',
+        status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
       select: { id: true, startAt: true, durationMinutes: true },
     })
@@ -150,7 +150,7 @@ export async function GET(request: NextRequest) {
               ],
             },
           },
-          status: 'CONFIRMED',
+          status: { in: ['CONFIRMED', 'REPOSICAO'] },
         },
         select: {
           tempoAulaMinutos: true,

@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
             ],
           },
         },
-        status: 'CONFIRMED',
+        status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
       select: {
         tempoAulaMinutos: true,
