@@ -74,6 +74,8 @@ export default function AdminChatPage() {
   const [sending, setSending] = useState(false)
   const [modalNewChat, setModalNewChat] = useState(false)
   const [chatUsers, setChatUsers] = useState<ChatUser[]>([])
+  const [chatUserFilter, setChatUserFilter] = useState<'ALL' | 'ADMINS' | 'TEACHERS' | 'STUDENTS'>('ALL')
+  const [chatUserSearch, setChatUserSearch] = useState('')
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [newChatType, setNewChatType] = useState<'DIRECT' | 'GROUP'>('DIRECT')
   const [newGroupName, setNewGroupName] = useState('')
@@ -174,6 +176,8 @@ export default function AdminChatPage() {
     setSelectedUserIds([])
     setNewChatType('DIRECT')
     setNewGroupName('')
+    setChatUserFilter('ALL')
+    setChatUserSearch('')
     try {
       const res = await fetch('/api/admin/chat/users', { credentials: 'include' })
       const json = await res.json()
@@ -218,6 +222,22 @@ export default function AdminChatPage() {
       prev.includes(id) ? prev.filter((x) => x !== id) : newChatType === 'DIRECT' ? [id] : [...prev, id]
     )
   }
+
+  const filteredChatUsers = chatUsers.filter((u) => {
+    if (chatUserFilter === 'ADMINS' && u.role !== 'ADMIN') return false
+    if (chatUserFilter === 'TEACHERS' && u.role !== 'TEACHER') return false
+    if (chatUserFilter === 'STUDENTS' && u.role !== 'STUDENT') return false
+    if (chatUserSearch.trim()) {
+      const term = chatUserSearch.toLowerCase()
+      if (
+        !u.nome.toLowerCase().includes(term) &&
+        !u.email.toLowerCase().includes(term)
+      ) {
+        return false
+      }
+    }
+    return true
+  })
 
   return (
     <AdminLayout>
@@ -422,8 +442,56 @@ export default function AdminChatPage() {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               {newChatType === 'DIRECT' ? 'Selecione a pessoa' : 'Selecione os participantes'}
             </label>
+
+            {newChatType === 'DIRECT' && (
+              <div className="flex flex-col gap-2 mb-2 text-xs">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={`px-2.5 py-1 rounded-full border ${
+                      chatUserFilter === 'ADMINS'
+                        ? 'bg-orange-100 border-orange-400 text-orange-700'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                    onClick={() => setChatUserFilter('ADMINS')}
+                  >
+                    Admin list
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-2.5 py-1 rounded-full border ${
+                      chatUserFilter === 'TEACHERS'
+                        ? 'bg-orange-100 border-orange-400 text-orange-700'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                    onClick={() => setChatUserFilter('TEACHERS')}
+                  >
+                    Teachers list
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-2.5 py-1 rounded-full border ${
+                      chatUserFilter === 'STUDENTS'
+                        ? 'bg-orange-100 border-orange-400 text-orange-700'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                    onClick={() => setChatUserFilter('STUDENTS')}
+                  >
+                    Student list
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={chatUserSearch}
+                  onChange={(e) => setChatUserSearch(e.target.value)}
+                  placeholder="Buscar por nome ou email"
+                  className="w-full rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                />
+              </div>
+            )}
+
             <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-              {chatUsers.map((u) => (
+              {filteredChatUsers.map((u) => (
                 <label
                   key={u.id}
                   className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer"
@@ -442,6 +510,9 @@ export default function AdminChatPage() {
                   </div>
                 </label>
               ))}
+              {filteredChatUsers.length === 0 && (
+                <div className="px-3 py-2 text-xs text-gray-500">Nenhum usuário encontrado nessa lista.</div>
+              )}
             </div>
           </div>
         </div>

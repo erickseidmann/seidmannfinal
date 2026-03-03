@@ -56,7 +56,7 @@ export async function POST(
 
     const { id: sourceTeacherId } = await params
     const body = await request.json()
-    const { targetTeacherId, startDate: startDateParam } = body
+    const { targetTeacherId, startDate: startDateParam, enrollmentId } = body
 
     if (!targetTeacherId || typeof targetTeacherId !== 'string') {
       return NextResponse.json(
@@ -113,6 +113,7 @@ export async function POST(
       where: {
         teacherId: sourceTeacherId,
         startAt: { gte: startDate },
+        ...(enrollmentId ? { enrollmentId } : {}),
       },
       select: {
         id: true,

@@ -491,6 +491,28 @@ export default function FinanceiroNfsePage() {
               </select>
             </div>
             <div className="ml-auto flex gap-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/cron/nfse-status', {
+                      method: 'POST',
+                      credentials: 'include',
+                    })
+                    const json = await res.json()
+                    if (!res.ok || !json.ok) {
+                      alert(json.message || 'Erro ao atualizar status das NFSe')
+                      return
+                    }
+                    await fetchNotas()
+                  } catch {
+                    alert('Erro ao atualizar status das NFSe')
+                  }
+                }}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Atualizar status de todas
+              </Button>
               <Button variant="primary" onClick={handleOpenEmitirModal}>
                 <FileText className="w-4 h-4 mr-2" />
                 Emitir Notas do Mês

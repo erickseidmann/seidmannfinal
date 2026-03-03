@@ -23,6 +23,7 @@ export async function GET(
     const { id: sourceTeacherId } = await params
     const { searchParams } = new URL(_request.url)
     const startDateParam = searchParams.get('startDate')
+    const enrollmentIdParam = searchParams.get('enrollmentId')
     
     // Data de início para filtrar aulas (padrão: hoje)
     let startDate = new Date()
@@ -43,6 +44,7 @@ export async function GET(
         teacherId: sourceTeacherId,
         startAt: { gte: startDate },
         status: { not: 'CANCELLED' }, // Apenas aulas não canceladas para calcular slots necessários
+        ...(enrollmentIdParam ? { enrollmentId: enrollmentIdParam } : {}),
       },
       select: {
         startAt: true,

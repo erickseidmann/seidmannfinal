@@ -138,6 +138,7 @@ export default function AdminProfessoresPage() {
   } | null>(null)
   const [alunosLoading, setAlunosLoading] = useState(false)
   const [transferModalOpen, setTransferModalOpen] = useState(false)
+  const [transferEnrollmentId, setTransferEnrollmentId] = useState<string | null>(null)
   const [availableTeachers, setAvailableTeachers] = useState<Array<{ id: string; nome: string }>>([])
   const [availableTeachersLoading, setAvailableTeachersLoading] = useState(false)
   const [selectedTargetTeacherId, setSelectedTargetTeacherId] = useState<string>('')
@@ -2546,6 +2547,7 @@ export default function AdminProfessoresPage() {
                     const today = new Date()
                     today.setHours(0, 0, 0, 0)
                     setTransferStartDate(today.toISOString().split('T')[0])
+                    setTransferEnrollmentId(null)
                     setAvailableTeachersLoading(true)
                     try {
                       const res = await fetch(`/api/admin/teachers/${alunosModalTeacher.id}/transfer/available-teachers?startDate=${encodeURIComponent(today.toISOString().split('T')[0])}`, {
@@ -2604,6 +2606,7 @@ export default function AdminProfessoresPage() {
                       <tr className="border-b border-gray-200">
                         <th className="text-left py-2 px-2 font-semibold text-gray-700">Aluno</th>
                         <th className="text-left py-2 px-2 font-semibold text-gray-700">Dias e horários</th>
+                        <th className="text-left py-2 px-2 font-semibold text-gray-700">Ação</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2611,6 +2614,49 @@ export default function AdminProfessoresPage() {
                         <tr key={a.enrollmentId} className="border-b border-gray-100">
                           <td className="py-2 px-2">{a.nome}</td>
                           <td className="py-2 px-2 text-gray-600">{a.diasHorarios || '—'}</td>
+                          <td className="py-2 px-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="text-xs"
+                              onClick={async () => {
+                                if (!alunosModalTeacher) return
+                                const today = new Date()
+                                today.setHours(0, 0, 0, 0)
+                                setTransferStartDate(today.toISOString().split('T')[0])
+                                setTransferEnrollmentId(a.enrollmentId)
+                                setAvailableTeachersLoading(true)
+                                try {
+                                  const params = new URLSearchParams({
+                                    startDate: today.toISOString().split('T')[0],
+                                    enrollmentId: a.enrollmentId,
+                                  })
+                                  const res = await fetch(
+                                    `/api/admin/teachers/${alunosModalTeacher.id}/transfer/available-teachers?${params.toString()}`,
+                                    { credentials: 'include' }
+                                  )
+                                  const json = await res.json()
+                                  if (res.ok && json.ok && json.data?.teachers) {
+                                    setAvailableTeachers(json.data.teachers)
+                                    setSelectedTargetTeacherId('')
+                                    setTransferModalOpen(true)
+                                  } else {
+                                    setToast({
+                                      message: json.message || 'Erro ao buscar professores disponíveis',
+                                      type: 'error',
+                                    })
+                                  }
+                                } catch {
+                                  setToast({ message: 'Erro ao buscar professores disponíveis', type: 'error' })
+                                } finally {
+                                  setAvailableTeachersLoading(false)
+                                }
+                              }}
+                            >
+                              Transferir essas aulas
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2629,8 +2675,9 @@ export default function AdminProfessoresPage() {
           onClose={() => {
             setTransferModalOpen(false)
             setSelectedTargetTeacherId('')
+            setTransferEnrollmentId(null)
           }}
-          title="Transferir todas as aulas"
+          title={transferEnrollmentId ? 'Transferir aulas do aluno' : 'Transferir todas as aulas'}
           size="md"
           footer={
             <>
@@ -2692,6 +2739,7 @@ export default function AdminProfessoresPage() {
                             body: JSON.stringify({ 
                               targetTeacherId: selectedTargetTeacherId,
                               startDate: transferStartDate,
+                              enrollmentId: transferEnrollmentId ?? undefined,
                             }),
                           })
                           const json = await res.json()

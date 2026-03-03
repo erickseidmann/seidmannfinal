@@ -87,7 +87,23 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    const enrollmentIds = enrollments.map((e) => e.id)
+    // Se estiver filtrando por mês/ano, remover da planilha alunos inativos a partir do mês de inativação
+    const filteredEnrollments =
+      hasMonthFilter && year != null && month != null
+        ? enrollments.filter((e) => {
+            if (e.status !== 'INACTIVE') return true
+            if (!e.inactiveAt) return false
+            const d = new Date(e.inactiveAt)
+            const anoInativo = d.getFullYear()
+            const mesInativo = d.getMonth() + 1
+            // A partir do mês em que ficou inativo (inclusive) não deve mais constar
+            const viewingAfterOrSameInactiveMonth =
+              year > anoInativo || (year === anoInativo && month >= mesInativo)
+            return !viewingAfterOrSameInactiveMonth
+          })
+        : enrollments
+
+    const enrollmentIds = filteredEnrollments.map((e) => e.id)
 
     // Último e-mail de cobrança enviado (manual e/ou automações)
     const [invoiceSentAuditMax, paymentNotificationMax] = await Promise.all([
@@ -148,7 +164,7 @@ export async function GET(request: NextRequest) {
     // Total de horas do mês = (frequência semanal × duração da aula em min) × 4 semanas ÷ 60.
     const WEEKS_PER_MONTH = 4
 
-    const rows = enrollments.map((e) => {
+    const rows = filteredEnrollments.map((e) => {
       const pi = e.paymentInfo
       const pm = hasMonthFilter && e.paymentMonths && 'length' in e.paymentMonths ? (e.paymentMonths as { paymentStatus: string | null; notaFiscalEmitida: boolean | null }[])[0] : null
       const valorMensal = e.valorMensalidade != null ? Number(e.valorMensalidade) : null
@@ -163,18 +179,25 @@ export async function GET(request: NextRequest) {
           : null
       const dueDate = pi?.dueDate
       const diaPagamento = e.diaPagamento ?? pi?.dueDay ?? null
-      let dataProximoPagamento: string | null = dueDate ? dueDate.toISOString() : null
-      if (!dataProximoPagamento && diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
-        if (pi?.paidAt) {
-          // Já pagou: próximo vencimento conforme período (Mensal +1 mês, Trimestral +3, Semestral +6, Anual +12)
-          const paidDate = new Date(pi.paidAt)
-          dataProximoPagamento = nextDueDateFromPaidAt(paidDate, diaPagamento, pi?.periodoPagamento ?? null).toISOString()
-        } else {
-          // Ainda não pagou: mostrar o vencimento do período atual (mês corrente ou mês selecionado), não avançar para o próximo mês
-          const refYear = hasMonthFilter && year != null && month != null ? year : today.getFullYear()
-          const refMonth = hasMonthFilter && year != null && month != null ? month : today.getMonth() + 1
-          dataProximoPagamento = dueDateInMonth(diaPagamento, refYear, refMonth).toISOString()
-        }
+      let dataProximoPagamento: string | null = null
+
+      // Prioridade:
+      // 1) Se já tem paidAt + diaPagamento → sempre calcular próximo vencimento baseado no pagamento.
+      // 2) Senão, se existe dueDate em aberto → usar dueDate.
+      // 3) Senão, se só tem diaPagamento → calcular vencimento do período atual (sem avançar mês).
+      if (pi?.paidAt && diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
+        const paidDate = new Date(pi.paidAt)
+        dataProximoPagamento = nextDueDateFromPaidAt(
+          paidDate,
+          diaPagamento,
+          pi?.periodoPagamento ?? null
+        ).toISOString()
+      } else if (dueDate) {
+        dataProximoPagamento = dueDate.toISOString()
+      } else if (diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
+        const refYear = hasMonthFilter && year != null && month != null ? year : today.getFullYear()
+        const refMonth = hasMonthFilter && year != null && month != null ? month : today.getMonth() + 1
+        dataProximoPagamento = dueDateInMonth(diaPagamento, refYear, refMonth).toISOString()
       }
 
       // Determinar mês/ano de referência para NFSe:
