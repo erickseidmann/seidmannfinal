@@ -31,26 +31,22 @@ function getLastDayOfMonth(year: number, month: number): number {
 function calculateDueDate(year: number, month: number, dueDay: number): string {
   const lastDay = getLastDayOfMonth(year, month)
   const day = Math.min(dueDay, lastDay)
+  
+  const dueDate = new Date(year, month - 1, day)
   const today = new Date()
-  const todayYear = today.getFullYear()
-  const todayMonth = today.getMonth() + 1
-  const todayDay = today.getDate()
-
-  let targetYear = year
-  let targetMonth = month
-
-  if (todayYear === year && todayMonth === month && todayDay > day) {
-    targetMonth++
-    if (targetMonth > 12) {
-      targetMonth = 1
-      targetYear++
-    }
+  today.setHours(0, 0, 0, 0)
+  
+  // Se a data de vencimento já passou, usar hoje + 3 dias como mínimo
+  if (dueDate < today) {
+    const minDate = new Date(today)
+    minDate.setDate(minDate.getDate() + 3)
+    const minYear = minDate.getFullYear()
+    const minMonth = minDate.getMonth() + 1
+    const minDay = minDate.getDate()
+    return `${minYear}-${String(minMonth).padStart(2, '0')}-${String(minDay).padStart(2, '0')}`
   }
-
-  const lastDayOfTargetMonth = getLastDayOfMonth(targetYear, targetMonth)
-  const finalDay = Math.min(day, lastDayOfTargetMonth)
-
-  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(finalDay).padStart(2, '0')}`
+  
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
 function decimalToNumber(value: Decimal | null | undefined): number {
@@ -250,7 +246,7 @@ export async function generateBulkBilling(params: {
   year: number
   month: number
   performedBy: string
-}): Promise<{ success: number; errors: Array<{ enrollmentId: string; name: string; error: string }> }> {
+}): Promise<{ success: number; skippedPaid: number; errors: Array<{ enrollmentId: string; name: string; error: string }> }> {
   const { year, month, performedBy } = params
 
   const enrollments = await prisma.enrollment.findMany({
@@ -269,10 +265,36 @@ export async function generateBulkBilling(params: {
     },
   })
 
+  // Buscar todos os pagamentos já confirmados para este mês de uma vez
+  const paidRecords = await prisma.enrollmentPaymentMonth.findMany({
+    where: { year, month, paymentStatus: 'PAGO' },
+    select: { enrollmentId: true },
+  })
+  const paidSet = new Set(paidRecords.map((r) => r.enrollmentId))
+
+  // Buscar boletos já existentes para este mês de uma vez
+  const existingInvoices = await prisma.coraInvoice.findMany({
+    where: { year, month },
+    select: { enrollmentId: true },
+  })
+  const invoiceSet = new Set(existingInvoices.map((r) => r.enrollmentId))
+
   const errors: Array<{ enrollmentId: string; name: string; error: string }> = []
   let success = 0
+  let skippedPaid = 0
 
   for (const enrollment of enrollments) {
+    // Pular se já está pago
+    if (paidSet.has(enrollment.id)) {
+      skippedPaid++
+      continue
+    }
+
+    // Pular se já tem boleto gerado
+    if (invoiceSet.has(enrollment.id)) {
+      continue
+    }
+
     try {
       await generateMonthlyBilling({
         enrollmentId: enrollment.id,
@@ -290,5 +312,5 @@ export async function generateBulkBilling(params: {
     }
   }
 
-  return { success, errors }
+  return { success, skippedPaid, errors }
 }

@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateStudentPaymentSchema } from '@/lib/finance'
+import { cancelInvoice } from '@/lib/cora/client'
 
 export async function PATCH(
   request: NextRequest,
@@ -140,6 +141,35 @@ export async function PATCH(
           // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
         },
       })
+      // Se marcou como PAGO, cancelar boleto aberto na Cora automaticamente
+      if (newMonthStatus === 'PAGO') {
+        try {
+          const coraInvoice = await prisma.coraInvoice.findUnique({
+            where: { enrollmentId_year_month: { enrollmentId, year, month } },
+          })
+          if (coraInvoice && coraInvoice.status !== 'PAID' && coraInvoice.status !== 'CANCELLED') {
+            await cancelInvoice(coraInvoice.coraInvoiceId)
+            await prisma.coraInvoice.update({
+              where: { id: coraInvoice.id },
+              data: { status: 'CANCELLED' },
+            })
+            console.log(
+              `[financeiro/alunos/${enrollmentId}] Boleto Cora cancelado automaticamente ao marcar como PAGO`,
+              {
+                coraInvoiceId: coraInvoice.coraInvoiceId,
+                year,
+                month,
+              }
+            )
+          }
+        } catch (cancelError) {
+          // Não bloquear a operação se o cancelamento falhar
+          console.error(
+            `[financeiro/alunos/${enrollmentId}] Erro ao cancelar boleto Cora:`,
+            cancelError
+          )
+        }
+      }
       if (paymentStatus !== undefined && (existingMonth?.paymentStatus !== newMonthStatus || (existingMonth?.paymentStatus == null && newMonthStatus != null))) {
         logFinanceAction({
           entityType: 'ENROLLMENT',

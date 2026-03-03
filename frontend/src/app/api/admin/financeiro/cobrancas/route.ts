@@ -107,8 +107,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      message: `${result.success} boletos gerados`,
+      message:
+        `${result.success} boletos gerados` +
+        (result.skippedPaid > 0 ? `. ${result.skippedPaid} aluno(s) já pagaram e foram ignorados.` : ''),
       success: result.success,
+      skippedPaid: result.skippedPaid,
       errors: result.errors,
     })
   } catch (error) {

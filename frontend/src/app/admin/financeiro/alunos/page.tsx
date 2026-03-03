@@ -599,23 +599,7 @@ export default function FinanceiroAlunosPage() {
     }
   }, [fetchCobrancas, fetchAlunos, selectedAno, selectedMes])
 
-  /** Polling: a cada 60s, se há cobranças OPEN ou LATE. */
-  const hasOpenOrLate = useMemo(() => {
-    if (!cobrancasMap || typeof cobrancasMap.values !== 'function') return false
-    for (const c of cobrancasMap.values()) {
-      if (c?.coraStatus === 'OPEN' || c?.coraStatus === 'LATE') return true
-    }
-    return false
-  }, [cobrancasMap])
-
-  useEffect(() => {
-    if (!hasOpenOrLate) return
-    const tick = () => {
-      fetchCobrancas(selectedAno, selectedMes).then(() => fetchAlunos(selectedAno, selectedMes))
-    }
-    const interval = setInterval(tick, 60_000)
-    return () => clearInterval(interval)
-  }, [hasOpenOrLate, selectedAno, selectedMes, fetchCobrancas, fetchAlunos])
+  // Atualização agora é somente manual via botão "Atualizar Status" (sem polling automático).
   const visibleSet = new Set(visibleFinanceKeys)
   const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
   const toggleFinanceColumn = (key: string) => {
@@ -963,6 +947,10 @@ export default function FinanceiroAlunosPage() {
         setConfirmUnpay(a)
         return
       }
+      const confirmed = window.confirm(
+        'Ao marcar como PAGO, o boleto em aberto na Cora (se existir) será cancelado automaticamente. Confirmar?'
+      )
+      if (!confirmed) return
       void applyPagoStatus(a, true)
     },
     [applyPagoStatus]
