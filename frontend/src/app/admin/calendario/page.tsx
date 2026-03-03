@@ -8,7 +8,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
@@ -275,6 +275,7 @@ function toDateKey(d: Date): string {
 
 export default function AdminCalendarioPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [view, setView] = useState<ViewType>('month')
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [lessons, setLessons] = useState<Lesson[]>([])
@@ -407,6 +408,25 @@ export default function AdminCalendarioPage() {
   } | null>(null)
 
   const weekStartForStats = useMemo(() => getMonday(currentDate), [currentDate])
+
+  // Aplicar filtro de aluno vindo da URL (?aluno=ID) sempre que mudar
+  useEffect(() => {
+    const aluno = searchParams?.get('aluno')
+    const teacher = searchParams?.get('teacher')
+    const data = searchParams?.get('data')
+    if (aluno && aluno.trim()) {
+      setSelectedStudentId(aluno.trim())
+    }
+    if (teacher && teacher.trim()) {
+      setSelectedTeacherId(teacher.trim())
+    }
+    if (data && data.trim()) {
+      const d = new Date(data)
+      if (!Number.isNaN(d.getTime())) {
+        setCurrentDate(d)
+      }
+    }
+  }, [searchParams])
 
   const activeTeachers = useMemo(
     () => teachers.filter((t) => t.status === 'ACTIVE'),

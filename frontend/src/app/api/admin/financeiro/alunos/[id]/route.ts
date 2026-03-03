@@ -53,6 +53,7 @@ export async function PATCH(
       valorHora,
       dataUltimoPagamento,
       dataProximoPagamento,
+      dataUltimaCobranca,
       dueDay,
       faturamentoTipo,
       faturamentoRazaoSocial,
@@ -94,6 +95,7 @@ export async function PATCH(
     if (valorHora !== undefined) paymentData.valorHora = valorHora ?? null
     if (dataUltimoPagamento !== undefined) paymentData.paidAt = dataUltimoPagamento ? new Date(dataUltimoPagamento) : null
     if (dataProximoPagamento !== undefined) paymentData.dueDate = dataProximoPagamento ? new Date(dataProximoPagamento) : null
+    if (dataUltimaCobranca !== undefined) paymentData.ultimaCobrancaManualAt = dataUltimaCobranca ? new Date(dataUltimaCobranca) : null
     if (dueDay !== undefined && dueDay !== null && dueDay >= 1 && dueDay <= 31) paymentData.dueDay = dueDay
     // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
 

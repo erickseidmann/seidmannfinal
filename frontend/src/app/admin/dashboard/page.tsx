@@ -7,7 +7,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
@@ -137,6 +137,8 @@ interface ListItemNovosMatriculados extends ListItemBase {
   melhoresDiasSemana?: string | null
   melhoresHorarios?: string | null
   escolaMatriculaLabel?: string | null
+  primeiraAulaStartAt?: string | null
+  primeiraAulaTeacherName?: string | null
 }
 interface ListItemTotalUser extends ListItemBase {
   role?: string
@@ -175,6 +177,8 @@ export default function AdminDashboardPage() {
   const [auditHours, setAuditHours] = useState(48)
   const [auditLoading, setAuditLoading] = useState(false)
   const [auditCount48h, setAuditCount48h] = useState<number | null>(null)
+  const [auditSearch, setAuditSearch] = useState('')
+  const [auditDate, setAuditDate] = useState('')
   const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<ListItemNovosMatriculados | null>(null)
 
   useEffect(() => {
@@ -283,6 +287,23 @@ export default function AdminDashboardPage() {
       .catch(() => setAuditActivities([]))
       .finally(() => setAuditLoading(false))
   }, [])
+
+  const filteredAuditActivities = useMemo(() => {
+    const search = auditSearch.trim().toLowerCase()
+    return auditActivities.filter((item) => {
+      if (auditDate) {
+        const d = new Date(item.createdAt)
+        const dateStr = d.toISOString().slice(0, 10)
+        if (dateStr !== auditDate) return false
+      }
+      if (!search) return true
+      return (
+        item.actorName.toLowerCase().includes(search) ||
+        item.action.toLowerCase().includes(search) ||
+        item.detail.toLowerCase().includes(search)
+      )
+    })
+  }, [auditActivities, auditSearch, auditDate])
 
   const marcarAulasAdicionadas = useCallback(
     async (enrollmentId: string) => {
@@ -711,6 +732,22 @@ export default function AdminDashboardPage() {
                       const isLoadingLink = marcandoLinkPagId === row.id
                       const linkEnviado = !!row.linkPagamentoEnviadoAt
                       const jaPagou = !!row.jaPagou
+                      const temAula = !!row.primeiraAulaStartAt
+                      const primeiraAulaDataHora = row.primeiraAulaStartAt
+                        ? (() => {
+                            const d = new Date(row.primeiraAulaStartAt)
+                            const data = d.toLocaleDateString('pt-BR', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                            })
+                            const hora = d.toLocaleTimeString('pt-BR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                            return { data, hora }
+                          })()
+                        : null
                       return (
                         <tr key={row.id} className="border-b border-gray-100">
                           <td className="py-2 pr-4">{row.nome}</td>
@@ -719,36 +756,48 @@ export default function AdminDashboardPage() {
                           <td className="py-2 pr-4">{vencFormatado}</td>
                           <td className="py-2 pr-4">{row.recebeuBoleto ? '✓ Sim' : '—'}</td>
                           <td className="py-2 pr-4">{jaPagou ? '✓ Sim' : '—'}</td>
-                          <td className="py-2 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => marcarLinkPagEnviado(row.id)}
-                              disabled={isLoadingLink || linkEnviado}
-                              className={`px-3 py-1.5 text-sm font-medium rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
-                                linkEnviado
-                                  ? 'bg-gray-200 text-gray-600 cursor-default'
-                                  : 'bg-sky-600 text-white hover:opacity-90'
-                              }`}
-                            >
-                              {isLoadingLink ? 'Salvando...' : linkEnviado ? 'Link enviado' : 'Enviei link pag'}
-                            </button>
-                            {jaPagou && (
-                              <button
-                                type="button"
-                                onClick={() => setDesignarAulaEnrollment(row)}
-                                className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
-                              >
-                                Designar aula
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => marcarAulasAdicionadas(row.id)}
-                              disabled={isLoadingAulas}
-                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {isLoadingAulas ? 'Salvando...' : 'Já adicionei aulas'}
-                            </button>
+                          <td className="py-2">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => marcarLinkPagEnviado(row.id)}
+                                  disabled={isLoadingLink || linkEnviado}
+                                  className={`px-3 py-1.5 text-sm font-medium rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
+                                    linkEnviado
+                                      ? 'bg-gray-200 text-gray-600 cursor-default'
+                                      : 'bg-sky-600 text-white hover:opacity-90'
+                                  }`}
+                                >
+                                  {isLoadingLink ? 'Salvando...' : linkEnviado ? 'Link enviado ✓' : 'Enviei link pag'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDesignarAulaEnrollment(row)}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                                >
+                                  {temAula ? 'Editar aulas' : 'Selecionar aulas'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => marcarAulasAdicionadas(row.id)}
+                                  disabled={isLoadingAulas}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isLoadingAulas ? 'Salvando...' : 'Já adicionei aulas'}
+                                </button>
+                              </div>
+                              {temAula && primeiraAulaDataHora ? (
+                                <p className="text-xs text-gray-600">
+                                  Aulas já selecionadas: começa em {primeiraAulaDataHora.data} às {primeiraAulaDataHora.hora}{' '}
+                                  com {row.primeiraAulaTeacherName || 'professor a definir'}.
+                                </p>
+                              ) : (
+                                <p className="text-xs text-amber-700">
+                                  {jaPagou ? 'Pagamento confirmado.' : 'Pagamento ainda não confirmado.'}
+                                </p>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -857,23 +906,43 @@ export default function AdminDashboardPage() {
           size="xl"
         >
           <div className="space-y-4">
-            <div className="flex items-center gap-4 flex-wrap">
-              <label className="text-sm font-medium text-gray-700">Período:</label>
-              <select
-                value={auditHours}
-                onChange={(e) => refetchAuditWithHours(Number(e.target.value))}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-orange focus:border-brand-orange"
-              >
-                <option value={48}>Últimas 48 horas</option>
-                <option value={72}>Últimas 72 horas</option>
-                <option value={168}>Últimos 7 dias</option>
-                <option value={336}>Últimos 14 dias</option>
-                <option value={720}>Últimos 30 dias</option>
-              </select>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700">Período:</label>
+                <select
+                  value={auditHours}
+                  onChange={(e) => refetchAuditWithHours(Number(e.target.value))}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-orange focus:border-brand-orange"
+                >
+                  <option value={48}>Últimas 48 horas</option>
+                  <option value={72}>Últimas 72 horas</option>
+                  <option value={168}>Últimos 7 dias</option>
+                  <option value={336}>Últimos 14 dias</option>
+                  <option value={720}>Últimos 30 dias</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-700">Data:</label>
+                <input
+                  type="date"
+                  value={auditDate}
+                  onChange={(e) => setAuditDate(e.target.value)}
+                  className="input h-9 text-sm py-1 px-2"
+                />
+              </div>
+              <div className="flex-1 min-w-[160px]">
+                <input
+                  type="text"
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                  placeholder="Filtrar por nome, ação ou detalhe"
+                  className="input w-full h-9 text-sm"
+                />
+              </div>
             </div>
             {auditLoading ? (
               <p className="text-gray-500">Carregando...</p>
-            ) : auditActivities.length === 0 ? (
+            ) : filteredAuditActivities.length === 0 ? (
               <p className="text-gray-500">Nenhuma ação registrada neste período.</p>
             ) : (
               <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
@@ -887,7 +956,7 @@ export default function AdminDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {auditActivities.map((item) => (
+                    {filteredAuditActivities.map((item) => (
                       <tr key={item.id} className="border-b border-gray-100">
                         <td className="py-2 pr-4 text-sm text-gray-600 whitespace-nowrap">
                           {formatDateTime(item.createdAt)}

@@ -179,6 +179,7 @@ export async function PUT(
         },
         select: {
           id: true,
+          enrollmentId: true,
           startAt: true,
           durationMinutes: true,
           enrollment: {
@@ -216,10 +217,15 @@ export async function PUT(
         const conflictsForDisplay = allOutside.filter((o) => new Date(o.lesson.startAt) <= twoWeeksEnd)
         const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
         const conflicts = conflictsForDisplay.map((o) => {
+          const startDate = new Date(o.lesson.startAt)
+          const data = startDate.toLocaleDateString('pt-BR')
           const hora = Math.floor(o.startMinutes / 60).toString().padStart(2, '0')
           const minuto = (o.startMinutes % 60).toString().padStart(2, '0')
           return {
             aluno: o.lesson.enrollment?.nome ?? 'Aluno desconhecido',
+            enrollmentId: o.lesson.enrollmentId,
+            startAt: o.lesson.startAt,
+            data,
             dia: diasSemana[o.dayOfWeek],
             horario: `${hora}:${minuto}`,
           }

@@ -337,6 +337,7 @@ export default function AdminAlunosPage() {
     expected: number
     actual: number
   } | null>(null)
+  const [agendaAlunoId, setAgendaAlunoId] = useState<string | null>(null)
   // Por padrão ocultas: email, cpf, endereco, valorMensalidade, trackingCode, criadoEm — aparecem só se o usuário selecionar em "Colunas"
   const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
@@ -552,12 +553,42 @@ export default function AdminAlunosPage() {
 
   const handleStatusChange = useCallback(
     async (s: Student, newStatus: string) => {
+      let inactiveFrom: string | undefined
+      if (newStatus === 'INACTIVE') {
+        const todayIso = new Date().toISOString().slice(0, 10)
+        const answer = window.prompt(
+          'A partir de que data você quer inativar o aluno? (formato AAAA-MM-DD)',
+          todayIso
+        )
+        if (answer === null) {
+          // usuário cancelou
+          return
+        }
+        const trimmed = answer.trim()
+        if (!trimmed) {
+          inactiveFrom = todayIso
+        } else {
+          const d = new Date(trimmed)
+          if (Number.isNaN(d.getTime())) {
+            setToast({
+              message: 'Data inválida. Use o formato AAAA-MM-DD.',
+              type: 'error',
+            })
+            return
+          }
+          inactiveFrom = trimmed
+        }
+      }
       try {
         const res = await fetch(`/api/admin/enrollments/${s.id}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ status: newStatus }),
+          body: JSON.stringify(
+            newStatus === 'INACTIVE'
+              ? { status: newStatus, inactiveFrom }
+              : { status: newStatus }
+          ),
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
@@ -1201,13 +1232,36 @@ export default function AdminAlunosPage() {
   const handleBulkExcludeStudents = () => {
     const ids = [...selectedStudentIds]
     if (ids.length === 0) return
+    const todayIso = new Date().toISOString().slice(0, 10)
     const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
     setConfirmModal({
       title: 'Marcar alunos como Inativos',
-      message: `Deseja marcar ${ids.length} aluno(s) selecionado(s) como Inativo? Essa ação vai cancelar todas as aulas para frente a partir de ${hoje}.`,
+      message: `Deseja marcar ${ids.length} aluno(s) selecionado(s) como Inativo? Essa ação vai excluir todas as aulas na agenda a partir da data de inativação que você informar.`,
       variant: 'danger',
       confirmLabel: 'Sim, marcar como Inativo',
       onConfirm: async () => {
+        const answer = window.prompt(
+          'A partir de que data você quer inativar os alunos selecionados? (formato AAAA-MM-DD)',
+          todayIso
+        )
+        if (answer === null) {
+          return
+        }
+        const trimmed = answer.trim()
+        let inactiveFrom: string
+        if (!trimmed) {
+          inactiveFrom = todayIso
+        } else {
+          const d = new Date(trimmed)
+          if (Number.isNaN(d.getTime())) {
+            setToast({
+              message: 'Data inválida. Use o formato AAAA-MM-DD.',
+              type: 'error',
+            })
+            return
+          }
+          inactiveFrom = trimmed
+        }
         setBulkActionLoading(true)
         try {
           let ok = 0
@@ -1216,7 +1270,7 @@ export default function AdminAlunosPage() {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'include',
-              body: JSON.stringify({ status: 'INACTIVE' }),
+              body: JSON.stringify({ status: 'INACTIVE', inactiveFrom }),
             })
             const json = await res.json()
             if (res.ok && json.ok) ok++
@@ -1381,9 +1435,13 @@ export default function AdminAlunosPage() {
       sortable: true,
       sortValue: (s: Student) => (s.agenda ?? '').toLowerCase(),
       render: (s: Student) => (
-        <span title={s.agenda ?? undefined} className="max-w-[200px] truncate block">
-          {s.agenda || '—'}
-        </span>
+        <button
+          type="button"
+          onClick={() => router.push(`/admin/calendario?aluno=${s.id}`)}
+          className="inline-flex items-center px-2 py-1 text-sm font-medium rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+        >
+          Ver agenda
+        </button>
       ),
     },
     {

@@ -102,18 +102,12 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar alunos sem aula:', err)
     }
 
-    // Novos alunos matriculados (pelo formulário, pendentes de "já adicionei aulas" e ainda sem aulas designadas)
+    // Novos alunos matriculados (pelo formulário, pendentes de "já adicionei aulas" – podem ou não ter aulas já marcadas)
     let novosMatriculadosCount = 0
     try {
-      const withLessons = await prisma.lesson.groupBy({
-        by: ['enrollmentId'],
-        _count: { id: true },
-      })
-      const idsComAulas = withLessons.map((l) => l.enrollmentId)
       novosMatriculadosCount = await prisma.enrollment.count({
         where: {
           pendenteAdicionarAulas: true,
-          ...(idsComAulas.length > 0 && { id: { notIn: idsComAulas } }),
         },
       })
     } catch (err) {

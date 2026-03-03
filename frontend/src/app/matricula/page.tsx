@@ -45,6 +45,7 @@ interface FormErrors {
   metodoPagamento?: string
   cep?: string
   rua?: string
+  bairro?: string
   numero?: string
   cidade?: string
   estado?: string
@@ -90,7 +91,7 @@ const HORARIOS = [
   { value: 'noite', label: 'Noite (18h-22h)' },
 ] as const
 
-async function buscarCep(cep: string): Promise<{ logradouro: string; localidade: string; uf: string } | null> {
+async function buscarCep(cep: string): Promise<{ logradouro: string; bairro: string; localidade: string; uf: string } | null> {
   const limpo = cep.replace(/\D/g, '')
   if (limpo.length !== 8) return null
   try {
@@ -99,6 +100,7 @@ async function buscarCep(cep: string): Promise<{ logradouro: string; localidade:
     if (data.erro) return null
     return {
       logradouro: data.logradouro || '',
+      bairro: data.bairro || '',
       localidade: data.localidade || '',
       uf: data.uf || '',
     }
@@ -159,6 +161,7 @@ function MatriculaPageContent() {
     metodoPagamento: '',
     cep: '',
     rua: '',
+  bairro: '',
     numero: '',
     complemento: '',
     cidade: '',
@@ -265,6 +268,7 @@ function MatriculaPageContent() {
     const cepOk = formData.cep?.replace(/\D/g, '').length === 8
     if (!cepOk) newErrors.cep = 'CEP é obrigatório e deve ter 8 dígitos'
     if (!formData.rua?.trim()) newErrors.rua = 'Rua é obrigatória'
+    if (!formData.bairro?.trim()) newErrors.bairro = 'Bairro é obrigatório'
     if (!formData.numero?.trim()) newErrors.numero = 'Número é obrigatório'
     if (!formData.cidade?.trim()) newErrors.cidade = 'Cidade é obrigatória'
     if (!formData.estado?.trim()) newErrors.estado = 'Estado é obrigatório'
@@ -373,6 +377,7 @@ function MatriculaPageContent() {
           metodoPagamento: formData.metodoPagamento || null,
           cep: formData.cep?.replace(/\D/g, '').slice(0, 8) || null,
           rua: formData.rua?.trim() || null,
+          bairro: formData.bairro?.trim() || null,
           cidade: formData.cidade?.trim() || null,
           estado: formData.estado?.trim().slice(0, 2) || null,
           numero: formData.numero?.trim() || null,
@@ -1075,7 +1080,7 @@ function MatriculaPageContent() {
                     </select>
                     {errors.metodoPagamento && <p className="mt-1 text-sm text-red-600">{errors.metodoPagamento}</p>}
                   </div>
-                  <div className="grid md:grid-cols-2 gap-4">
+                  <div className="grid md:grid-cols-3 gap-4">
                     <div>
                       <label htmlFor="cep" className="block text-sm font-semibold text-gray-700 mb-2">
                         CEP <span className="text-red-500">*</span>
@@ -1101,6 +1106,7 @@ function MatriculaPageContent() {
                               setFormData((prev) => ({
                                 ...prev,
                                 rua: end.logradouro || prev.rua,
+                                bairro: end.bairro || prev.bairro,
                                 cidade: end.localidade || prev.cidade,
                                 estado: end.uf || prev.estado,
                               }))
@@ -1130,6 +1136,21 @@ function MatriculaPageContent() {
                         className={`input w-full ${errors.rua ? 'border-red-500 focus:ring-red-500' : ''}`}
                       />
                       {errors.rua && <p className="mt-1 text-sm text-red-600">{errors.rua}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="bairro" className="block text-sm font-semibold text-gray-700 mb-2">
+                        Bairro <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="bairro"
+                        name="bairro"
+                        value={formData.bairro}
+                        onChange={handleChange}
+                        placeholder="Bairro"
+                        className={`input w-full ${errors.bairro ? 'border-red-500 focus:ring-red-500' : ''}`}
+                      />
+                      {errors.bairro && <p className="mt-1 text-sm text-red-600">{errors.bairro}</p>}
                     </div>
                   </div>
                   <div className="grid md:grid-cols-2 gap-4">
@@ -1327,7 +1348,7 @@ function MatriculaPageContent() {
               {step === 3 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <p className="text-sm text-amber-900">
-                    <strong>Sua matrícula só será confirmada após o pagamento.</strong> No sistema, só poderemos agendar a aula para o aluno matriculado com até 8 dias de antecedência da data de pagamento.
+                    <strong>Sua matrícula só será confirmada após o pagamento.</strong> No sistema, só poderemos agendar a aula apos confirmação do pagamento.
                   </p>
                 </div>
               )}

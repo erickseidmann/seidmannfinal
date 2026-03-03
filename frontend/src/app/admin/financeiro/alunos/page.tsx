@@ -40,6 +40,7 @@ interface AlunoFinanceiro {
   periodoPagamento: string | null
   dataUltimoPagamento: string | null
   dataProximoPagamento: string | null
+  dataUltimaCobranca: string | null
   diaPagamento: number | null
   notaFiscalEmitida: boolean | null
   email: string
@@ -540,6 +541,7 @@ export default function FinanceiroAlunosPage() {
     { key: 'periodo', label: 'Período', fixed: false },
     { key: 'ultimoPag', label: 'Último pag.', fixed: false },
     { key: 'proxPag', label: 'Próx. pag.', fixed: false },
+    { key: 'ultimaCobranca', label: 'Data da última cobrança', fixed: false },
     { key: 'nfEmitida', label: 'NF emitida?', fixed: false },
     { key: 'acoes', label: 'Ações', fixed: true },
   ] as const
@@ -632,6 +634,8 @@ export default function FinanceiroAlunosPage() {
   const [gerarCobrancasModalOpen, setGerarCobrancasModalOpen] = useState(false)
   const [gerarCobrancasLoading, setGerarCobrancasLoading] = useState(false)
   const [gerarCobrancaIndividualLoading, setGerarCobrancaIndividualLoading] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<'default' | 'nome' | 'proxPag'>('default')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   const filteredAlunos = useMemo(() => {
     let list = [...alunosNoMes]
@@ -670,8 +674,43 @@ export default function FinanceiroAlunosPage() {
         list = list.filter((a) => a.escolaMatricula === filterEscola)
       }
     }
+    // Ordenação
+    list.sort((a, b) => {
+      const statusOrder = (s: 'PAGO' | 'ATRASADO' | 'PENDING') =>
+        s === 'ATRASADO' ? 0 : s === 'PENDING' ? 1 : 2
+      if (sortKey === 'default') {
+        // Padrão: atrasados primeiro, depois pendentes, depois pagos.
+        // Dentro de cada grupo, ordenar por data de vencimento (dataProximoPagamento), depois por nome.
+        const sa = getEffectiveStatus(a)
+        const sb = getEffectiveStatus(b)
+        const pa = statusOrder(sa)
+        const pb = statusOrder(sb)
+        if (pa !== pb) return pa - pb
+        const da = a.dataProximoPagamento ? new Date(a.dataProximoPagamento).getTime() : Number.POSITIVE_INFINITY
+        const db = b.dataProximoPagamento ? new Date(b.dataProximoPagamento).getTime() : Number.POSITIVE_INFINITY
+        if (da !== db) return da - db
+        return (a.nome ?? '').localeCompare(b.nome ?? '')
+      }
+      // Ordenações customizadas escolhidas pelo usuário
+      let va: string | number = ''
+      let vb: string | number = ''
+      if (sortKey === 'nome') {
+        va = a.nome ?? ''
+        vb = b.nome ?? ''
+      } else if (sortKey === 'proxPag') {
+        const da = a.dataProximoPagamento ? new Date(a.dataProximoPagamento).getTime() : 0
+        const db = b.dataProximoPagamento ? new Date(b.dataProximoPagamento).getTime() : 0
+        va = da
+        vb = db
+      }
+      const cmp =
+        typeof va === 'number' && typeof vb === 'number'
+          ? va - vb
+          : String(va).localeCompare(String(vb))
+      return sortDir === 'asc' ? cmp : -cmp
+    })
     return list
-  }, [alunosNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola])
+  }, [alunosNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
@@ -703,6 +742,17 @@ export default function FinanceiroAlunosPage() {
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
+    })
+  }
+
+  const handleSort = (key: 'default' | 'nome' | 'proxPag') => {
+    setSortKey((prev) => {
+      if (prev === key && key !== 'default') {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+        return prev
+      }
+      setSortDir('asc')
+      return key
     })
   }
 
@@ -853,6 +903,7 @@ export default function FinanceiroAlunosPage() {
       else if (field === 'periodoPagamento') body.periodoPagamento = value
       else if (field === 'dataUltimoPagamento') body.dataUltimoPagamento = value || null
       else if (field === 'dataProximoPagamento') body.dataProximoPagamento = value || null
+      else if (field === 'dataUltimaCobranca') body.dataUltimaCobranca = value || null
       // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
       body.year = selectedAno
       body.month = selectedMes
@@ -1617,6 +1668,7 @@ export default function FinanceiroAlunosPage() {
                         if (col.key === 'periodo') return PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL'] ?? 'Men.'
                         if (col.key === 'ultimoPag') return formatDate(a.dataUltimoPagamento)
                         if (col.key === 'proxPag') return formatDate(a.dataProximoPagamento)
+                        if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
                         if (col.key === 'nfEmitida') return a.notaFiscalEmitida === true ? 'Emitida' : 'Em aberto'
                         if (col.key === 'acoes') return ''
                         return ''
@@ -1652,19 +1704,39 @@ export default function FinanceiroAlunosPage() {
                   <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
                     {/* coluna de seleção */}
                   </th>
-                  {displayColumns.map((col) => (
-                    <th
-                      key={col.key}
-                      className={
-                        col.key === 'valorMensal' || col.key === 'valorHora' ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase' :
-                        col.key === 'nfEmitida' ? 'px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase' :
-                        col.key === 'acoes' ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase' :
-                        'px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase'
-                      }
-                    >
-                      {col.label}
-                    </th>
-                  ))}
+                  {displayColumns.map((col) => {
+                    const baseClass =
+                      col.key === 'valorMensal' || col.key === 'valorHora'
+                        ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase'
+                        : col.key === 'nfEmitida'
+                          ? 'px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase'
+                          : col.key === 'acoes'
+                            ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase'
+                            : 'px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase'
+                    const isSortableNome = col.key === 'aluno'
+                    const isSortableProxPag = col.key === 'proxPag'
+                    const showSort =
+                      (isSortableNome && sortKey === 'nome') ||
+                      (isSortableProxPag && sortKey === 'proxPag')
+                    const arrow =
+                      !showSort ? '' : sortDir === 'asc' ? '↑' : '↓'
+                    return (
+                      <th key={col.key} className={baseClass}>
+                        {isSortableNome || isSortableProxPag ? (
+                          <button
+                            type="button"
+                            onClick={() => handleSort(isSortableNome ? 'nome' : 'proxPag')}
+                            className="inline-flex items-center gap-1"
+                          >
+                            <span>{col.label}</span>
+                            {showSort && <span>{arrow}</span>}
+                          </button>
+                        ) : (
+                          col.label
+                        )}
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1852,6 +1924,17 @@ export default function FinanceiroAlunosPage() {
                         />
                       ))}
                       {displayColumns.some((c) => c.key === 'proxPag') && EdCell('dataProximoPagamento', formatDate(a.dataProximoPagamento), (
+                        <input
+                          type="date"
+                          className="input w-full py-1 text-sm"
+                          value={String(cellValue).slice(0, 10)}
+                          onChange={(e) => setCellValue(e.target.value)}
+                          onBlur={saveCell}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditingCell(null) }}
+                          autoFocus
+                        />
+                      ))}
+                      {displayColumns.some((c) => c.key === 'ultimaCobranca') && EdCell('dataUltimaCobranca', formatDate(a.dataUltimaCobranca), (
                         <input
                           type="date"
                           className="input w-full py-1 text-sm"

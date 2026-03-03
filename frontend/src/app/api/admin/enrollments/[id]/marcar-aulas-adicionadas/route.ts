@@ -32,13 +32,37 @@ export async function PATCH(
 
     const enrollment = await prisma.enrollment.findUnique({
       where: { id },
-      select: { id: true, pendenteAdicionarAulas: true },
+      select: {
+        id: true,
+        pendenteAdicionarAulas: true,
+        coraInvoices: {
+          select: { status: true },
+          orderBy: { dueDate: 'asc' },
+          take: 1,
+        },
+        paymentMonths: {
+          select: { year: true, month: true, paymentStatus: true },
+          orderBy: [{ year: 'asc' }, { month: 'asc' }],
+          take: 1,
+        },
+      },
     })
 
     if (!enrollment) {
       return NextResponse.json(
         { ok: false, message: 'Matrícula não encontrada' },
         { status: 404 }
+      )
+    }
+
+    const cora = enrollment.coraInvoices[0]
+    const pm = enrollment.paymentMonths[0]
+    const jaPagou = cora?.status === 'PAID' || pm?.paymentStatus === 'PAGO'
+
+    if (!jaPagou) {
+      return NextResponse.json(
+        { ok: false, message: 'Pagamento ainda não confirmado. Confirme o pagamento antes de remover da lista.' },
+        { status: 400 }
       )
     }
 

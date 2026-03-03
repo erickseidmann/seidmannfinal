@@ -83,8 +83,44 @@ export async function GET(request: NextRequest) {
           ? { where: { year, month }, take: 1 }
           : false,
         _count: { select: { financeObservations: true } },
+        coraInvoices: { orderBy: { criadoEm: 'desc' }, take: 1 },
       },
     })
+
+    const enrollmentIds = enrollments.map((e) => e.id)
+
+    // Último e-mail de cobrança enviado (manual e/ou automações)
+    const [invoiceSentAuditMax, paymentNotificationMax] = await Promise.all([
+      prisma.financeAuditLog.groupBy({
+        by: ['entityId'],
+        where: {
+          entityType: 'ENROLLMENT',
+          action: 'INVOICE_SENT',
+          entityId: { in: enrollmentIds },
+        },
+        _max: { criadoEm: true },
+      }),
+      prisma.paymentNotification.groupBy({
+        by: ['enrollmentId'],
+        where: {
+          enrollmentId: { in: enrollmentIds },
+          success: true,
+        },
+        _max: { sentAt: true },
+      }),
+    ])
+
+    const emailSentMap = new Map<string, Date>()
+    for (const row of invoiceSentAuditMax) {
+      const d = row._max.criadoEm
+      if (d) emailSentMap.set(row.entityId, d)
+    }
+    for (const row of paymentNotificationMax) {
+      const d = row._max.sentAt
+      if (!d) continue
+      const prev = emailSentMap.get(row.enrollmentId)
+      if (!prev || d > prev) emailSentMap.set(row.enrollmentId, d)
+    }
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -180,6 +216,16 @@ export async function GET(request: NextRequest) {
           ? enr.enderecoExterior.trim()
           : [enr.rua, enr.numero, enr.complemento, enr.cidade, enr.estado, enr.cep].filter(Boolean).join(', ') || null
       const enrFaturamento = e as { faturamentoTipo?: string | null; faturamentoRazaoSocial?: string | null; faturamentoCnpj?: string | null; faturamentoEmail?: string | null; faturamentoEndereco?: string | null; faturamentoDescricaoNfse?: string | null }
+
+      const manualChargeAt = pi?.ultimaCobrancaManualAt ?? null
+      const emailSentAt = emailSentMap.get(e.id) ?? null
+      const coraCreatedAt = (e as { coraInvoices?: { criadoEm: Date }[] }).coraInvoices?.[0]?.criadoEm ?? null
+      const lastChargeAt = [manualChargeAt, emailSentAt, coraCreatedAt].reduce<Date | null>((acc, d) => {
+        if (!d) return acc
+        if (!acc) return d
+        return d > acc ? d : acc
+      }, null)
+
       return {
         id: e.id,
         nome: e.nome,
@@ -206,6 +252,7 @@ export async function GET(request: NextRequest) {
         periodoPagamento: pi?.periodoPagamento ?? null,
         dataUltimoPagamento: pi?.paidAt?.toISOString() ?? null,
         dataProximoPagamento,
+        dataUltimaCobranca: lastChargeAt ? lastChargeAt.toISOString() : null,
         diaPagamento: diaPagamento ?? null,
         notaFiscalEmitida: nfEmitida, // Calculado automaticamente da tabela nfse_invoices
         email: e.email,

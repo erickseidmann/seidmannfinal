@@ -356,6 +356,7 @@ model PaymentInfo {
   reminderEnabled     Boolean         @default(true) @map("reminder_enabled")
   paymentStatus       String?         @map("payment_status") // PAGO, ATRASADO, PENDING
   paidAt              DateTime?       @map("paid_at") // data ├║ltimo pagamento
+  ultimaCobrancaManualAt DateTime?    @map("ultima_cobranca_manual_at")
   transactionRef      String?         @map("transaction_ref") // Refer├¬ncia da transa├º├úo
   lembrete            Boolean         @default(false) // Mantido para compatibilidade
   quemPaga            String?         @db.VarChar(255) @map("quem_paga") // Quem paga (funcion├írio financeiro adiciona)

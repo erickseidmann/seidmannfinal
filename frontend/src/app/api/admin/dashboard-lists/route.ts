@@ -49,16 +49,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'novosMatriculados') {
-      const withLessons = await prisma.lesson.groupBy({
-        by: ['enrollmentId'],
-        _count: { id: true },
-      })
-      const idsComAulas = withLessons.map((l) => l.enrollmentId)
+      const hoje = new Date()
 
       const enrollments = await prisma.enrollment.findMany({
         where: {
           pendenteAdicionarAulas: true,
-          ...(idsComAulas.length > 0 && { id: { notIn: idsComAulas } }),
         },
         select: {
           id: true,
@@ -83,11 +78,18 @@ export async function GET(request: NextRequest) {
             orderBy: [{ year: 'asc' }, { month: 'asc' }],
             take: 1,
           },
+          lessons: {
+            where: { startAt: { gte: hoje } },
+            orderBy: { startAt: 'asc' },
+            take: 1,
+            select: {
+              startAt: true,
+              teacher: { select: { nome: true } },
+            },
+          },
         },
         orderBy: { criadoEm: 'desc' },
       })
-
-      const hoje = new Date()
       const anoAtual = hoje.getFullYear()
       const mesAtual = hoje.getMonth() + 1
 
@@ -106,6 +108,9 @@ export async function GET(request: NextRequest) {
           const pm = e.paymentMonths[0]
           const recebeuBoleto = !!cora?.boletoUrl || !!cora
           const jaPagou = cora?.status === 'PAID' || pm?.paymentStatus === 'PAGO'
+          const primeiraAula = (e as any).lessons?.[0] as
+            | { startAt: Date; teacher?: { nome?: string | null } | null }
+            | undefined
 
           return {
             id: e.id,
@@ -115,6 +120,8 @@ export async function GET(request: NextRequest) {
             dataPagamentoAgendada: dataPagamentoAgendada.toISOString(),
             recebeuBoleto,
             jaPagou,
+            primeiraAulaStartAt: primeiraAula?.startAt?.toISOString() ?? null,
+            primeiraAulaTeacherName: primeiraAula?.teacher?.nome ?? null,
             frequenciaSemanal: e.frequenciaSemanal ?? null,
             tempoAulaMinutos: e.tempoAulaMinutos ?? null,
             idioma: e.idioma,

@@ -124,7 +124,9 @@ export default function AdminProfessoresPage() {
   const [availabilityChecked, setAvailabilityChecked] = useState<Set<string>>(new Set())
   const [newSlotForm, setNewSlotForm] = useState({ dayOfWeek: 1, startTime: '09:00', endTime: '12:00' })
   const [addingSlot, setAddingSlot] = useState(false)
-  const [availabilityConflicts, setAvailabilityConflicts] = useState<Array<{ aluno: string; dia: string; horario: string }> | null>(null)
+  const [availabilityConflicts, setAvailabilityConflicts] = useState<
+    Array<{ aluno: string; enrollmentId: string; startAt: string; data: string; dia: string; horario: string }>
+  | null>(null)
   const [copyAvailabilityModalOpen, setCopyAvailabilityModalOpen] = useState(false)
   const [copyFromTeacherId, setCopyFromTeacherId] = useState<string>('')
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set())
@@ -2356,10 +2358,46 @@ export default function AdminProfessoresPage() {
                   <p className="text-sm font-semibold text-red-800 mb-2">
                     O professor já tem aulas na agenda fora desses horários. Troque esses alunos primeiro:
                   </p>
-                  <ul className="list-disc list-inside space-y-1 text-sm text-red-700">
-                    {availabilityConflicts.map((conflict, idx) => (
-                      <li key={idx}>
-                        <strong>{conflict.aluno}</strong> - {conflict.dia} às {conflict.horario}
+                  <ul className="space-y-2 text-sm text-red-700">
+                    {Object.values(
+                      availabilityConflicts.reduce<Record<string, { aluno: string; itens: typeof availabilityConflicts }>>(
+                        (acc, c) => {
+                          if (!acc[c.enrollmentId]) {
+                            acc[c.enrollmentId] = { aluno: c.aluno, itens: [] }
+                          }
+                          acc[c.enrollmentId].itens.push(c)
+                          return acc
+                        },
+                        {}
+                      )
+                    ).map((group) => (
+                      <li key={group.itens[0]?.enrollmentId} className="space-y-1">
+                        <div className="font-semibold text-red-800">{group.aluno}</div>
+                        <ul className="ml-4 space-y-1 list-disc">
+                          {group.itens.map((conflict) => (
+                            <li key={conflict.startAt} className="flex items-center justify-between gap-2">
+                              <span>
+                                {conflict.dia}, {conflict.data} às {conflict.horario}
+                              </span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="text-xs"
+                                onClick={() => {
+                                  const dateIso = conflict.startAt.slice(0, 10)
+                                  router.push(
+                                    `/admin/calendario?aluno=${conflict.enrollmentId}&teacher=${
+                                      availabilityModalTeacher?.id ?? ''
+                                    }&data=${dateIso}`
+                                  )
+                                }}
+                              >
+                                Editar aula
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
                       </li>
                     ))}
                   </ul>

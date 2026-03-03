@@ -19,6 +19,7 @@ export const updateStudentPaymentSchema = z.object({
   ),
   dataUltimoPagamento: z.string().nullish(),
   dataProximoPagamento: z.string().nullish(),
+  dataUltimaCobranca: z.string().nullish(),
   dueDay: z.number().int().min(1).max(31).optional(),
   // Dados de faturamento para NFSe em nome de empresa
   faturamentoTipo: z.enum(['ALUNO', 'EMPRESA']).nullish(),

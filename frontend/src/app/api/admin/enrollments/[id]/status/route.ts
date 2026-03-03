@@ -31,7 +31,7 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { status, activationDate } = body
+    const { status, activationDate, inactiveFrom } = body
 
     // Validações
     if (!status || typeof status !== 'string') {
@@ -72,25 +72,37 @@ export async function PATCH(
       )
     }
 
-    // Se status mudou para INACTIVE, cancelar todas as aulas futuras (PAUSED não cancela, apenas bloqueia ações)
+    // Se status mudou para INACTIVE, excluir todas as aulas a partir da data escolhida
     const oldStatus = enrollment.status
     if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
-      const hoje = new Date()
-      hoje.setHours(0, 0, 0, 0)
-      await prisma.lesson.updateMany({
+      let inativarAPartirDe = new Date()
+      if (inactiveFrom && typeof inactiveFrom === 'string') {
+        const d = new Date(inactiveFrom)
+        if (!Number.isNaN(d.getTime())) {
+          inativarAPartirDe = d
+        }
+      }
+      inativarAPartirDe.setHours(0, 0, 0, 0)
+      await prisma.lesson.deleteMany({
         where: {
           enrollmentId: id,
-          startAt: { gte: hoje },
-          status: { not: 'CANCELLED' },
+          startAt: { gte: inativarAPartirDe },
         },
-        data: { status: 'CANCELLED' },
       })
     }
 
     // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao marcar PAUSED grava pausedAt; ao voltar para ACTIVE limpa ambos
     const updateData: { status: EnrollmentStatus; inactiveAt?: Date | null; pausedAt?: Date | null; activationDate?: Date | null } = { status: status as EnrollmentStatus }
     if (status === 'INACTIVE') {
-      updateData.inactiveAt = new Date()
+      let inactiveAt = new Date()
+      if (inactiveFrom && typeof inactiveFrom === 'string') {
+        const d = new Date(inactiveFrom)
+        if (!Number.isNaN(d.getTime())) {
+          inactiveAt = d
+        }
+      }
+      inactiveAt.setHours(0, 0, 0, 0)
+      updateData.inactiveAt = inactiveAt
       updateData.pausedAt = null
       updateData.activationDate = null
     } else if (status === 'PAUSED') {
