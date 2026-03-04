@@ -247,10 +247,21 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // No modo mês: só exibir professores cuja data término caia no mês/ano selecionado
+    let professoresFinais = list
+    if (useMonthMode && year != null && month != null) {
+      professoresFinais = list.filter((p) => {
+        const termino = new Date(p.dataTermino + 'T12:00:00')
+        const anoTermino = termino.getFullYear()
+        const mesTermino = termino.getMonth() + 1
+        return anoTermino === year && mesTermino === month
+      })
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
-        professores: list,
+        professores: professoresFinais,
         year: useMonthMode ? year : null,
         month: useMonthMode ? month : null,
       },

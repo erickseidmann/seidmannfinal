@@ -11,7 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Bell, RefreshCw } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -137,8 +137,8 @@ export default function FinanceiroProfessoresPage() {
   const [notifyFile, setNotifyFile] = useState<File | null>(null)
   const [sendingNotify, setSendingNotify] = useState(false)
   const [filterBusca, setFilterBusca] = useState('')
-  const [filterPago, setFilterPago] = useState(false)
-  const [filterProntoPagar, setFilterProntoPagar] = useState(false)
+  /** Filtro por status: '' = todos, 'em_aberto' | 'pronto_pagar' | 'pago' */
+  const [filterStatus, setFilterStatus] = useState<'' | 'em_aberto' | 'pronto_pagar' | 'pago'>('')
   const [filterProximosDias, setFilterProximosDias] = useState(false)
   const [filterDataDe, setFilterDataDe] = useState('')
   const [filterDataAte, setFilterDataAte] = useState('')
@@ -196,12 +196,24 @@ export default function FinanceiroProfessoresPage() {
   }, [showFilterData])
 
   const cubos = useMemo(() => {
+    // Valor estimado = soma (valor/hora × horas estimadas) de cada professor
+    const valorEstimado = professores.reduce(
+      (s, p) => s + (p.valorPorHora ?? 0) * (p.totalHorasEstimadas ?? 0),
+      0
+    )
+    // Valor real de horas preenchidas = soma (horas registradas × valor/hora) de cada professor
+    const valorRealHorasPreenchidas = professores.reduce(
+      (s, p) => s + (p.totalHorasRegistradas ?? 0) * (p.valorPorHora ?? 0),
+      0
+    )
     const totalAPagar = professores.reduce((s, p) => s + p.valorAPagar, 0)
     const valoresPagos = professores
       .filter((p) => p.statusPagamento === 'PAGO')
       .reduce((s, p) => s + p.valorAPagar, 0)
     const totalProfessoresAtivos = professores.length
     return {
+      valorEstimado: Math.round(valorEstimado * 100) / 100,
+      valorRealHorasPreenchidas: Math.round(valorRealHorasPreenchidas * 100) / 100,
       totalAPagar: Math.round(totalAPagar * 100) / 100,
       valoresPagos: Math.round(valoresPagos * 100) / 100,
       totalProfessoresAtivos,
@@ -216,7 +228,7 @@ export default function FinanceiroProfessoresPage() {
   }, [professores])
 
   /** Próxima data de vencimento (data término) entre os em aberto, e valor estimado nessa data */
-  const { proximaDataPagamento, valorEstimadoProximoPagamento } = useMemo(() => {
+  const { proximaDataPagamento, valorEstimadoProximoPagamento, listaProximaData } = useMemo(() => {
     const hoje = new Date()
     hoje.setHours(0, 0, 0, 0)
     const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
@@ -226,18 +238,20 @@ export default function FinanceiroProfessoresPage() {
       return termino.getTime() >= hoje.getTime()
     })
     if (comVencimentoFuturo.length === 0) {
-      return { proximaDataPagamento: null as string | null, valorEstimadoProximoPagamento: 0 }
+      return { proximaDataPagamento: null as string | null, valorEstimadoProximoPagamento: 0, listaProximaData: [] as ProfessorFinanceiro[] }
     }
     const datasOrdenadas = [...new Set(comVencimentoFuturo.map((p) => p.dataTermino))].sort()
     const proximaData = datasOrdenadas[0]
-    const valor = comVencimentoFuturo
-      .filter((p) => p.dataTermino === proximaData)
-      .reduce((s, p) => s + p.valorAPagar, 0)
+    const lista = comVencimentoFuturo.filter((p) => p.dataTermino === proximaData)
+    const valor = lista.reduce((s, p) => s + p.valorAPagar, 0)
     return {
       proximaDataPagamento: proximaData,
       valorEstimadoProximoPagamento: Math.round(valor * 100) / 100,
+      listaProximaData: lista,
     }
   }, [professores])
+
+  const [listCuboOpen, setListCuboOpen] = useState<null | 'proximaData' | 'atrasados'>(null)
 
   const tabelaData = useMemo(() => {
     let list = professores
@@ -250,11 +264,13 @@ export default function FinanceiroProfessoresPage() {
       list = list.filter((p) => p.nome.toLowerCase().includes(busca))
     }
 
-    if (filterPago) {
+    // Filtro por status (dropdown)
+    if (filterStatus === 'pago') {
       list = list.filter((p) => p.statusPagamento === 'PAGO')
-    }
-    if (filterProntoPagar) {
+    } else if (filterStatus === 'pronto_pagar') {
       list = list.filter((p) => p.pagamentoProntoParaFazer && p.statusPagamento === 'EM_ABERTO')
+    } else if (filterStatus === 'em_aberto') {
+      list = list.filter((p) => p.statusPagamento === 'EM_ABERTO' && !p.pagamentoProntoParaFazer)
     }
 
     // Filtro por data de término (próximos dias)
@@ -289,8 +305,24 @@ export default function FinanceiroProfessoresPage() {
       })
     }
 
+    // Ordenação: com alerta (observações) sempre no topo; depois em aberto por data; depois pagos
+    list = [...list].sort((a, b) => {
+      const aAlerta = !!a.hasFinanceObservations
+      const bAlerta = !!b.hasFinanceObservations
+      if (aAlerta && !bAlerta) return -1
+      if (!aAlerta && bAlerta) return 1
+      const aAberto = a.statusPagamento === 'EM_ABERTO'
+      const bAberto = b.statusPagamento === 'EM_ABERTO'
+      if (aAberto && !bAberto) return -1
+      if (!aAberto && bAberto) return 1
+      const ta = new Date(a.dataTermino + 'T12:00:00').getTime()
+      const tb = new Date(b.dataTermino + 'T12:00:00').getTime()
+      if (aAberto && bAberto) return ta - tb // em aberto: vencimento mais próximo primeiro
+      return tb - ta || (a.nome ?? '').localeCompare(b.nome ?? '') // pagos: mais recente primeiro, depois nome
+    })
+
     return list
-  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterPago, filterProntoPagar, filterProximosDias, filterDataDe, filterDataAte])
+  }, [professores, filterAlerta, proximoPagamento, atrasados, filterBusca, filterStatus, filterProximosDias, filterDataDe, filterDataAte])
 
   const displayedData = useMemo(
     () => tabelaData.slice(0, itemsPerPage),
@@ -731,7 +763,15 @@ Equipe Seidmann Institute`
             </span>
           )
         }
-        return <span className="text-gray-300">—</span>
+        return (
+          <span
+            className="inline-flex items-center gap-1 text-amber-700"
+            title="Pagamento em aberto"
+          >
+            <Clock className="w-5 h-5" />
+            <span className="text-xs font-medium hidden sm:inline">Em aberto</span>
+          </span>
+        )
       },
     },
     {
@@ -778,20 +818,18 @@ Equipe Seidmann Institute`
           <button
             type="button"
             onClick={() => openEditPeriodo(row)}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm text-orange-600 hover:bg-orange-50"
-            title="Editar valores do mês"
+            className="p-1.5 rounded text-orange-600 hover:bg-orange-50"
+            title="Editar mês"
           >
             <Calendar className="w-4 h-4" />
-            Editar mês
           </button>
           <button
             type="button"
             onClick={() => openNotifyModal(row)}
-            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-green-700 hover:bg-green-50"
-            title="Abrir preview e enviar e-mail de notificação de pagamento"
+            className="p-1.5 rounded text-green-700 hover:bg-green-50"
+            title="Notificar pagamento"
           >
-            <Bell className="w-4 h-4" />
-            Notificar pagamento
+            <Send className="w-4 h-4" />
           </button>
         </div>
       ),
@@ -866,7 +904,13 @@ Equipe Seidmann Institute`
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
             <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total a pagar (estimado)</p>
-              <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.totalAPagar)}</p>
+              <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.valorEstimado)}</p>
+              <p className="mt-1 text-xs text-amber-700">Valor/hora × horas estimadas</p>
+            </div>
+            <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Valor real de horas preenchidas</p>
+              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealHorasPreenchidas)}</p>
+              <p className="mt-1 text-xs text-sky-700">Horas registradas × valor/hora</p>
             </div>
             <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-green-800 uppercase tracking-wide">Valores pagos</p>
@@ -896,29 +940,34 @@ Equipe Seidmann Institute`
             </button>
             <button
               type="button"
-              onClick={() => atrasados.length > 0 && setFilterAlerta(filterAlerta === 'atrasados' ? 'todos' : 'atrasados')}
+              onClick={() => atrasados.length > 0 && setListCuboOpen('atrasados')}
               disabled={loading || atrasados.length === 0}
               className={`text-left rounded-xl border-2 transition-colors ${
                 filterAlerta === 'atrasados'
                   ? 'border-red-500 bg-red-50 ring-2 ring-red-300'
                   : atrasados.length > 0
-                    ? 'border-red-200 bg-white hover:border-red-400 hover:bg-red-50/50'
+                    ? 'border-red-200 bg-white hover:border-red-400 hover:bg-red-50/50 cursor-pointer'
                     : 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
               }`}
             >
               <div className="p-4">
                 <p className="text-xs font-semibold text-red-800 uppercase tracking-wide">Atrasados</p>
                 <p className="mt-1 text-xl font-bold text-red-900">{loading ? '—' : atrasados.length}</p>
-                <p className="mt-1 text-xs text-red-700">Venc. já passou • clique para filtrar</p>
+                <p className="mt-1 text-xs text-red-700">Venc. já passou • clique para ver lista</p>
               </div>
             </button>
-            <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 shadow-sm">
+            <button
+              type="button"
+              onClick={() => proximaDataPagamento && listaProximaData.length > 0 && setListCuboOpen('proximaData')}
+              disabled={loading || !proximaDataPagamento || listaProximaData.length === 0}
+              className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 shadow-sm text-left transition-colors hover:border-blue-400 hover:bg-blue-100/80 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-blue-50"
+            >
               <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Próxima data de pagamento</p>
               <p className="mt-1 text-xl font-bold text-blue-900">
                 {loading ? '—' : proximaDataPagamento ? formatDate(proximaDataPagamento) : '—'}
               </p>
-              <p className="mt-1 text-xs text-blue-700">Venc. mais próximo em aberto</p>
-            </div>
+              <p className="mt-1 text-xs text-blue-700">Venc. mais próximo em aberto • clique para ver lista</p>
+            </button>
             <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Valor estimado próximo pagamento</p>
               <p className="mt-1 text-xl font-bold text-indigo-900">
@@ -957,24 +1006,20 @@ Equipe Seidmann Institute`
                   />
                   <span className="text-sm text-gray-700">Selecionar todos</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={filterPago}
-                    onChange={(e) => setFilterPago(e.target.checked)}
-                    className="rounded border-gray-300 text-green-600 h-4 w-4"
-                  />
-                  <span className="text-sm text-gray-700">Pago</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={filterProntoPagar}
-                    onChange={(e) => setFilterProntoPagar(e.target.checked)}
-                    className="rounded border-gray-300 text-emerald-600 h-4 w-4"
-                  />
-                  <span className="text-sm text-gray-700">Pronto para pagar</span>
-                </label>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label htmlFor="filter-status-prof" className="text-sm text-gray-700 whitespace-nowrap">Status</label>
+                  <select
+                    id="filter-status-prof"
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus((e.target.value || '') as '' | 'em_aberto' | 'pronto_pagar' | 'pago')}
+                    className="input h-9 text-sm min-w-[140px] py-0 px-3"
+                  >
+                    <option value="">Todos</option>
+                    <option value="em_aberto">Em aberto</option>
+                    <option value="pronto_pagar">Pronto para pagar</option>
+                    <option value="pago">Pago</option>
+                  </select>
+                </div>
                 <div className="relative shrink-0" ref={filterDataRef}>
                   <button
                     type="button"
@@ -1094,12 +1139,19 @@ Equipe Seidmann Institute`
                   loading={false}
                   visibleColumnKeys={visibleColumnKeys}
                   onVisibleColumnsChange={setVisibleColumnKeys}
+                  getRowClassName={(row) => (row.hasFinanceObservations ? 'bg-red-50 border-l-4 border-l-red-500' : '')}
                   emptyMessage={
                     filterAlerta === 'proximo'
                       ? 'Nenhum professor com vencimento nos próximos 7 dias (não pagos).'
                       : filterAlerta === 'atrasados'
                         ? 'Nenhum professor atrasado (não pago com vencimento já passado).'
-                        : 'Nenhum professor ativo.'
+                        : filterStatus === 'em_aberto'
+                          ? 'Nenhum professor em aberto.'
+                          : filterStatus === 'pronto_pagar'
+                            ? 'Nenhum professor pronto para pagar.'
+                            : filterStatus === 'pago'
+                              ? 'Nenhum professor pago neste mês.'
+                              : 'Nenhum professor ativo.'
                   }
                 />
               </div>
@@ -1380,6 +1432,60 @@ Equipe Seidmann Institute`
                 Adicionar
               </Button>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal lista: Próxima data de pagamento ou Atrasados */}
+      <Modal
+        isOpen={listCuboOpen !== null}
+        onClose={() => setListCuboOpen(null)}
+        title={
+          listCuboOpen === 'proximaData'
+            ? `Próxima data de pagamento – ${proximaDataPagamento ? formatDate(proximaDataPagamento) : ''}`
+            : listCuboOpen === 'atrasados'
+              ? 'Atrasados (venc. já passou)'
+              : 'Lista'
+        }
+        size="md"
+        footer={
+          <Button variant="secondary" onClick={() => setListCuboOpen(null)}>
+            Fechar
+          </Button>
+        }
+      >
+        {listCuboOpen === 'proximaData' && (
+          <div className="space-y-2">
+            {listaProximaData.length === 0 ? (
+              <p className="text-gray-500 text-sm">Nenhum professor com vencimento nesta data.</p>
+            ) : (
+              <ul className="space-y-2 max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {listaProximaData.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between gap-3 py-3 px-3 first:pt-3">
+                    <span className="font-medium text-gray-900">{p.nome}</span>
+                    <span className="text-gray-600 text-sm">{formatDate(p.dataTermino)}</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(p.valorAPagar)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {listCuboOpen === 'atrasados' && (
+          <div className="space-y-2">
+            {atrasados.length === 0 ? (
+              <p className="text-gray-500 text-sm">Nenhum professor atrasado.</p>
+            ) : (
+              <ul className="space-y-2 max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {atrasados.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between gap-3 py-3 px-3 first:pt-3">
+                    <span className="font-medium text-gray-900">{p.nome}</span>
+                    <span className="text-gray-600 text-sm">{formatDate(p.dataTermino)}</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(p.valorAPagar)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Modal>
