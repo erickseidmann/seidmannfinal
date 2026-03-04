@@ -206,6 +206,9 @@ export default function FinanceiroProfessoresPage() {
       (s, p) => s + (p.totalHorasRegistradas ?? 0) * (p.valorPorHora ?? 0),
       0
     )
+    const totalValorPeriodo = professores.reduce((s, p) => s + (p.valorPorPeriodo ?? 0), 0)
+    const totalValorExtra = professores.reduce((s, p) => s + (p.valorExtra ?? 0), 0)
+    const valorRealTotal = valorRealHorasPreenchidas + totalValorPeriodo + totalValorExtra
     const totalAPagar = professores.reduce((s, p) => s + p.valorAPagar, 0)
     const valoresPagos = professores
       .filter((p) => p.statusPagamento === 'PAGO')
@@ -214,6 +217,9 @@ export default function FinanceiroProfessoresPage() {
     return {
       valorEstimado: Math.round(valorEstimado * 100) / 100,
       valorRealHorasPreenchidas: Math.round(valorRealHorasPreenchidas * 100) / 100,
+      totalValorPeriodo: Math.round(totalValorPeriodo * 100) / 100,
+      totalValorExtra: Math.round(totalValorExtra * 100) / 100,
+      valorRealTotal: Math.round(valorRealTotal * 100) / 100,
       totalAPagar: Math.round(totalAPagar * 100) / 100,
       valoresPagos: Math.round(valoresPagos * 100) / 100,
       totalProfessoresAtivos,
@@ -909,8 +915,22 @@ Equipe Seidmann Institute`
             </div>
             <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Valor real de horas preenchidas</p>
-              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealHorasPreenchidas)}</p>
-              <p className="mt-1 text-xs text-sky-700">Horas registradas × valor/hora</p>
+              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealTotal)}</p>
+              <p className="mt-1 text-xs text-sky-700">Somatório: horas + período + extras</p>
+              <div className="mt-2 pt-2 border-t border-sky-200/60 space-y-1">
+                <p className="text-xs text-sky-700 flex justify-between gap-2">
+                  <span>Horas registradas × valor/hora</span>
+                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.valorRealHorasPreenchidas)}</span>
+                </p>
+                <p className="text-xs text-sky-700 flex justify-between gap-2">
+                  <span>Período</span>
+                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorPeriodo)}</span>
+                </p>
+                <p className="text-xs text-sky-700 flex justify-between gap-2">
+                  <span>Extras</span>
+                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorExtra)}</span>
+                </p>
+              </div>
             </div>
             <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-green-800 uppercase tracking-wide">Valores pagos</p>
@@ -956,6 +976,13 @@ Equipe Seidmann Institute`
                 <p className="mt-1 text-xs text-red-700">Venc. já passou • clique para ver lista</p>
               </div>
             </button>
+            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Valor estimado próximo pagamento</p>
+              <p className="mt-1 text-xl font-bold text-indigo-900">
+                {loading ? '—' : formatMoney(valorEstimadoProximoPagamento)}
+              </p>
+              <p className="mt-1 text-xs text-indigo-700">Soma na data do próximo venc.</p>
+            </div>
             <button
               type="button"
               onClick={() => proximaDataPagamento && listaProximaData.length > 0 && setListCuboOpen('proximaData')}
@@ -968,13 +995,6 @@ Equipe Seidmann Institute`
               </p>
               <p className="mt-1 text-xs text-blue-700">Venc. mais próximo em aberto • clique para ver lista</p>
             </button>
-            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Valor estimado próximo pagamento</p>
-              <p className="mt-1 text-xl font-bold text-indigo-900">
-                {loading ? '—' : formatMoney(valorEstimadoProximoPagamento)}
-              </p>
-              <p className="mt-1 text-xs text-indigo-700">Soma na data do próximo venc.</p>
-            </div>
           </div>
         </section>
 
