@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
           id: r.id,
           lessonId: r.lessonId,
           startAt: r.lesson.startAt.toISOString(),
-          teacherName: r.lesson.teacher.nome,
+          teacherName: r.lesson.teacher?.nome ?? 'N/A',
           assignedHomework: r.assignedHomework,
           lastPage: r.lastPage,
           notesForStudent: r.notesForStudent,
@@ -137,14 +137,14 @@ export async function GET(request: NextRequest) {
         nextLesson = {
           id: next.id,
           startAt: next.startAt.toISOString(),
-          teacherName: next.teacher.nome,
+          teacherName: next.teacher?.nome ?? 'N/A',
           durationMinutes: next.durationMinutes ?? 60,
         }
       }
       if (last) {
         lastLesson = {
           startAt: last.startAt.toISOString(),
-          teacherName: last.teacher.nome,
+          teacherName: last.teacher?.nome ?? 'N/A',
           durationMinutes: last.durationMinutes ?? 60,
           status: last.status,
           record: last.record

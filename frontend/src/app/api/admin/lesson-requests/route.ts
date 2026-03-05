@@ -102,11 +102,13 @@ export async function GET(request: NextRequest) {
             userId: r.lesson.enrollment.userId,
             escolaMatricula: r.lesson.enrollment.escolaMatricula,
           },
-          teacher: {
-            id: r.lesson.teacher.id,
-            nome: r.lesson.teacher.nome,
-            email: r.lesson.teacher.email,
-          },
+          teacher: r.lesson.teacher
+            ? {
+                id: r.lesson.teacher.id,
+                nome: r.lesson.teacher.nome,
+                email: r.lesson.teacher.email,
+              }
+            : null,
         },
         teacher: {
           id: r.teacher.id,

@@ -126,7 +126,7 @@ export async function PATCH(
 
     const updateData: {
       enrollmentId?: string
-      teacherId?: string
+      teacherId?: string | null
       status?: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
       startAt?: Date
       durationMinutes?: number
@@ -135,7 +135,7 @@ export async function PATCH(
     } = {}
 
     if (enrollmentId != null) updateData.enrollmentId = enrollmentId
-    if (teacherId != null) updateData.teacherId = teacherId
+    if ('teacherId' in body) updateData.teacherId = teacherId ?? null
     if (status != null && ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status)) {
       updateData.status = status
     }
@@ -363,7 +363,7 @@ export async function PATCH(
         })
 
         // Enviar email para o aluno informando que a solicitação foi processada
-        if (lessonBefore.enrollment.email) {
+        if (lessonBefore.enrollment.email && effectiveTeacherId) {
           const enrollment = lessonBefore.enrollment
           const teacher = await prisma.teacher.findUnique({
             where: { id: effectiveTeacherId },

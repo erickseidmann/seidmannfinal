@@ -7,8 +7,9 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft, Video } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft, Video, UserMinus } from 'lucide-react'
 import Modal from '@/components/admin/Modal'
+import ConfirmModal from '@/components/admin/ConfirmModal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -176,6 +177,8 @@ export default function CalendarioProfessorPage() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [loadingGroup, setLoadingGroup] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [showDesistirConfirm, setShowDesistirConfirm] = useState(false)
+  const [desistirLoading, setDesistirLoading] = useState(false)
 
   const searchParams = useSearchParams()
   const modalOpen = selectedLesson !== null
@@ -479,6 +482,14 @@ export default function CalendarioProfessorPage() {
     }
     if (selectedLessonIsFuture) {
       setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
+      return
+    }
+    if (!form.book?.trim()) {
+      setToast({ message: 'Preencha o campo Livro do aluno.', type: 'error' })
+      return
+    }
+    if (!form.lastPage?.trim()) {
+      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
       return
     }
     setSaving(true)
@@ -864,6 +875,17 @@ export default function CalendarioProfessorPage() {
                   {t('professor.calendar.registerClass')}
                 </Button>
               )}
+              {selectedLesson && (
+                <Button
+                  variant="outline"
+                  onClick={() => setShowDesistirConfirm(true)}
+                  disabled={desistirLoading}
+                  className="flex-1 border-amber-300 text-amber-800 hover:bg-amber-50"
+                >
+                  {desistirLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <UserMinus className="w-4 h-4 mr-2" />}
+                  Desistir deste aluno
+                </Button>
+              )}
             {selectedLessonIsFuture && !selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800 w-full">
                 {t('professor.calendar.noFutureLessonRecord')}
@@ -966,7 +988,7 @@ export default function CalendarioProfessorPage() {
 
             {!isGroupLesson && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')}</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')} <span className="text-red-500">*</span></label>
                 <select value={form.presence} onChange={(e) => setForm({ ...form, presence: e.target.value as typeof form.presence })} className="input w-full">
                   <option value="PRESENTE">{t('professor.calendar.presencePresent')}</option>
                   <option value="NAO_COMPARECEU">{t('professor.calendar.presenceAbsent')}</option>
@@ -982,7 +1004,7 @@ export default function CalendarioProfessorPage() {
                   <p className="text-sm text-amber-700">{t('professor.calendar.loadingGroup')}</p>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')}:</p>
+                    <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')} <span className="text-red-500">*</span></p>
                     {(groupMembers.length > 0 ? groupMembers : studentsPresence.map((s) => ({ id: s.enrollmentId, nome: s.enrollmentId }))).map((member) => {
                       const current = studentsPresence.find((s) => s.enrollmentId === member.id)
                       const value = current?.presence ?? 'PRESENTE'
@@ -1014,8 +1036,8 @@ export default function CalendarioProfessorPage() {
             )}
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.lessonType')}</label>
-              <select value={form.lessonType} onChange={(e) => setForm({ ...form, lessonType: e.target.value as typeof form.lessonType })} className="input w-full">
+              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.lessonType')} <span className="text-red-500">*</span></label>
+              <select value={form.lessonType} onChange={(e) => setForm({ ...form, lessonType: e.target.value as typeof form.lessonType })} className="input w-full" required>
                 <option value="NORMAL">{t('professor.calendar.lessonTypeNormal')}</option>
                 <option value="CONVERSAÇÃO">{t('professor.calendar.lessonTypeConversation')}</option>
                 <option value="REVISAO">{t('professor.calendar.lessonTypeRevisao')}</option>
@@ -1065,12 +1087,12 @@ export default function CalendarioProfessorPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno</label>
-              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno <span className="text-red-500">*</span></label>
+              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" required aria-required="true" />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada</label>
-              <input type="text" value={form.lastPage} onChange={(e) => setForm({ ...form, lastPage: e.target.value })} className="input w-full" placeholder="Ex.: 42" />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada <span className="text-red-500">*</span></label>
+              <input type="text" value={form.lastPage} onChange={(e) => setForm({ ...form, lastPage: e.target.value })} className="input w-full" placeholder="Ex.: 42" required aria-required="true" />
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Tarefa designada</label>
@@ -1125,6 +1147,42 @@ export default function CalendarioProfessorPage() {
         )}
 
       </Modal>
+
+      {showDesistirConfirm && selectedLesson && (
+        <ConfirmModal
+          isOpen={showDesistirConfirm}
+          onClose={() => setShowDesistirConfirm(false)}
+          onConfirm={async () => {
+            setDesistirLoading(true)
+            try {
+              const res = await fetch('/api/professor/desistir-aluno', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ enrollmentId: selectedLesson.enrollmentId }),
+              })
+              const json = await res.json()
+              if (json.ok) {
+                setToast({ message: json.message || 'Você saiu da agenda deste aluno.', type: 'success' })
+                closeModal()
+                setShowDesistirConfirm(false)
+                fetchLessons()
+              } else {
+                setToast({ message: json.message || 'Erro ao processar.', type: 'error' })
+              }
+            } catch {
+              setToast({ message: 'Erro de conexão. Tente novamente.', type: 'error' })
+            } finally {
+              setDesistirLoading(false)
+            }
+          }}
+          title="Desistir deste aluno"
+          message="Você sairá da agenda deste aluno. Todas as aulas futuras dele ficarão sem professor e a administração poderá redesignar. Tem certeza?"
+          confirmLabel="Sim, desistir"
+          cancelLabel="Cancelar"
+          variant="danger"
+        />
+      )}
 
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />

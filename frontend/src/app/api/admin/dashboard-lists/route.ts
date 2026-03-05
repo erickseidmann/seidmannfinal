@@ -143,6 +143,77 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    // Alunos para redirecionar: têm aulas futuras fora da disponibilidade atual do professor
+    if (type === 'alunosParaRedirecionar') {
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      const teachers = await prisma.teacher.findMany({
+        where: { status: 'ACTIVE' },
+        select: {
+          id: true,
+          nome: true,
+          availabilitySlots: {
+            select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
+          },
+        },
+      })
+      type RedirectItem = { nome: string; professores: string[]; frequenciaSemanal: number | null; tempoAulaMinutos: number | null }
+      const byEnrollment = new Map<string, RedirectItem>()
+      for (const teacher of teachers) {
+        const slots = teacher.availabilitySlots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]
+        if (!slots || slots.length === 0) continue
+        const lessons = await prisma.lesson.findMany({
+          where: {
+            teacherId: teacher.id,
+            status: { not: 'CANCELLED' },
+            startAt: { gte: hoje },
+          },
+          select: {
+            enrollmentId: true,
+            startAt: true,
+            durationMinutes: true,
+            enrollment: { select: { nome: true, frequenciaSemanal: true, tempoAulaMinutos: true } },
+          },
+        })
+        for (const lesson of lessons) {
+          const lessonStart = new Date(lesson.startAt)
+          const dayOfWeek = lessonStart.getDay()
+          const startMinutes = lessonStart.getHours() * 60 + lessonStart.getMinutes()
+          const endMinutes = startMinutes + (lesson.durationMinutes ?? 60)
+          const isWithinSlot = slots.some(
+            (slot) =>
+              slot.dayOfWeek === dayOfWeek &&
+              startMinutes >= slot.startMinutes &&
+              endMinutes <= slot.endMinutes
+          )
+          if (!isWithinSlot) {
+            const enr = lesson.enrollment as { nome?: string; frequenciaSemanal?: number | null; tempoAulaMinutos?: number | null }
+            const nome = enr?.nome ?? 'Aluno desconhecido'
+            const existing = byEnrollment.get(lesson.enrollmentId)
+            if (!existing) {
+              byEnrollment.set(lesson.enrollmentId, {
+                nome,
+                professores: [teacher.nome],
+                frequenciaSemanal: enr?.frequenciaSemanal ?? null,
+                tempoAulaMinutos: enr?.tempoAulaMinutos ?? null,
+              })
+            } else {
+              if (!existing.professores.includes(teacher.nome)) existing.professores.push(teacher.nome)
+            }
+          }
+        }
+      }
+      const list = Array.from(byEnrollment.entries()).map(([id, data]) => ({
+        id,
+        nome: data.nome,
+        professorNome: data.professores.join(', '),
+        frequenciaSemanal: data.frequenciaSemanal,
+        tempoAulaMinutos: data.tempoAulaMinutos,
+      }))
+      list.sort((a, b) => a.nome.localeCompare(b.nome))
+      return NextResponse.json({ ok: true, data: list })
+    }
+
     if (type === 'studentsWithoutLesson') {
       const activeStatuses: EnrollmentStatus[] = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
       const enrollments = await prisma.enrollment.findMany({
@@ -231,6 +302,47 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         data: teachers.map((t) => ({ id: t.id, nome: t.nome, nota: t.nota })),
+      })
+    }
+
+    // Alunos com 3 ausências consecutivas (em dias corridos)
+    if (type === 'studentsWith3ConsecutiveAbsences') {
+      const absences = await prisma.attendance.findMany({
+        where: { type: 'STUDENT', status: 'ABSENT' },
+        select: { userId: true, date: true },
+      })
+      const byUser = new Map<string, Set<string>>()
+      for (const a of absences) {
+        if (!a.userId) continue
+        const key = new Date(a.date).toISOString().slice(0, 10)
+        if (!byUser.has(a.userId)) byUser.set(a.userId, new Set())
+        byUser.get(a.userId)!.add(key)
+      }
+      const oneDayMs = 24 * 60 * 60 * 1000
+      const userIdsWith3: string[] = []
+      for (const [userId, dateSet] of byUser) {
+        const sorted = Array.from(dateSet).sort()
+        let found = false
+        for (let i = 0; i <= sorted.length - 3 && !found; i++) {
+          const d1 = new Date(sorted[i]).getTime()
+          const d2 = new Date(sorted[i + 1]).getTime()
+          const d3 = new Date(sorted[i + 2]).getTime()
+          if (d2 - d1 === oneDayMs && d3 - d2 === oneDayMs) {
+            found = true
+          }
+        }
+        if (found) userIdsWith3.push(userId)
+      }
+      const users = userIdsWith3.length
+        ? await prisma.user.findMany({
+            where: { id: { in: userIdsWith3 } },
+            select: { id: true, nome: true },
+            orderBy: { nome: 'asc' },
+          })
+        : []
+      return NextResponse.json({
+        ok: true,
+        data: users.map((u) => ({ id: u.id, nome: u.nome })),
       })
     }
 

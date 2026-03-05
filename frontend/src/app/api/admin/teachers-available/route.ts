@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
     for (const l of lessonsNoPeriodo) {
       const lessonStart = new Date(l.startAt)
       const lessonEnd = new Date(lessonStart.getTime() + (l.durationMinutes ?? 60) * 60 * 1000)
-      if (startAt < lessonEnd && endAt > lessonStart) {
+      if (startAt < lessonEnd && endAt > lessonStart && l.teacherId) {
         idsOcupados.add(l.teacherId)
       }
     }

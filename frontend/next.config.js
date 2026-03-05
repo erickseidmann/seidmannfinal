@@ -4,8 +4,8 @@ const nextConfig = {
   experimental: {
     instrumentationHook: true,
   },
-  // Em dev usa dist/ em vez de .next/ para reduzir errno -4094 no Windows
-  distDir: process.env.NODE_ENV === 'development' ? 'dist' : '.next',
+  // Usar sempre .next (em dev dist/ pode causar errno -4094 ao abrir chunks no Windows)
+  // distDir: '.next',
   images: {
     remotePatterns: [
       { protocol: 'http', hostname: 'localhost', pathname: '/**' },

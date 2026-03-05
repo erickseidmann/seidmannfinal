@@ -18,7 +18,14 @@ export default function ProfessorHeader() {
 
   const fetchUnreadCount = useCallback(() => {
     fetch('/api/professor/chat/unread-count', { credentials: 'include' })
-      .then((res) => res.json())
+      .then(async (res) => {
+        const text = await res.text()
+        try {
+          return text ? JSON.parse(text) : {}
+        } catch {
+          return {}
+        }
+      })
       .then((json) => {
         if (json.ok && json.data?.unreadCount != null) {
           setUnreadChatCount(json.data.unreadCount)

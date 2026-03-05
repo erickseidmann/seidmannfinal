@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
       const item = {
         id: l.id,
         studentName: l.enrollment.nome,
-        teacherName: l.teacher.nome,
+        teacherName: l.teacher?.nome ?? 'N/A',
         startAt: l.startAt.toISOString(),
       }
       if (l.status === 'CONFIRMED') confirmedList.push(item)
@@ -263,7 +263,7 @@ export async function GET(request: NextRequest) {
         id: l.id,
         startAt: l.startAt.toISOString(),
         durationMinutes: l.durationMinutes ?? 60,
-        teacherName: l.teacher.nome,
+        teacherName: l.teacher?.nome ?? 'N/A',
       }))
       const isOverlap =
         (item.expectedMinutes != null && item.actualMinutes != null && item.actualMinutes > item.expectedMinutes + TOLERANCE_MINUTES) ||
@@ -299,6 +299,7 @@ export async function GET(request: NextRequest) {
     }[] = []
     const byTeacher = new Map<string, LessonWithMeta[]>()
     for (const l of lessons) {
+      if (!l.teacherId) continue
       if (!byTeacher.has(l.teacherId)) byTeacher.set(l.teacherId, [])
       byTeacher.get(l.teacherId)!.push(l)
     }
@@ -324,8 +325,8 @@ export async function GET(request: NextRequest) {
         if (group.length > 1) {
           const first = group[0]
           doubleBookingList.push({
-            teacherId: first.teacherId,
-            teacherName: first.teacher.nome,
+            teacherId: first.teacherId!,
+            teacherName: first.teacher?.nome ?? 'N/A',
             lessons: group.map((l) => ({
               studentName: l.enrollment.nome,
               startAt: l.startAt.toISOString(),
@@ -342,11 +343,12 @@ export async function GET(request: NextRequest) {
     }[] = []
     const inactiveTeachers = new Map<string, { teacherName: string; lessons: { studentName: string; startAt: string }[] }>()
     for (const l of lessons) {
-      if (l.teacher.status !== 'ACTIVE') {
-        if (!inactiveTeachers.has(l.teacherId)) {
-          inactiveTeachers.set(l.teacherId, { teacherName: l.teacher.nome, lessons: [] })
+      if (l.teacher && l.teacher.status !== 'ACTIVE') {
+        const tid = l.teacher.id
+        if (!inactiveTeachers.has(tid)) {
+          inactiveTeachers.set(tid, { teacherName: l.teacher.nome, lessons: [] })
         }
-        inactiveTeachers.get(l.teacherId)!.lessons.push({
+        inactiveTeachers.get(tid)!.lessons.push({
           studentName: l.enrollment.nome,
           startAt: l.startAt.toISOString(),
         })

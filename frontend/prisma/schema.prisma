@@ -99,7 +99,8 @@ model User {
   lessonRequestsCreated LessonRequest[] @relation("LessonRequestsCreated")
   lessonRequestsProcessed LessonRequest[] @relation("LessonRequestsProcessed")
   passwordResetTokens   PasswordResetToken[]
-  
+  availabilityLogsChanged TeacherAvailabilityLog[]
+
   // ├ìndices
   @@index([email])
   @@index([role])
@@ -316,6 +317,7 @@ model Enrollment {
   trackingCode   String?          @unique @map("tracking_code")
   contractAcceptedAt DateTime?    @map("contract_accepted_at")
   contractVersion    String?      @map("contract_version")
+  dataInicio     DateTime?        @map("data_inicio") // Data de início (editável); aluno só aparece no financeiro a partir deste mês
   couponId       String?          @map("coupon_id") // Cupom usado na inscri├º├úo
   criadoEm       DateTime         @default(now()) @map("created_at")
   atualizadoEm   DateTime         @updatedAt @map("updated_at")
@@ -481,6 +483,7 @@ model Teacher {
   requestedLessonRequests LessonRequest[] @relation("RequestedTeacher")
   paymentMonths       TeacherPaymentMonth[]
   availabilitySlots   TeacherAvailabilitySlot[]
+  availabilityLogs    TeacherAvailabilityLog[]
   financeObservations FinanceObservation[]
 
   // ├ìndices
@@ -502,6 +505,24 @@ model TeacherAvailabilitySlot {
 
   @@index([teacherId])
   @@map("teacher_availability_slots")
+}
+
+// Histórico de alterações dos horários de disponibilidade do professor
+model TeacherAvailabilityLog {
+  id                  String   @id @default(cuid())
+  teacherId           String   @map("teacher_id")
+  criadoEm            DateTime @default(now()) @map("created_at")
+  changedByUserId     String?  @map("changed_by_user_id") // null = professor; preenchido = admin
+  slotsSnapshot       Json     @map("slots_snapshot")      // [{ dayOfWeek, startMinutes, endMinutes }]
+  studentsRedirected  Boolean  @default(false) @map("students_redirected") // true quando professor confirmou redirecionar alunos
+  redirectedSummary   Json?    @map("redirected_summary")  // [{ aluno: string }] quando studentsRedirected
+
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([teacherId])
+  @@index([criadoEm])
+  @@map("teacher_availability_logs")
 }
 
 // Status e valores por m├¬s/ano (independentes por m├¬s), como EnrollmentPaymentMonth para alunos
@@ -707,7 +728,7 @@ model Holiday {
 model Lesson {
   id                String       @id @default(cuid())
   enrollmentId      String       @map("enrollment_id")
-  teacherId         String       @map("teacher_id")
+  teacherId         String?      @map("teacher_id") // null = aluno sem professor designado (ex.: professor desistiu)
   status            LessonStatus @default(CONFIRMED)
   startAt           DateTime     @map("start_at")
   durationMinutes   Int          @default(60) @map("duration_minutes")
@@ -718,7 +739,7 @@ model Lesson {
   atualizadoEm      DateTime     @updatedAt @map("updated_at")
 
   enrollment        Enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  teacher           Teacher      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher           Teacher?     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   record            LessonRecord?
   createdBy         User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   requests           LessonRequest[]

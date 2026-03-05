@@ -414,6 +414,14 @@ export default function RegistrarAulasPage() {
       setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
       return
     }
+    if (!form.book?.trim()) {
+      setToast({ message: 'Preencha o campo Livro do aluno.', type: 'error' })
+      return
+    }
+    if (!form.lastPage?.trim()) {
+      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
+      return
+    }
 
     const lessonIdToRegister = selectedLesson.id
     let url: string
@@ -744,7 +752,7 @@ export default function RegistrarAulasPage() {
 
             {!isGroupLesson && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')}</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.studentPresence')} <span className="text-red-500">*</span></label>
                 <select value={form.presence} onChange={(e) => setForm({ ...form, presence: e.target.value as FormPresence })} className="input w-full">
                   <option value="PRESENTE">{t('professor.calendar.presencePresent')}</option>
                   <option value="NAO_COMPARECEU">{t('professor.calendar.presenceAbsent')}</option>
@@ -760,7 +768,7 @@ export default function RegistrarAulasPage() {
                   <p className="text-sm text-amber-700">{t('professor.calendar.loadingGroup')}</p>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')}:</p>
+                    <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')} <span className="text-red-500">*</span></p>
                     {(groupMembers.length > 0 ? groupMembers : studentsPresence.map((s) => ({ id: s.enrollmentId, nome: s.enrollmentId }))).map((member) => {
                       const current = studentsPresence.find((s) => s.enrollmentId === member.id)
                       const value = current?.presence ?? 'PRESENTE'
@@ -792,8 +800,8 @@ export default function RegistrarAulasPage() {
             )}
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.lessonType')}</label>
-              <select value={form.lessonType} onChange={(e) => setForm({ ...form, lessonType: e.target.value as FormLessonType })} className="input w-full">
+              <label className="block text-sm font-semibold text-gray-700 mb-1">{t('professor.calendar.lessonType')} <span className="text-red-500">*</span></label>
+              <select value={form.lessonType} onChange={(e) => setForm({ ...form, lessonType: e.target.value as FormLessonType })} className="input w-full" required>
                 <option value="NORMAL">{t('professor.calendar.lessonTypeNormal')}</option>
                 <option value="CONVERSAÇÃO">{t('professor.calendar.lessonTypeConversation')}</option>
                 <option value="REVISAO">{t('professor.calendar.lessonTypeRevisao')}</option>
@@ -834,12 +842,12 @@ export default function RegistrarAulasPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno</label>
-              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno <span className="text-red-500">*</span></label>
+              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" required aria-required="true" />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada</label>
-              <input type="text" value={form.lastPage} onChange={(e) => setForm({ ...form, lastPage: e.target.value })} className="input w-full" placeholder="Ex.: 42" />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada <span className="text-red-500">*</span></label>
+              <input type="text" value={form.lastPage} onChange={(e) => setForm({ ...form, lastPage: e.target.value })} className="input w-full" placeholder="Ex.: 42" required aria-required="true" />
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Tarefa designada</label>

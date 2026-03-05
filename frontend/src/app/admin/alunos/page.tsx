@@ -37,6 +37,7 @@ interface Student {
   status: string
   trackingCode: string | null
   criadoEm: string
+  dataInicio?: string | null
   dataNascimento?: string | null
   observacoes?: string | null
   alerts?: StudentAlertItem[]
@@ -205,6 +206,7 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'agenda', label: 'Agenda', getValue: (s) => (s.agenda ?? '—').replace(/;/g, ',') },
   { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
   { key: 'trackingCode', label: 'Código', getValue: (s) => (s.trackingCode ?? '').replace(/;/g, ',') },
+  { key: 'dataInicio', label: 'Data de Início', getValue: (s) => (s.dataInicio || s.criadoEm) ? new Date(s.dataInicio || s.criadoEm!).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—' },
   { key: 'criadoEm', label: 'Criado em', getValue: (s) => s.criadoEm ? new Date(s.criadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' },
   { key: 'escolaMatricula', label: 'Escola de matrícula', getValue: (s) => (s.escolaMatricula === 'SEIDMANN' ? 'Seidmann' : s.escolaMatricula === 'YOUBECOME' ? 'Youbecome' : s.escolaMatricula === 'HIGHWAY' ? 'Highway' : s.escolaMatricula === 'OUTRO' ? (s.escolaMatriculaOutro || 'Outro') : '—') },
 ]
@@ -218,6 +220,7 @@ const initialForm = {
   objetivo: '',
   disponibilidade: '',
   dataNascimento: '',
+  dataInicio: '',
   nomeResponsavel: '',
   emailResponsavel: '',
   cpf: '',
@@ -269,6 +272,7 @@ export default function AdminAlunosPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [formData, setFormData] = useState(initialForm)
+  const [emailTouched, setEmailTouched] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [cepLoading, setCepLoading] = useState(false)
@@ -339,7 +343,7 @@ export default function AdminAlunosPage() {
   } | null>(null)
   const [agendaAlunoId, setAgendaAlunoId] = useState<string | null>(null)
   // Por padrão ocultas: email, cpf, endereco, valorMensalidade, trackingCode, criadoEm — aparecem só se o usuário selecionar em "Colunas"
-  const defaultVisibleColumnKeys = ['select', 'nome', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
+  const defaultVisibleColumnKeys = ['select', 'nome', 'dataInicio', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
@@ -492,11 +496,16 @@ export default function AdminAlunosPage() {
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
-    setFormData(initialForm)
+    setEmailTouched(false)
+    setFormData({
+      ...initialForm,
+      dataInicio: new Date().toISOString().slice(0, 10),
+    })
     setIsModalOpen(true)
   }, [])
 
   const handleEdit = useCallback((s: Student) => {
+    setEmailTouched(false)
     const dataNascimento = s.dataNascimento
       ? new Date(s.dataNascimento).toISOString().slice(0, 10)
       : ''
@@ -510,6 +519,7 @@ export default function AdminAlunosPage() {
       objetivo: s.objetivo ?? '',
       disponibilidade: s.disponibilidade ?? '',
       dataNascimento,
+      dataInicio: s.dataInicio ? new Date(s.dataInicio).toISOString().slice(0, 10) : '',
       nomeResponsavel: s.nomeResponsavel ?? '',
       emailResponsavel: s.emailResponsavel ?? '',
       cpf: s.cpf ?? '',
@@ -1008,6 +1018,7 @@ export default function AdminAlunosPage() {
         email: emailTrim,
         whatsapp: whatsappTrim,
         dataNascimento: formData.dataNascimento || null,
+        dataInicio: formData.dataInicio || null,
         nomeResponsavel: formData.nomeResponsavel.trim() || null,
         emailResponsavel: isMinor ? (formData.emailResponsavel.trim() || null) : null,
         cpf: formData.cpf.trim() || null,
@@ -1136,6 +1147,8 @@ export default function AdminAlunosPage() {
         return s.status ?? ''
       case 'trackingCode':
         return s.trackingCode ?? ''
+      case 'dataInicio':
+        return s.dataInicio ?? s.criadoEm ?? ''
       case 'criadoEm':
         return s.criadoEm ?? ''
       default:
@@ -1370,6 +1383,18 @@ export default function AdminAlunosPage() {
           <span>{s.nome}</span>
         </div>
       ),
+    },
+    {
+      key: 'dataInicio',
+      label: 'Data de Início',
+      sortable: true,
+      sortValue: (s: Student) => (s.dataInicio ?? s.criadoEm ?? '').toString(),
+      render: (s: Student) => {
+        const dateToShow = s.dataInicio || s.criadoEm
+        if (!dateToShow) return '—'
+        const d = new Date(dateToShow)
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      },
     },
     {
       key: 'idade',
@@ -2101,9 +2126,14 @@ export default function AdminAlunosPage() {
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="input w-full"
+                    onBlur={() => setEmailTouched(true)}
+                    className={`input w-full ${emailTouched && formData.email.trim() && !isValidEmail(formData.email.trim()) ? 'border-red-500 ring-1 ring-red-500' : ''}`}
                     required
+                    aria-invalid={emailTouched && formData.email.trim() ? !isValidEmail(formData.email.trim()) : undefined}
                   />
+                  {emailTouched && formData.email.trim() && !isValidEmail(formData.email.trim()) && (
+                    <p className="text-red-600 text-sm mt-1">Informe um e-mail válido.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -2121,11 +2151,12 @@ export default function AdminAlunosPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Idioma</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Idioma <span className="text-red-500">*</span></label>
                   <select
                     value={formData.idioma}
                     onChange={(e) => setFormData({ ...formData, idioma: e.target.value })}
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     <option value="ENGLISH">Inglês</option>
@@ -2133,11 +2164,12 @@ export default function AdminAlunosPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Nível</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Nível <span className="text-red-500">*</span></label>
                   <select
                     value={formData.nivel}
                     onChange={(e) => setFormData({ ...formData, nivel: e.target.value })}
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     <option value="Iniciante">Iniciante</option>
@@ -2180,6 +2212,18 @@ export default function AdminAlunosPage() {
                   />
                 </div>
                 <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Data de Início
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.dataInicio}
+                    onChange={(e) => setFormData({ ...formData, dataInicio: e.target.value })}
+                    className="input w-full"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">O aluno só aparecerá no Financeiro a partir deste mês.</p>
+                </div>
+                <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">CPF</label>
                   <input
                     type="text"
@@ -2190,7 +2234,7 @@ export default function AdminAlunosPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Status do aluno</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Status do aluno <span className="text-red-500">*</span></label>
                   <select
                     value={formData.status}
                     onChange={(e) => {
@@ -2217,6 +2261,7 @@ export default function AdminAlunosPage() {
                       }
                     }}
                     className="input w-full"
+                    required
                   >
                     <option value="ACTIVE">Ativo</option>
                     <option value="INACTIVE">Inativo</option>
@@ -2240,7 +2285,7 @@ export default function AdminAlunosPage() {
                   </div>
                 )}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Escola de matrícula</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Escola de matrícula <span className="text-red-500">*</span></label>
                   <select
                     value={formData.escolaMatricula}
                     onChange={(e) => {
@@ -2251,6 +2296,7 @@ export default function AdminAlunosPage() {
                       })
                     }}
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     <option value="SEIDMANN">Seidmann</option>
@@ -2417,11 +2463,12 @@ export default function AdminAlunosPage() {
               <h3 className="text-sm font-semibold text-gray-800 border-b pb-2">Curso e aula</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Curso</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Curso <span className="text-red-500">*</span></label>
                   <select
                     value={formData.curso}
                     onChange={(e) => setFormData({ ...formData, curso: e.target.value })}
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     <option value="INGLES">Inglês</option>
@@ -2431,12 +2478,13 @@ export default function AdminAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Frequência semanal (vezes)
+                    Frequência semanal (vezes) <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={formData.frequenciaSemanal}
                     onChange={(e) => setFormData({ ...formData, frequenciaSemanal: e.target.value })}
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     {[1, 2, 3, 4, 5, 6, 7].map((n) => (
@@ -2448,11 +2496,12 @@ export default function AdminAlunosPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Tempo de aula</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Tempo de aula <span className="text-red-500">*</span></label>
                 <select
                   value={formData.tempoAulaMinutos}
                   onChange={(e) => setFormData({ ...formData, tempoAulaMinutos: e.target.value })}
                   className="input w-full"
+                  required
                 >
                   <option value="">Selecione</option>
                   {TEMPO_AULA_OPCOES.map((o) => (
@@ -2463,7 +2512,7 @@ export default function AdminAlunosPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Tipo de aula</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Tipo de aula <span className="text-red-500">*</span></label>
                 <select
                   value={formData.tipoAula}
                   onChange={(e) =>
@@ -2474,6 +2523,7 @@ export default function AdminAlunosPage() {
                     })
                   }
                   className="input w-full"
+                  required
                 >
                   <option value="">Selecione</option>
                   <option value="PARTICULAR">Particular</option>
@@ -2613,7 +2663,7 @@ export default function AdminAlunosPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Valor mensalidade (R$)
+                    Valor mensalidade (R$) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -2624,11 +2674,12 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="0,00"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Método de pagamento
+                    Método de pagamento <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={formData.metodoPagamento}
@@ -2636,6 +2687,7 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, metodoPagamento: e.target.value })
                     }
                     className="input w-full"
+                    required
                   >
                     <option value="">Selecione</option>
                     <option value="PIX">PIX</option>
@@ -2646,7 +2698,7 @@ export default function AdminAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Dia de pagamento (1-31)
+                    Dia de pagamento (1-31) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -2658,6 +2710,7 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="Ex: 10"
+                    required
                   />
                 </div>
               </div>

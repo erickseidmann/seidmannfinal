@@ -98,13 +98,10 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
     children: [
       { href: '/admin/financeiro/geral', labelKey: 'admin.financeiroGeral' },
       { href: '/admin/financeiro/alunos', labelKey: 'admin.financeiroAlunos' },
-      { href: '/admin/financeiro/cobrancas', labelKey: 'admin.financeiroCobrancas' },
       { href: '/admin/financeiro/professores', labelKey: 'admin.financeiroProfessores' },
       { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
       { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
       { href: '/admin/financeiro/cupons', labelKey: 'admin.financeiroCupons' },
-      { href: '/admin/financeiro/nfse', labelKey: 'admin.financeiroNfse' },
-      { href: '/admin/financeiro/notificacoes', labelKey: 'admin.financeiroNotificacoes' },
     ],
   },
 ]

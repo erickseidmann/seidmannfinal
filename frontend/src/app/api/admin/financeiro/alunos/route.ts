@@ -87,19 +87,30 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Se estiver filtrando por mês/ano, remover da planilha alunos inativos a partir do mês de inativação
+    // Se estiver filtrando por mês/ano: remover inativos a partir do mês de inativação;
+    // e só incluir alunos cuja data de início seja no mês selecionado ou antes (não aparecem antes do mês de início)
     const filteredEnrollments =
       hasMonthFilter && year != null && month != null
         ? enrollments.filter((e) => {
-            if (e.status !== 'INACTIVE') return true
-            if (!e.inactiveAt) return false
-            const d = new Date(e.inactiveAt)
-            const anoInativo = d.getFullYear()
-            const mesInativo = d.getMonth() + 1
-            // A partir do mês em que ficou inativo (inclusive) não deve mais constar
-            const viewingAfterOrSameInactiveMonth =
-              year > anoInativo || (year === anoInativo && month >= mesInativo)
-            return !viewingAfterOrSameInactiveMonth
+            // Inativos: não constar a partir do mês de inativação
+            if (e.status === 'INACTIVE') {
+              if (!e.inactiveAt) return false
+              const d = new Date(e.inactiveAt)
+              const anoInativo = d.getFullYear()
+              const mesInativo = d.getMonth() + 1
+              const viewingAfterOrSameInactiveMonth =
+                year > anoInativo || (year === anoInativo && month >= mesInativo)
+              return !viewingAfterOrSameInactiveMonth
+            }
+            // Data de início: só aparecer a partir do mês em que ficou ativo
+            const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
+            if (dataInicio) {
+              const di = new Date(dataInicio)
+              const anoInicio = di.getFullYear()
+              const mesInicio = di.getMonth() + 1
+              if (year < anoInicio || (year === anoInicio && month < mesInicio)) return false
+            }
+            return true
           })
         : enrollments
 

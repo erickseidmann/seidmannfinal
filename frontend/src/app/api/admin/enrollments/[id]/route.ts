@@ -57,6 +57,7 @@ function buildUpdateData(body: Record<string, unknown>) {
     observacoes,
     status,
     activationDate,
+    dataInicio,
     faturamentoTipo,
     faturamentoRazaoSocial,
     faturamentoCnpj,
@@ -119,6 +120,7 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (observacoes !== undefined) update.observacoes = observacoes ? String(observacoes).trim() : null
   if (status !== undefined && VALID_STATUSES.includes(String(status))) update.status = status
   if (activationDate !== undefined) update.activationDate = activationDate ? new Date(activationDate as string) : null
+  if (dataInicio !== undefined) update.dataInicio = dataInicio ? new Date(dataInicio as string) : null
   if (faturamentoTipo !== undefined) update.faturamentoTipo = faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO'
   if (faturamentoRazaoSocial !== undefined) update.faturamentoRazaoSocial = faturamentoRazaoSocial ? String(faturamentoRazaoSocial).trim() : null
   if (faturamentoCnpj !== undefined) update.faturamentoCnpj = faturamentoCnpj ? String(faturamentoCnpj).trim().replace(/\D/g, '').slice(0, 14) || null : null

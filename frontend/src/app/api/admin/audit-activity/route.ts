@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
     })
     for (const l of lessons) {
       const actor = l.createdByName || l.createdBy?.nome || 'Admin'
+      const teacherName = l.teacher?.nome ?? 'Professor indefinido'
       const start = new Date(l.startAt)
       const dateStr = start.toLocaleDateString('pt-BR', {
         day: '2-digit',
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
         type: 'lesson',
         actorName: actor,
         action: 'Agendou aula',
-        detail: `${l.enrollment.nome} com ${l.teacher.nome} em ${dateStr}`,
+        detail: `${l.enrollment.nome} com ${teacherName} em ${dateStr}`,
         createdAt: l.criadoEm.toISOString(),
       })
     }

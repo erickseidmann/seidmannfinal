@@ -114,6 +114,57 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar novos matriculados:', err)
     }
 
+    // Alunos para redirecionar: têm aulas futuras fora da disponibilidade atual do professor
+    let alunosParaRedirecionarCount = 0
+    try {
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+      const teachers = await prisma.teacher.findMany({
+        where: { status: 'ACTIVE' },
+        select: {
+          id: true,
+          availabilitySlots: {
+            select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
+          },
+        },
+      })
+      const enrollmentIdsToRedirect = new Set<string>()
+      for (const teacher of teachers) {
+        const slots = teacher.availabilitySlots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]
+        if (!slots || slots.length === 0) continue
+        const lessons = await prisma.lesson.findMany({
+          where: {
+            teacherId: teacher.id,
+            status: { not: 'CANCELLED' },
+            startAt: { gte: hoje },
+          },
+          select: {
+            enrollmentId: true,
+            startAt: true,
+            durationMinutes: true,
+          },
+        })
+        for (const lesson of lessons) {
+          const lessonStart = new Date(lesson.startAt)
+          const dayOfWeek = lessonStart.getDay()
+          const startMinutes = lessonStart.getHours() * 60 + lessonStart.getMinutes()
+          const endMinutes = startMinutes + (lesson.durationMinutes ?? 60)
+          const isWithinSlot = slots.some(
+            (slot) =>
+              slot.dayOfWeek === dayOfWeek &&
+              startMinutes >= slot.startMinutes &&
+              endMinutes <= slot.endMinutes
+          )
+          if (!isWithinSlot) {
+            enrollmentIdsToRedirect.add(lesson.enrollmentId)
+          }
+        }
+      }
+      alunosParaRedirecionarCount = enrollmentIdsToRedirect.size
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar alunos para redirecionar:', err)
+    }
+
     // Professores com problemas: avaliação 1 estrela (nota === 1)
     let teachersWithProblems = 0
     try {
@@ -122,6 +173,40 @@ export async function GET(request: NextRequest) {
       })
     } catch (err) {
       console.warn('[api/admin/metrics] Erro ao contar professores com problemas:', err)
+    }
+
+    // Alunos com 3 ausências consecutivas (em dias corridos)
+    let studentsWith3ConsecutiveAbsences = 0
+    if (prisma.attendance) {
+      try {
+        const absences = await prisma.attendance.findMany({
+          where: { type: 'STUDENT', status: 'ABSENT' },
+          select: { userId: true, date: true },
+        })
+        const byUser = new Map<string, Set<string>>()
+        for (const a of absences) {
+          if (!a.userId) continue
+          const key = new Date(a.date).toISOString().slice(0, 10)
+          if (!byUser.has(a.userId)) byUser.set(a.userId, new Set())
+          byUser.get(a.userId)!.add(key)
+        }
+        const oneDayMs = 24 * 60 * 60 * 1000
+        for (const [, dateSet] of byUser) {
+          const sorted = Array.from(dateSet).sort()
+          let found = false
+          for (let i = 0; i <= sorted.length - 3 && !found; i++) {
+            const d1 = new Date(sorted[i]).getTime()
+            const d2 = new Date(sorted[i + 1]).getTime()
+            const d3 = new Date(sorted[i + 2]).getTime()
+            if (d2 - d1 === oneDayMs && d3 - d2 === oneDayMs) {
+              found = true
+            }
+          }
+          if (found) studentsWith3ConsecutiveAbsences++
+        }
+      } catch (err) {
+        console.warn('[api/admin/metrics] Erro ao contar alunos com 3 ausências consecutivas:', err)
+      }
     }
 
     // Calcular faltas (últimos 7 dias e 30 dias)
@@ -193,7 +278,9 @@ export async function GET(request: NextRequest) {
         },
         studentsWithoutLesson,
         novosMatriculadosCount,
+        alunosParaRedirecionarCount,
         teachersWithProblems,
+        studentsWith3ConsecutiveAbsences,
         absences: {
           studentsWeek: studentsAbsencesWeek,
           studentsMonth: studentsAbsencesMonth,

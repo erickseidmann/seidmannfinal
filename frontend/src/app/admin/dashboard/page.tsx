@@ -14,7 +14,7 @@ import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2 } from 'lucide-react'
+import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2, ArrowRightLeft } from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
   const [copied, setCopied] = useState(false)
@@ -93,7 +93,9 @@ interface Metrics {
   }
   studentsWithoutLesson: number
   novosMatriculadosCount: number
+  alunosParaRedirecionarCount: number
   teachersWithProblems: number
+  studentsWith3ConsecutiveAbsences: number
   absences: {
     studentsWeek: number
     studentsMonth: number
@@ -105,12 +107,14 @@ interface Metrics {
 type ListType =
   | 'activeStudents'
   | 'novosMatriculados'
+  | 'alunosParaRedirecionar'
   | 'studentsWithoutLesson'
   | 'inactiveStudents'
   | 'totalUsers'
   | 'activeTeachers'
   | 'inactiveTeachers'
   | 'teachersWithProblems'
+  | 'studentsWith3ConsecutiveAbsences'
   | 'absencesStudentsWeek'
   | 'absencesStudentsMonth'
 
@@ -140,6 +144,11 @@ interface ListItemNovosMatriculados extends ListItemBase {
   primeiraAulaStartAt?: string | null
   primeiraAulaTeacherName?: string | null
 }
+interface ListItemAlunosParaRedirecionar extends ListItemBase {
+  professorNome?: string
+  frequenciaSemanal?: number | null
+  tempoAulaMinutos?: number | null
+}
 interface ListItemTotalUser extends ListItemBase {
   role?: string
 }
@@ -147,12 +156,14 @@ interface ListItemTotalUser extends ListItemBase {
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
   novosMatriculados: 'Novos alunos matriculados',
+  alunosParaRedirecionar: 'Alunos para redirecionar',
   studentsWithoutLesson: 'Alunos sem aula designada',
   inactiveStudents: 'Alunos Inativos',
   totalUsers: 'Total de Usuários',
   activeTeachers: 'Professores Ativos',
   inactiveTeachers: 'Professores Inativos',
   teachersWithProblems: 'Professores com problemas',
+  studentsWith3ConsecutiveAbsences: 'Alunos com 3 ausências consecutivas',
   absencesStudentsWeek: 'Faltas Alunos (7 dias)',
   absencesStudentsMonth: 'Faltas Alunos (30 dias)',
 }
@@ -164,7 +175,7 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [modalType, setModalType] = useState<ListType | null>(null)
   const [listData, setListData] = useState<
-    (ListItemWithData | ListItemWithoutLesson | ListItemTotalUser | ListItemNovosMatriculados)[]
+    (ListItemWithData | ListItemWithoutLesson | ListItemTotalUser | ListItemNovosMatriculados | ListItemAlunosParaRedirecionar)[]
   >([])
   const [listLoading, setListLoading] = useState(false)
   const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
@@ -179,7 +190,8 @@ export default function AdminDashboardPage() {
   const [auditCount48h, setAuditCount48h] = useState<number | null>(null)
   const [auditSearch, setAuditSearch] = useState('')
   const [auditDate, setAuditDate] = useState('')
-  const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<ListItemNovosMatriculados | null>(null)
+  const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<ListItemNovosMatriculados | ListItemAlunosParaRedirecionar | ListItemWithoutLesson | null>(null)
+  const [designarAulaFromModalType, setDesignarAulaFromModalType] = useState<ListType | null>(null)
 
   useEffect(() => {
     fetchMetrics()
@@ -522,6 +534,22 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
+            onClick={() => openListModal('alunosParaRedirecionar')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('alunosParaRedirecionar')}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.alunosParaRedirecionarCount ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
+          >
+            <StatCard
+              variant="finance"
+              title="Alunos para redirecionar"
+              value={metrics?.alunosParaRedirecionarCount ?? 0}
+              icon={<ArrowRightLeft className="w-5 h-5" />}
+              color="red"
+              subtitle="Alunos com aulas fora da disponibilidade do professor (serão redirecionados ao salvar horários)"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setShowAlunosSemAulaModal(true)}
             onKeyDown={(e) => e.key === 'Enter' && setShowAlunosSemAulaModal(true)}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
@@ -598,17 +626,17 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('absencesStudentsWeek')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('absencesStudentsWeek')}
+            onClick={() => openListModal('studentsWith3ConsecutiveAbsences')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWith3ConsecutiveAbsences')}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
               variant="finance"
-              title="Faltas Alunos (7 dias)"
-              value={metrics?.absences.studentsWeek || 0}
+              title="Alunos marcados como ausentes 3 vezes consecutivas"
+              value={metrics?.studentsWith3ConsecutiveAbsences ?? 0}
               icon={<CalendarX className="w-5 h-5" />}
               color="orange"
-              subtitle="Última semana"
+              subtitle="Registros de falta em 3 dias seguidos"
             />
           </div>
           <div
@@ -806,6 +834,46 @@ export default function AdminDashboardPage() {
                 </table>
               </div>
             </div>
+          ) : modalType === 'alunosParaRedirecionar' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Alunos que têm aulas futuras em horários fora da disponibilidade atual do professor. Quando o professor salvar a alteração de horários, esses alunos serão redirecionados para outros professores.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Professor (horário alterado)</th>
+                      <th className="py-2 font-semibold text-gray-700">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as ListItemAlunosParaRedirecionar
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4">{row.nome}</td>
+                          <td className="py-2 pr-4">{row.professorNome ?? '—'}</td>
+                          <td className="py-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDesignarAulaFromModalType('alunosParaRedirecionar')
+                                setDesignarAulaEnrollment(row)
+                              }}
+                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                            >
+                              Agendar aula
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : modalType === 'studentsWithoutLesson' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -813,7 +881,8 @@ export default function AdminDashboardPage() {
                   <tr className="border-b border-gray-200">
                     <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
                     <th className="py-2 pr-4 font-semibold text-gray-700">Data da última aula</th>
-                    <th className="py-2 font-semibold text-gray-700">Livro (última aula)</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Livro (última aula)</th>
+                    <th className="py-2 font-semibold text-gray-700">Ação</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -830,12 +899,37 @@ export default function AdminDashboardPage() {
                       <tr key={row.id} className="border-b border-gray-100">
                         <td className="py-2 pr-4">{row.nome}</td>
                         <td className="py-2 pr-4">{dataFormatada}</td>
-                        <td className="py-2">{row.ultimoLivro ?? '—'}</td>
+                        <td className="py-2 pr-4">{row.ultimoLivro ?? '—'}</td>
+                        <td className="py-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDesignarAulaFromModalType('studentsWithoutLesson')
+                              setDesignarAulaEnrollment(row)
+                            }}
+                            className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                          >
+                            Agendar aula
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
+            </div>
+          ) : modalType === 'studentsWith3ConsecutiveAbsences' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Alunos que tiveram registro de ausência em 3 dias consecutivos (dias corridos). Clique para ver a lista completa.
+              </p>
+              <ul className="space-y-1 max-h-96 overflow-y-auto">
+                {listData.map((item) => (
+                  <li key={item.id} className="py-1">
+                    {item.nome}
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : modalType?.startsWith('absences') ? (
             <div className="overflow-x-auto">
@@ -973,13 +1067,21 @@ export default function AdminDashboardPage() {
           </div>
         </Modal>
 
-        {/* Modal Designar aula (submodal dos novos matriculados) */}
+        {/* Modal Designar aula (novos matriculados ou alunos para redirecionar) */}
         <DesignarAulaModal
           isOpen={!!designarAulaEnrollment}
-          onClose={() => setDesignarAulaEnrollment(null)}
+          onClose={() => {
+            setDesignarAulaEnrollment(null)
+            setDesignarAulaFromModalType(null)
+          }}
           enrollment={designarAulaEnrollment}
           onSuccess={() => {
-            openListModal('novosMatriculados')
+            if (designarAulaFromModalType) {
+              openListModal(designarAulaFromModalType)
+            } else {
+              openListModal('novosMatriculados')
+            }
+            setDesignarAulaFromModalType(null)
             fetchMetrics()
           }}
         />

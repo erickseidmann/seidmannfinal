@@ -226,6 +226,13 @@ export async function POST(request: NextRequest) {
     // Verificar se precisa de aprovação do professor
     // Para YOUBECOME: troca de aula/professor requer aprovação do professor
     const requiresTeacherApproval = isYoubecome && (type === 'TROCA_PROFESSOR' || type === 'TROCA_AULA')
+
+    if (!lesson.teacherId) {
+      return NextResponse.json(
+        { ok: false, message: 'Esta aula não possui professor designado. Não é possível criar solicitação.' },
+        { status: 400 }
+      )
+    }
     
     console.log('[api/lesson-requests] Criando solicitação:', {
       lessonId: lesson.id,
@@ -277,7 +284,7 @@ export async function POST(request: NextRequest) {
     if (requiresTeacherApproval) {
       const { diaSemana, data, horario } = formatarDataHora(new Date(lesson.startAt))
       const subject = 'Solicitação de alteração de aula - Aprovação necessária'
-      const text = `Olá ${lesson.teacher.nome || 'Professor'},
+      const text = `Olá ${lesson.teacher?.nome ?? 'Professor'},
 
 Uma solicitação de ${type === 'TROCA_PROFESSOR' ? 'troca de professor' : 'troca de aula'} foi feita para a seguinte aula:
 
@@ -293,9 +300,10 @@ Por favor, acesse o Portal do Professor para aprovar ou negar esta solicitação
 Atenciosamente,
 Equipe Seidmann Institute`
 
-      if (lesson.teacher.email) {
+      const teacherEmail = lesson.teacher?.email
+      if (teacherEmail) {
         await sendEmail({
-          to: lesson.teacher.email,
+          to: teacherEmail,
           subject,
           text,
         })

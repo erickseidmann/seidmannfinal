@@ -53,7 +53,7 @@ export function LanguageSelector() {
           className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[80px] z-50"
         >
           {LANGUAGES.map((lang) => (
-            <li key={lang.code} role="option">
+            <li key={lang.code} role="option" aria-selected={locale === lang.code}>
               <button
                 type="button"
                 onClick={() => handleSelect(lang.code)}

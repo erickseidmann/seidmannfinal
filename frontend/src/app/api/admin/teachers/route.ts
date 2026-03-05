@@ -98,6 +98,7 @@ export async function GET(request: NextRequest) {
     })
     const lessonMinutesByTeacher = new Map<string, number>()
     for (const l of lessonsInPeriod) {
+      if (!l.teacherId) continue
       const cur = lessonMinutesByTeacher.get(l.teacherId) ?? 0
       lessonMinutesByTeacher.set(l.teacherId, cur + (l.durationMinutes ?? 60))
     }

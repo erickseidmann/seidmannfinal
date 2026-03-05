@@ -244,7 +244,7 @@ ${oldDate.diaSemana}, ${oldDate.data} às ${oldDate.horario}
 
 Nova aula agendada:
 ${diaSemana}, ${data} às ${horario}
-Professor: ${newLesson.teacher.nome || 'N/A'}
+Professor: ${newLesson.teacher?.nome ?? 'N/A'}
 
 Por favor, confirme sua presença na nova data.
 
@@ -262,9 +262,10 @@ Equipe Seidmann Institute`
         }
 
         // Email para o novo professor (se diferente)
-        if (newTeacherId !== lessonRequest.teacherId && newLesson.teacher.email) {
+        const newTeacherEmail = newLesson.teacher?.email
+        if (newTeacherId !== lessonRequest.teacherId && newTeacherEmail) {
           const teacherSubject = 'Nova aula adicionada à sua agenda'
-          const teacherText = `Olá ${newLesson.teacher.nome || 'Professor'},
+          const teacherText = `Olá ${newLesson.teacher?.nome || 'Professor'},
 
 Uma nova aula foi adicionada à sua agenda:
 
@@ -279,7 +280,7 @@ Atenciosamente,
 Equipe Seidmann Institute`
 
           await sendEmail({
-            to: newLesson.teacher.email,
+            to: newTeacherEmail,
             subject: teacherSubject,
             text: teacherText,
           })
@@ -314,7 +315,7 @@ Infelizmente, sua solicitação de alteração de aula foi negada pelo professor
 
 Aula original:
 ${diaSemana}, ${data} às ${horario}
-Professor: ${originalLesson.teacher.nome || 'N/A'}
+Professor: ${originalLesson.teacher?.nome ?? 'N/A'}
 
 Sua solicitação foi encaminhada para a gestão, que entrará em contato para encontrar uma solução alternativa.
 

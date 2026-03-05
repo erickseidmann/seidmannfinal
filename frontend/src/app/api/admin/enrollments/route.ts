@@ -214,6 +214,7 @@ export async function GET(request: NextRequest) {
             trackingCode: e.trackingCode,
             contractAcceptedAt: e.contractAcceptedAt?.toISOString(),
             contractVersion: e.contractVersion,
+            dataInicio: (e as any).dataInicio?.toISOString?.() ?? null,
             criadoEm: e.criadoEm.toISOString(),
             atualizadoEm: e.atualizadoEm.toISOString(),
             user: e.user,
@@ -343,6 +344,7 @@ export async function POST(request: NextRequest) {
       escolaMatriculaOutro,
       observacoes,
       status,
+      dataInicio,
       couponId,
       faturamentoTipo,
       faturamentoRazaoSocial,
@@ -409,6 +411,7 @@ export async function POST(request: NextRequest) {
         status: status || 'LEAD',
         trackingCode,
         dataNascimento: dataNascimento ? new Date(dataNascimento) : null,
+        dataInicio: dataInicio ? new Date(dataInicio) : new Date(), // padrão = data em que foi adicionado (editável depois)
         nomeResponsavel: nomeResponsavel?.trim() || null,
         emailResponsavel: emailResponsavel?.trim()?.toLowerCase().slice(0, 255) || null,
         cpf: cpf?.trim()?.replace(/\D/g, '').slice(0, 14) || null,

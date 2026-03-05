@@ -8,11 +8,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -1228,6 +1229,29 @@ export default function FinanceiroAlunosPage() {
           <p className="text-gray-600 mt-1 text-sm md:text-base">
             Gestão financeira por aluno: valor mensal, status de pagamento, datas e envio de cobrança.
           </p>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <Link
+              href="/admin/financeiro/cobrancas"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium text-sm transition-colors"
+            >
+              <Receipt className="w-4 h-4" />
+              Cobranças
+            </Link>
+            <Link
+              href="/admin/financeiro/nfse"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium text-sm transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              Notas Fiscais
+            </Link>
+            <Link
+              href="/admin/financeiro/notificacoes"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium text-sm transition-colors"
+            >
+              <Bell className="w-4 h-4" />
+              Notificações
+            </Link>
+          </div>
         </div>
 
         {/* Seção: Período (ano e mês) - Recolhível */}
