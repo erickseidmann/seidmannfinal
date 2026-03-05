@@ -98,11 +98,13 @@ export async function GET(request: NextRequest) {
     let globalStart = periodStart.getTime()
     let globalEnd = periodEnd.getTime()
     const teacherPeriods: { id: string; start: number; end: number }[] = []
+    const savedGlobalStart = globalStart
+    const savedGlobalEnd = globalEnd
 
     if (!useMonthMode) {
       for (const t of teachers) {
-        const start = t.periodoPagamentoInicio ? startOfDay(t.periodoPagamentoInicio).getTime() : defaultStart.getTime()
-        const end = t.periodoPagamentoTermino ? endOfDay(t.periodoPagamentoTermino).getTime() : defaultEnd.getTime()
+        const start = t.periodoPagamentoInicio ? startOfDay(t.periodoPagamentoInicio).getTime() : savedGlobalStart
+        const end = t.periodoPagamentoTermino ? endOfDay(t.periodoPagamentoTermino).getTime() : savedGlobalEnd
         if (start < globalStart) globalStart = start
         if (end > globalEnd) globalEnd = end
         teacherPeriods.push({ id: t.id, start, end })
@@ -114,8 +116,8 @@ export async function GET(request: NextRequest) {
         const pm = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
           ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
           : null
-        const start = pm?.periodoInicio ? startOfDay(pm.periodoInicio).getTime() : globalStart
-        const end = pm?.periodoTermino ? endOfDay(pm.periodoTermino).getTime() : globalEnd
+        const start = pm?.periodoInicio ? startOfDay(pm.periodoInicio).getTime() : savedGlobalStart
+        const end = pm?.periodoTermino ? endOfDay(pm.periodoTermino).getTime() : savedGlobalEnd
         if (start < globalStart) globalStart = start
         if (end > globalEnd) globalEnd = end
         teacherPeriods.push({ id: t.id, start, end })
