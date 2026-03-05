@@ -65,6 +65,9 @@ export async function GET(request: NextRequest) {
           select: { id: true, message: true, level: true },
           orderBy: { criadoEm: 'desc' },
         },
+        availabilitySlots: {
+          select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
+        },
         _count: {
           select: {
             attendances: true,
@@ -77,33 +80,66 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    // Próximos 7 dias: disponível (slots) vs com aulas
+    const now = new Date()
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    const periodEnd = new Date(periodStart)
+    periodEnd.setDate(periodEnd.getDate() + 7)
+    periodEnd.setMilliseconds(-1)
+
+    const teacherIds = teachers.map((t) => t.id)
+    const lessonsInPeriod = await prisma.lesson.findMany({
+      where: {
+        teacherId: { in: teacherIds },
+        startAt: { gte: periodStart, lte: periodEnd },
+        status: { not: 'CANCELLED' },
+      },
+      select: { teacherId: true, durationMinutes: true },
+    })
+    const lessonMinutesByTeacher = new Map<string, number>()
+    for (const l of lessonsInPeriod) {
+      const cur = lessonMinutesByTeacher.get(l.teacherId) ?? 0
+      lessonMinutesByTeacher.set(l.teacherId, cur + (l.durationMinutes ?? 60))
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
-        teachers: teachers.map((t) => ({
-          id: t.id,
-          nome: t.nome,
-          nomePreferido: t.nomePreferido,
-          email: t.email,
-          whatsapp: t.whatsapp,
-          cpf: t.cpf,
-          cnpj: t.cnpj,
-          valorPorHora: t.valorPorHora != null ? Number(t.valorPorHora) : null,
-          metodoPagamento: t.metodoPagamento,
-          infosPagamento: t.infosPagamento,
-          nota: t.nota,
-          status: t.status,
-          userId: t.userId,
-          user: t.user,
-          idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : (t.idiomasFala ? [t.idiomasFala] : []),
-          idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : (t.idiomasEnsina ? [t.idiomasEnsina] : []),
-          linkSala: t.linkSala ?? null,
-          attendancesCount: t._count.attendances,
-          alertsCount: t._count.alerts,
-          alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
-          criadoEm: t.criadoEm.toISOString(),
-          atualizadoEm: t.atualizadoEm.toISOString(),
-        })),
+        teachers: teachers.map((t) => {
+          const slots = (t as { availabilitySlots?: { dayOfWeek: number; startMinutes: number; endMinutes: number }[] }).availabilitySlots ?? []
+          const disponivelMinutos = slots.reduce((acc, s) => acc + (s.endMinutes - s.startMinutes), 0)
+          const comAulasMinutos = lessonMinutesByTeacher.get(t.id) ?? 0
+          const percentual = disponivelMinutos > 0 ? Math.round((comAulasMinutos / disponivelMinutos) * 100) : null
+          return {
+            id: t.id,
+            nome: t.nome,
+            nomePreferido: t.nomePreferido,
+            email: t.email,
+            whatsapp: t.whatsapp,
+            cpf: t.cpf,
+            cnpj: t.cnpj,
+            valorPorHora: t.valorPorHora != null ? Number(t.valorPorHora) : null,
+            metodoPagamento: t.metodoPagamento,
+            infosPagamento: t.infosPagamento,
+            nota: t.nota,
+            status: t.status,
+            userId: t.userId,
+            user: t.user,
+            idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : (t.idiomasFala ? [t.idiomasFala] : []),
+            idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : (t.idiomasEnsina ? [t.idiomasEnsina] : []),
+            linkSala: t.linkSala ?? null,
+            attendancesCount: t._count.attendances,
+            alertsCount: t._count.alerts,
+            alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
+            criadoEm: t.criadoEm.toISOString(),
+            atualizadoEm: t.atualizadoEm.toISOString(),
+            horariosPreenchido: {
+              disponivelMinutos,
+              comAulasMinutos,
+              percentual,
+            },
+          }
+        }),
       },
     })
   } catch (error) {

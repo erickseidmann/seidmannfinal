@@ -50,6 +50,11 @@ interface Teacher {
   linkSala?: string | null
   criadoEm: string
   atualizadoEm: string
+  horariosPreenchido?: {
+    disponivelMinutos: number
+    comAulasMinutos: number
+    percentual: number | null
+  }
 }
 
 const TEACHER_COLUMNS_STORAGE_KEY = 'seidmann_admin_teacher_columns'
@@ -1034,6 +1039,15 @@ export default function AdminProfessoresPage() {
       ),
     },
     {
+      key: 'dataInicio',
+      label: 'Data de Início',
+      render: (t: Teacher) => {
+        if (!t.criadoEm) return '—'
+        const d = new Date(t.criadoEm)
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      },
+    },
+    {
       key: 'email',
       label: 'Email',
     },
@@ -1046,6 +1060,22 @@ export default function AdminProfessoresPage() {
       key: 'nota',
       label: 'Nota',
       render: (t: Teacher) => <StarRating value={t.nota ?? null} />,
+    },
+    {
+      key: 'horariosPreenchido',
+      label: 'Horários preenchidos',
+      render: (t: Teacher) => {
+        const h = t.horariosPreenchido
+        if (!h || h.disponivelMinutos === 0) return <span className="text-gray-400">—</span>
+        const percentual = h.percentual ?? 0
+        const dispH = (h.disponivelMinutos / 60).toFixed(1).replace('.', ',')
+        const aulasH = (h.comAulasMinutos / 60).toFixed(1).replace('.', ',')
+        return (
+          <span title={`${aulasH}h com aulas de ${dispH}h disponíveis (próximos 7 dias)`}>
+            {percentual}%
+          </span>
+        )
+      },
     },
     {
       key: 'status',
