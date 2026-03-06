@@ -644,7 +644,10 @@ export default function FinanceiroAlunosPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   const filteredAlunos = useMemo(() => {
-    let list = [...alunosNoMes]
+    // Só mostrar alunos cujo vencimento (próx. pag.) cai no mês OU que estão PAGO neste mês (próximo pag. pode ser em outro mês)
+    let list = alunosNoMes.filter(
+      (a) => isVencimentoNoMes(a, selectedAno, selectedMes) || getEffectiveStatus(a) === 'PAGO'
+    )
     const busca = filterBusca.trim().toLowerCase()
     if (busca) {
       list = list.filter(
@@ -716,7 +719,7 @@ export default function FinanceiroAlunosPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [alunosNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
+  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
