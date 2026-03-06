@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           escolaMatricula: true,
           escolaMatriculaOutro: true,
           coraInvoices: {
-            select: { dueDate: true, boletoUrl: true, status: true },
+            select: { dueDate: true, boletoUrl: true, pixCopyPaste: true, status: true },
             orderBy: { dueDate: 'asc' },
             take: 1,
           },
@@ -120,6 +120,8 @@ export async function GET(request: NextRequest) {
             dataPagamentoAgendada: dataPagamentoAgendada.toISOString(),
             recebeuBoleto,
             jaPagou,
+            boletoUrl: cora?.boletoUrl ?? null,
+            pixCopyPaste: cora?.pixCopyPaste ?? null,
             primeiraAulaStartAt: primeiraAula?.startAt?.toISOString() ?? null,
             primeiraAulaTeacherName: primeiraAula?.teacher?.nome ?? null,
             frequenciaSemanal: e.frequenciaSemanal ?? null,

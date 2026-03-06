@@ -57,6 +57,13 @@ interface Summary {
   errorsToday: number
   atRiskCount: number
   toDeactivateCount: number
+  maisDe20DiasCount?: number
+}
+
+interface AlunoMaisDe20Dias {
+  id: string
+  nome: string
+  diasAtraso: number
 }
 
 interface AtRiskItem {
@@ -150,6 +157,7 @@ export default function FinanceiroNotificacoesPage() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [atRisk, setAtRisk] = useState<AtRiskItem[]>([])
   const [toDeactivate, setToDeactivate] = useState<AtRiskItem[]>([])
+  const [alunosMaisDe20Dias, setAlunosMaisDe20Dias] = useState<AlunoMaisDe20Dias[]>([])
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [yearFilter, setYearFilter] = useState(anoAtual)
@@ -174,6 +182,7 @@ export default function FinanceiroNotificacoesPage() {
         setSummary(null)
         setAtRisk([])
         setToDeactivate([])
+        setAlunosMaisDe20Dias([])
         return
       }
       const d = json.data
@@ -181,11 +190,13 @@ export default function FinanceiroNotificacoesPage() {
       setSummary(d.summary ?? null)
       setAtRisk(d.atRisk ?? [])
       setToDeactivate(d.toDeactivate ?? [])
+      setAlunosMaisDe20Dias(d.alunosMaisDe20Dias ?? [])
     } catch {
       setNotifications([])
       setSummary(null)
       setAtRisk([])
       setToDeactivate([])
+      setAlunosMaisDe20Dias([])
     } finally {
       setLoading(false)
     }
@@ -304,8 +315,10 @@ export default function FinanceiroNotificacoesPage() {
                       <AlertTriangle className="w-5 h-5 text-amber-600" />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-500">Em risco (20-30 dias atraso)</p>
-                      <p className="text-2xl font-bold text-gray-900">{summary.atRiskCount}</p>
+                      <p className="text-sm text-gray-500">Em risco (&gt;20 dias atraso)</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {summary.maisDe20DiasCount ?? alunosMaisDe20Dias.length}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -319,6 +332,41 @@ export default function FinanceiroNotificacoesPage() {
                       <p className="text-2xl font-bold text-gray-900">{summary.toDeactivateCount}</p>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {alunosMaisDe20Dias.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+                <h2 className="font-semibold text-amber-900 p-4 pb-2">Alunos com mais de 20 dias de atraso</h2>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-amber-100/80 border-b border-amber-200">
+                      <tr>
+                        <th className="text-left px-4 py-3 font-semibold text-amber-900">Aluno</th>
+                        <th className="text-left px-4 py-3 font-semibold text-amber-900">Dias de atraso</th>
+                        <th className="text-left px-4 py-3 font-semibold text-amber-900">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {alunosMaisDe20Dias.map((row) => (
+                        <tr key={row.id} className="border-b border-amber-200/60 last:border-0 hover:bg-amber-100/50">
+                          <td className="px-4 py-3 font-medium text-amber-900">{row.nome}</td>
+                          <td className="px-4 py-3 text-amber-800">{row.diasAtraso} dias</td>
+                          <td className="px-4 py-3">
+                            <AlunoAcoesDropdown
+                              item={{ id: row.id, nome: row.nome }}
+                              variant={row.diasAtraso > 30 ? 'toDeactivate' : 'atRisk'}
+                              onEnviarCobranca={handleEnviarCobranca}
+                              onDesativar={handleDesativar}
+                              loadingCobranca={loadingCobranca}
+                              loadingDesativar={loadingDesativar}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}

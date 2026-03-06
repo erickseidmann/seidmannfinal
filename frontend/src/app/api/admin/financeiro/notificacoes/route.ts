@@ -60,10 +60,6 @@ export async function GET(request: NextRequest) {
       prisma.enrollment.findMany({
         where: {
           status: 'ACTIVE',
-          OR: [
-            { diaPagamento: { not: null } },
-            { paymentInfo: { dueDay: { not: null } } },
-          ],
           paymentMonths: {
             none: {
               year: now.getFullYear(),
@@ -89,34 +85,36 @@ export async function GET(request: NextRequest) {
     ])
 
     const todayDate = new Date()
-    const todayDay = todayDate.getDate()
     const yearM = todayDate.getFullYear()
     const monthM = todayDate.getMonth() + 1
 
-    const atRiskWindowStart = Math.max(5, PAYMENT_OVERDUE_DAYS_LIMIT - 10)
-    const atRiskEnrollments = atRisk.filter((e) => {
+    function getDaysOverdue(e: (typeof atRisk)[0]): number | null {
       const pm = e.paymentMonths[0]
-      if (pm?.paymentStatus === 'PAGO') return false
+      if (pm?.paymentStatus === 'PAGO') return null
       const dueDay = e.diaPagamento ?? e.paymentInfo?.dueDay ?? 10
       const lastDay = new Date(yearM, monthM, 0).getDate()
       const safeDay = Math.min(dueDay, lastDay)
       const dueDate = new Date(yearM, monthM - 1, safeDay)
       const msDiff = todayDate.getTime() - dueDate.getTime()
-      const daysOverdue = Math.ceil(msDiff / (24 * 60 * 60 * 1000))
-      return daysOverdue >= atRiskWindowStart && daysOverdue <= PAYMENT_OVERDUE_DAYS_LIMIT
+      return Math.ceil(msDiff / (24 * 60 * 60 * 1000))
+    }
+
+    const atRiskWindowStart = Math.max(5, PAYMENT_OVERDUE_DAYS_LIMIT - 10)
+    const atRiskEnrollments = atRisk.filter((e) => {
+      const daysOverdue = getDaysOverdue(e)
+      return daysOverdue != null && daysOverdue >= atRiskWindowStart && daysOverdue <= PAYMENT_OVERDUE_DAYS_LIMIT
     })
 
     const toDeactivate = atRisk.filter((e) => {
-      const pm = e.paymentMonths[0]
-      if (pm?.paymentStatus === 'PAGO') return false
-      const dueDay = e.diaPagamento ?? e.paymentInfo?.dueDay ?? 10
-      const lastDay = new Date(yearM, monthM, 0).getDate()
-      const safeDay = Math.min(dueDay, lastDay)
-      const dueDate = new Date(yearM, monthM - 1, safeDay)
-      const msDiff = todayDate.getTime() - dueDate.getTime()
-      const daysOverdue = Math.ceil(msDiff / (24 * 60 * 60 * 1000))
-      return daysOverdue > PAYMENT_OVERDUE_DAYS_LIMIT
+      const daysOverdue = getDaysOverdue(e)
+      return daysOverdue != null && daysOverdue > PAYMENT_OVERDUE_DAYS_LIMIT
     })
+
+    const MAIS_DE_20_DIAS = 20
+    const alunosMaisDe20Dias = atRisk
+      .map((e) => ({ e, daysOverdue: getDaysOverdue(e) }))
+      .filter(({ daysOverdue }) => daysOverdue != null && daysOverdue > MAIS_DE_20_DIAS)
+      .map(({ e, daysOverdue }) => ({ id: e.id, nome: e.nome, diasAtraso: daysOverdue! }))
 
     const data = notifications.map((n) => ({
       id: n.id,
@@ -140,9 +138,11 @@ export async function GET(request: NextRequest) {
           errorsToday,
           atRiskCount: atRiskEnrollments.length,
           toDeactivateCount: toDeactivate.length,
+          maisDe20DiasCount: alunosMaisDe20Dias.length,
         },
         atRisk: atRiskEnrollments.map((e) => ({ id: e.id, nome: e.nome })),
         toDeactivate: toDeactivate.map((e) => ({ id: e.id, nome: e.nome })),
+        alunosMaisDe20Dias,
       },
     })
   } catch (error) {

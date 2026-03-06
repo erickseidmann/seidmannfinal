@@ -251,20 +251,18 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // No modo mês: exibir professores cujo período de pagamento se sobrepõe ao mês/ano selecionado
-    // e que já estavam ativos no mês (cadastrados no mês ou antes)
+    // No modo mês: exibir apenas professores cuja DATA TÉRMINO cai no mês/ano selecionado
+    // (ex.: período 15/02–15/03 aparece em março para pagar, não em fevereiro)
     let professoresFinais = list
     if (useMonthMode && year != null && month != null) {
-      const inicioDoMes = new Date(year, month - 1, 1).getTime()
-      const fimDoMes = endOfDay(lastDayOfMonth(new Date(year, month - 1, 1))).getTime()
+      const fimDoMesSelecionado = endOfDay(lastDayOfMonth(new Date(year, month - 1, 1)))
       professoresFinais = list.filter((p) => {
-        const inicio = new Date(p.dataInicio + 'T00:00:00').getTime()
-        const termino = new Date(p.dataTermino + 'T23:59:59').getTime()
-        // O período do professor precisa se sobrepor com o mês selecionado
-        if (termino < inicioDoMes || inicio > fimDoMes) return false
-        // Professor precisa ter sido cadastrado antes do fim do mês
+        const termino = new Date(p.dataTermino + 'T12:00:00')
+        const anoTermino = termino.getFullYear()
+        const mesTermino = termino.getMonth() + 1
+        if (anoTermino !== year || mesTermino !== month) return false
         const criadoEm = new Date((p as { criadoEm: string }).criadoEm)
-        return criadoEm.getTime() <= fimDoMes
+        return criadoEm.getTime() <= fimDoMesSelecionado.getTime()
       })
     }
 

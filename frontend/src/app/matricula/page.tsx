@@ -54,6 +54,17 @@ interface FormErrors {
   nomeResponsavel?: string
   cpfResponsavel?: string
   emailResponsavel?: string
+  valorMensalidadeDigitado?: string
+}
+
+/** Converte string digitada (ex: "240", "240,50", "1.234,56") em número. Retorna null se inválido. */
+function parseValorMensalidadeDigitado(s: string): number | null {
+  const t = s.trim().replace(/\s/g, '')
+  if (!t) return null
+  const normalized = t.replace(/\./g, '').replace(',', '.')
+  const n = parseFloat(normalized)
+  if (Number.isNaN(n) || n < 0) return null
+  return Math.round(n * 100) / 100
 }
 
 const TEMPO_AULA_OPCOES = [
@@ -85,11 +96,15 @@ const DIAS_SEMANA = [
   { value: 'dom', label: 'Domingo' },
 ] as const
 
-const HORARIOS = [
-  { value: 'manha', label: 'Manhã (7h-12h)' },
-  { value: 'tarde', label: 'Tarde (12h-18h)' },
-  { value: 'noite', label: 'Noite (18h-22h)' },
-] as const
+// Slots de 30 em 30 min das 6h às 22h
+const HORARIOS = (() => {
+  const slots: { value: string; label: string }[] = []
+  for (let h = 6; h <= 22; h++) {
+    slots.push({ value: `${String(h).padStart(2, '0')}:00`, label: `${h}h` })
+    if (h < 22) slots.push({ value: `${String(h).padStart(2, '0')}:30`, label: `${h}h30` })
+  }
+  return slots
+})()
 
 async function buscarCep(cep: string): Promise<{ logradouro: string; bairro: string; localidade: string; uf: string } | null> {
   const limpo = cep.replace(/\D/g, '')
@@ -170,6 +185,8 @@ function MatriculaPageContent() {
     aceiteTermos: false,
     aceiteFerias: false,
     diaPagamento: '',
+    /** Valor da mensalidade digitado (só usado para Youbecome/Highway/Outro). */
+    valorMensalidadeDigitado: '',
   })
 
   const [errors, setErrors] = useState<FormErrors>({})
@@ -261,10 +278,14 @@ function MatriculaPageContent() {
     return Object.keys(newErrors).length === 0
   }
 
-  /** Valida etapa 3 (metodoPagamento, endereço). */
+  /** Valida etapa 3 (metodoPagamento, endereço; em modo parceiro também valor da mensalidade). */
   const validateStep3 = (): boolean => {
     const newErrors: FormErrors = {}
     if (!formData.metodoPagamento) newErrors.metodoPagamento = 'Método de pagamento é obrigatório'
+    if (isModoParceiro) {
+      const v = parseValorMensalidadeDigitado(formData.valorMensalidadeDigitado)
+      if (v == null || v <= 0) newErrors.valorMensalidadeDigitado = 'Informe o valor da mensalidade'
+    }
     const cepOk = formData.cep?.replace(/\D/g, '').length === 8
     if (!cepOk) newErrors.cep = 'CEP é obrigatório e deve ter 8 dígitos'
     if (!formData.rua?.trim()) newErrors.rua = 'Rua é obrigatória'
@@ -327,6 +348,10 @@ function MatriculaPageContent() {
     }
 
     if (!formData.metodoPagamento) newErrors.metodoPagamento = 'Método de pagamento é obrigatório'
+    if (isModoParceiro) {
+      const v = parseValorMensalidadeDigitado(formData.valorMensalidadeDigitado)
+      if (v == null || v <= 0) newErrors.valorMensalidadeDigitado = 'Informe o valor da mensalidade'
+    }
     const cepOk = formData.cep?.replace(/\D/g, '').length === 8
     if (!cepOk) newErrors.cep = 'CEP é obrigatório e deve ter 8 dígitos'
     if (!formData.rua?.trim()) newErrors.rua = 'Rua é obrigatória'
@@ -393,7 +418,9 @@ function MatriculaPageContent() {
           escolaMatriculaOutro: escolaParam === 'OUTRO' && nomeOutro ? nomeOutro : undefined,
           tempoAulaMinutos: formData.tempoAulaMinutos ? Number(formData.tempoAulaMinutos) : undefined,
           frequenciaSemanal: formData.frequenciaSemanal ? Number(formData.frequenciaSemanal) : undefined,
-          valorMensalidade: valorMensalidade > 0 ? valorMensalidade : undefined,
+          valorMensalidade: isModoParceiro
+            ? (parseValorMensalidadeDigitado(formData.valorMensalidadeDigitado) ?? undefined)
+            : (valorMensalidade > 0 ? valorMensalidade : undefined),
           diaPagamento: formData.diaPagamento ? Number(formData.diaPagamento) : undefined,
           codigoCupom: formData.codigoCupom?.trim() || undefined,
         }),
@@ -1020,24 +1047,22 @@ function MatriculaPageContent() {
                 )}
               </div>
 
-              {/* Disponibilidade - Horários (até 2) */}
+              {/* Disponibilidade - Horários (slots de 30 em 30 min) */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Melhores horários <span className="text-red-500">*</span>
                 </label>
-                <p className="text-xs text-gray-500 mb-2">Selecione até 2 horários de preferência</p>
-                <div className="flex flex-wrap gap-3">
+                <p className="text-xs text-gray-500 mb-2">Selecione os horários de preferência (6h às 22h, de 30 em 30 min)</p>
+                <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
                   {HORARIOS.map((h) => (
-                    <label key={h.value} className="flex items-center gap-2 cursor-pointer">
+                    <label key={h.value} className="flex items-center gap-1.5 cursor-pointer shrink-0">
                       <input
                         type="checkbox"
                         checked={formData.melhoresHorarios.includes(h.value)}
                         onChange={() => {
                           const next = formData.melhoresHorarios.includes(h.value)
                             ? formData.melhoresHorarios.filter((x) => x !== h.value)
-                            : formData.melhoresHorarios.length < 2
-                              ? [...formData.melhoresHorarios, h.value]
-                              : formData.melhoresHorarios
+                            : [...formData.melhoresHorarios, h.value]
                           setFormData({ ...formData, melhoresHorarios: next })
                           if (errors.melhoresHorarios) setErrors({ ...errors, melhoresHorarios: undefined })
                         }}
@@ -1232,34 +1257,64 @@ function MatriculaPageContent() {
                 <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-5">
                   <p className="text-sm font-semibold text-gray-700 mb-1">Valor da mensalidade</p>
                   <div className="w-8 h-0.5 bg-brand-orange rounded mb-4" aria-hidden="true" />
-                  <div className="flex flex-wrap items-center gap-6">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-bold text-brand-orange">
-                        {formData.tempoAulaMinutos && formData.frequenciaSemanal
-                          ? formatMoney(valorMensalidade)
-                          : '—'}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-[160px] max-w-[200px]">
-                      <label htmlFor="codigoCupom" className="sr-only">Código cupom</label>
-                      <input
-                        type="text"
-                        id="codigoCupom"
-                        name="codigoCupom"
-                        value={formData.codigoCupom}
-                        onChange={handleChange}
-                        placeholder="Cupom (opcional)"
-                        className="input w-full text-sm uppercase placeholder:normal-case placeholder:text-gray-400"
-                      />
-                    </div>
-                  </div>
-                  {formData.tempoAulaMinutos && formData.frequenciaSemanal && (
-                    <p className="text-xs text-gray-500 mt-3 pt-3 border-t border-orange-100">
-                      Base: {formData.tempoAulaMinutos} min × {formData.frequenciaSemanal}x/semana
-                      {(formData.tipoAula === 'GRUPO' ? valorHoraAplicado !== VALOR_HORA_GRUPO : valorHoraAplicado !== VALOR_HORA_PARTICULAR) && (
-                        <> • Valor hora com cupom: {formatMoney(valorHoraAplicado)}</>
+                  {isModoParceiro ? (
+                    <>
+                      <label htmlFor="valorMensalidadeDigitado" className="block text-sm text-gray-600 mb-2">
+                        Informe o valor em reais (ex: 240 ou 240,50)
+                      </label>
+                      <div className="flex flex-wrap items-center gap-4">
+                        <input
+                          type="text"
+                          id="valorMensalidadeDigitado"
+                          name="valorMensalidadeDigitado"
+                          value={formData.valorMensalidadeDigitado}
+                          onChange={handleChange}
+                          placeholder="0,00"
+                          className="input max-w-[180px] text-lg font-semibold text-brand-orange"
+                          aria-invalid={errors.valorMensalidadeDigitado ? 'true' : 'false'}
+                        />
+                        {formData.valorMensalidadeDigitado.trim() && parseValorMensalidadeDigitado(formData.valorMensalidadeDigitado) != null && (
+                          <span className="text-lg font-bold text-brand-orange">
+                            {formatMoney(parseValorMensalidadeDigitado(formData.valorMensalidadeDigitado)!)}
+                          </span>
+                        )}
+                      </div>
+                      {errors.valorMensalidadeDigitado && (
+                        <p className="mt-1 text-sm text-red-600">{errors.valorMensalidadeDigitado}</p>
                       )}
-                    </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-6">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-2xl font-bold text-brand-orange">
+                            {formData.tempoAulaMinutos && formData.frequenciaSemanal
+                              ? formatMoney(valorMensalidade)
+                              : '—'}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-[160px] max-w-[200px]">
+                          <label htmlFor="codigoCupom" className="sr-only">Código cupom</label>
+                          <input
+                            type="text"
+                            id="codigoCupom"
+                            name="codigoCupom"
+                            value={formData.codigoCupom}
+                            onChange={handleChange}
+                            placeholder="Cupom (opcional)"
+                            className="input w-full text-sm uppercase placeholder:normal-case placeholder:text-gray-400"
+                          />
+                        </div>
+                      </div>
+                      {formData.tempoAulaMinutos && formData.frequenciaSemanal && (
+                        <p className="text-xs text-gray-500 mt-3 pt-3 border-t border-orange-100">
+                          Base: {formData.tempoAulaMinutos} min × {formData.frequenciaSemanal}x/semana
+                          {(formData.tipoAula === 'GRUPO' ? valorHoraAplicado !== VALOR_HORA_GRUPO : valorHoraAplicado !== VALOR_HORA_PARTICULAR) && (
+                            <> • Valor hora com cupom: {formatMoney(valorHoraAplicado)}</>
+                          )}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
 

@@ -7,15 +7,16 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
+import ConfirmModal from '@/components/admin/ConfirmModal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -284,6 +285,7 @@ export default function AdminCalendarioPage() {
     id: string
     nome: string
     frequenciaSemanal: number | null
+    tempoAulaMinutos: number | null
     tipoAula: string | null
     nomeGrupo: string | null
     curso: string | null
@@ -331,8 +333,11 @@ export default function AdminCalendarioPage() {
   const [enrollmentIdsWithFullWeek, setEnrollmentIdsWithFullWeek] = useState<string[]>([])
   const [listModal, setListModal] = useState<{
     title: string
-    type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados'
+    type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados' | 'alunosParaRedirecionar'
   } | null>(null)
+  const [alunosParaRedirecionarCount, setAlunosParaRedirecionarCount] = useState(0)
+  const [alunosParaRedirecionarList, setAlunosParaRedirecionarList] = useState<Array<{ id: string; nome: string; professorNome?: string; frequenciaSemanal?: number | null; tempoAulaMinutos?: number | null }>>([])
+  const [alunosParaRedirecionarListLoading, setAlunosParaRedirecionarListLoading] = useState(false)
   const [novosMatriculadosCount, setNovosMatriculadosCount] = useState(0)
   const [novosMatriculadosList, setNovosMatriculadosList] = useState<{ id: string; nome: string; dataMatricula?: string; linkPagamentoEnviadoAt?: string | null }[]>([])
   const [novosMatriculadosListLoading, setNovosMatriculadosListLoading] = useState(false)
@@ -358,6 +363,10 @@ export default function AdminCalendarioPage() {
   const [lessonStatusSearch, setLessonStatusSearch] = useState('')
   const [studentRescheduledLessons, setStudentRescheduledLessons] = useState<Lesson[]>([])
   const [viewedRescheduledLessons, setViewedRescheduledLessons] = useState<Set<string>>(new Set())
+  const [removingDuplicates, setRemovingDuplicates] = useState(false)
+  const [showDurationConfirm, setShowDurationConfirm] = useState(false)
+  const [durationConfirmCadastroMin, setDurationConfirmCadastroMin] = useState<number>(30)
+  const durationConfirmDidKeepRef = useRef(false)
   const [pendingTransferRequests, setPendingTransferRequests] = useState<Array<{
     id: string
     lessonId: string
@@ -573,13 +582,40 @@ export default function AdminCalendarioPage() {
     [fetchStats]
   )
 
+  const removerDuplicidades = useCallback(async () => {
+    if (removingDuplicates) return
+    setRemovingDuplicates(true)
+    try {
+      const res = await fetch('/api/admin/lessons/remove-duplicates', {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (json.ok) {
+        setToast({
+          message: json.message ?? `${json.deletedCount ?? 0} aula(s) duplicada(s) excluída(s).`,
+          type: 'success',
+        })
+        await fetchStats()
+        await fetchLessons()
+      } else {
+        setToast({ message: json.message ?? 'Erro ao remover duplicidades.', type: 'error' })
+      }
+    } catch (e) {
+      setToast({ message: 'Erro ao remover duplicidades.', type: 'error' })
+    } finally {
+      setRemovingDuplicates(false)
+    }
+  }, [fetchStats, fetchLessons, removingDuplicates])
+
   const fetchNovosMatriculadosCount = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/metrics', { credentials: 'include' })
       if (!res.ok) return
       const json = await res.json()
-      if (json.ok && json.data?.novosMatriculadosCount != null) {
-        setNovosMatriculadosCount(json.data.novosMatriculadosCount)
+      if (json.ok && json.data) {
+        if (json.data.novosMatriculadosCount != null) setNovosMatriculadosCount(json.data.novosMatriculadosCount)
+        if (json.data.alunosParaRedirecionarCount != null) setAlunosParaRedirecionarCount(json.data.alunosParaRedirecionarCount)
       }
     } catch (e) {
       console.error(e)
@@ -639,6 +675,7 @@ export default function AdminCalendarioPage() {
           id: string
           nome: string
           frequenciaSemanal?: number | null
+          tempoAulaMinutos?: number | null
           tipoAula?: string | null
           nomeGrupo?: string | null
           curso?: string | null
@@ -646,6 +683,7 @@ export default function AdminCalendarioPage() {
           id: e.id,
           nome: e.nome,
           frequenciaSemanal: e.frequenciaSemanal ?? null,
+          tempoAulaMinutos: e.tempoAulaMinutos ?? null,
           tipoAula: e.tipoAula ?? null,
           nomeGrupo: e.nomeGrupo ?? null,
           curso: e.curso ?? null,
@@ -911,6 +949,21 @@ export default function AdminCalendarioPage() {
       })
       .catch(() => setNovosMatriculadosList([]))
       .finally(() => setNovosMatriculadosListLoading(false))
+  }, [listModal?.type])
+
+  useEffect(() => {
+    if (listModal?.type !== 'alunosParaRedirecionar') return
+    setAlunosParaRedirecionarListLoading(true)
+    setAlunosParaRedirecionarList([])
+    fetch(`/api/admin/dashboard-lists?type=alunosParaRedirecionar`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.data)) {
+          setAlunosParaRedirecionarList(j.data)
+        }
+      })
+      .catch(() => setAlunosParaRedirecionarList([]))
+      .finally(() => setAlunosParaRedirecionarListLoading(false))
   }, [listModal?.type])
 
   // Ouvir evento de atualização de aulas (quando solicitação é aprovada)
@@ -1755,6 +1808,22 @@ export default function AdminCalendarioPage() {
           <div
             role="button"
             tabIndex={0}
+            onClick={() => setListModal({ title: 'Alunos para redirecionar', type: 'alunosParaRedirecionar' })}
+            onKeyDown={(e) => e.key === 'Enter' && setListModal({ title: 'Alunos para redirecionar', type: 'alunosParaRedirecionar' })}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${alunosParaRedirecionarCount > 0 ? 'animate-blink-alert' : ''}`}
+          >
+            <StatCard
+              variant="finance"
+              title="Alunos para redirecionar"
+              value={alunosParaRedirecionarCount}
+              icon={<ArrowRightLeft className="w-5 h-5" />}
+              color="red"
+              subtitle="Alunos com aulas fora da disponibilidade do professor (serão redirecionados ao salvar horários)"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setListModal({ title: 'Aulas confirmadas', type: 'confirmed' })}
             onKeyDown={(e) => e.key === 'Enter' && setListModal({ title: 'Aulas confirmadas', type: 'confirmed' })}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
@@ -1841,6 +1910,27 @@ export default function AdminCalendarioPage() {
               color="purple"
             />
           </div>
+        </div>
+
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={removerDuplicidades}
+            disabled={removingDuplicates}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {removingDuplicates ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Removendo...
+              </>
+            ) : (
+              'Tirar duplicidades de aulas'
+            )}
+          </button>
+          <span className="text-sm text-slate-600">
+            Exclui aulas duplicadas (mesmo aluno, mesmo dia/hora) em todos os meses. Use se «repetir frequência» foi aplicado mais de uma vez.
+          </span>
         </div>
 
         {selectedTeacher && (
@@ -2231,7 +2321,13 @@ export default function AdminCalendarioPage() {
                             key={opt.value}
                             type="button"
                             onClick={() => {
-                              setLessonForm({ ...lessonForm, enrollmentId: opt.value })
+                              const enrollment = enrollments.find((e) => e.id === opt.value)
+                              const duration = enrollment?.tempoAulaMinutos != null ? enrollment.tempoAulaMinutos : 30
+                              setLessonForm({
+                                ...lessonForm,
+                                enrollmentId: opt.value,
+                                durationMinutes: duration,
+                              })
                               setLessonAlunoSearch('')
                               setLessonAlunoDropdownOpen(false)
                             }}
@@ -2585,9 +2681,39 @@ export default function AdminCalendarioPage() {
                 min={15}
                 step={15}
                 value={lessonForm.durationMinutes}
-                onChange={(e) => setLessonForm({ ...lessonForm, durationMinutes: Number(e.target.value) || 30 })}
+                onChange={(e) => {
+                  const newVal = Number(e.target.value) || 30
+                  const enrollment = lessonForm.enrollmentId ? enrollments.find((en) => en.id === lessonForm.enrollmentId) : null
+                  const cadastro = enrollment?.tempoAulaMinutos ?? null
+                  setLessonForm({ ...lessonForm, durationMinutes: newVal })
+                  if (cadastro != null && newVal !== cadastro) {
+                    setDurationConfirmCadastroMin(cadastro)
+                    setShowDurationConfirm(true)
+                    durationConfirmDidKeepRef.current = false
+                  }
+                }}
                 className="input w-full"
               />
+              {showDurationConfirm && (
+                <ConfirmModal
+                  isOpen={showDurationConfirm}
+                  onClose={() => {
+                    if (!durationConfirmDidKeepRef.current) {
+                      setLessonForm((prev) => ({ ...prev, durationMinutes: durationConfirmCadastroMin }))
+                    }
+                    setShowDurationConfirm(false)
+                    durationConfirmDidKeepRef.current = false
+                  }}
+                  onConfirm={() => {
+                    durationConfirmDidKeepRef.current = true
+                    setShowDurationConfirm(false)
+                  }}
+                  title="Tem certeza?"
+                  message={`No cadastro do aluno o tempo de aula é de ${durationConfirmCadastroMin} min. Você alterou para ${lessonForm.durationMinutes} min. Deseja manter ${lessonForm.durationMinutes} min ou reverter para o cadastro?`}
+                  cancelLabel={`Reverter para ${durationConfirmCadastroMin} min`}
+                  confirmLabel={`Manter ${lessonForm.durationMinutes} min`}
+                />
+              )}
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Observações</label>
@@ -2775,7 +2901,7 @@ export default function AdminCalendarioPage() {
           isOpen={!!listModal}
           onClose={() => setListModal(null)}
           title={listModal?.title ?? ''}
-          size={listModal?.type === 'novosMatriculados' ? 'lg' : 'md'}
+          size={listModal?.type === 'novosMatriculados' || listModal?.type === 'alunosParaRedirecionar' ? 'lg' : 'md'}
           footer={<Button variant="primary" onClick={() => setListModal(null)}>Fechar</Button>}
         >
           {listModal?.type === 'novosMatriculados' ? (
@@ -2838,6 +2964,46 @@ export default function AdminCalendarioPage() {
                           </tr>
                         )
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : listModal?.type === 'alunosParaRedirecionar' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Alunos que têm aulas futuras em horários fora da disponibilidade atual do professor. Quando o professor salvar a alteração de horários, esses alunos serão redirecionados para outros professores.
+              </p>
+              {alunosParaRedirecionarListLoading ? (
+                <p className="text-gray-500">Carregando...</p>
+              ) : alunosParaRedirecionarList.length === 0 ? (
+                <p className="text-gray-500">Nenhum aluno para redirecionar.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                        <th className="py-2 pr-4 font-semibold text-gray-700">Professor (horário alterado)</th>
+                        <th className="py-2 font-semibold text-gray-700">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {alunosParaRedirecionarList.map((row) => (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4">{row.nome}</td>
+                          <td className="py-2 pr-4">{row.professorNome ?? '—'}</td>
+                          <td className="py-2">
+                            <button
+                              type="button"
+                              onClick={() => setDesignarAulaEnrollment(row)}
+                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                            >
+                              Agendar aula
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -3207,6 +3373,13 @@ export default function AdminCalendarioPage() {
             setDesignarAulaEnrollment(null)
             setDesignarAulaCorrectionData(null)
             fetchStats()
+            fetchNovosMatriculadosCount()
+            if (listModal?.type === 'alunosParaRedirecionar') {
+              fetch(`/api/admin/dashboard-lists?type=alunosParaRedirecionar`, { credentials: 'include' })
+                .then((r) => r.json())
+                .then((j) => { if (j.ok && Array.isArray(j.data)) setAlunosParaRedirecionarList(j.data) })
+                .catch(() => {})
+            }
           }}
         />
 

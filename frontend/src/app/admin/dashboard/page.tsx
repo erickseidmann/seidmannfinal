@@ -14,7 +14,7 @@ import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Users, UserCheck, UserX, UserCog, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2, ArrowRightLeft } from 'lucide-react'
+import { Users, UserCheck, UserX, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2, ArrowRightLeft, Download, Copy } from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
   const [copied, setCopied] = useState(false)
@@ -136,6 +136,8 @@ interface ListItemNovosMatriculados extends ListItemBase {
   dataPagamentoAgendada?: string | null
   recebeuBoleto?: boolean
   jaPagou?: boolean
+  boletoUrl?: string | null
+  pixCopyPaste?: string | null
   frequenciaSemanal?: number | null
   tempoAulaMinutos?: number | null
   melhoresDiasSemana?: string | null
@@ -183,6 +185,7 @@ export default function AdminDashboardPage() {
   const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
+  const [copiedPixId, setCopiedPixId] = useState<string | null>(null)
   const [showAuditModal, setShowAuditModal] = useState(false)
   const [auditActivities, setAuditActivities] = useState<Array<{ id: string; actorName: string; action: string; detail: string; createdAt: string }>>([])
   const [auditHours, setAuditHours] = useState(48)
@@ -581,51 +584,6 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('totalUsers')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('totalUsers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Total de Usuários"
-              value={metrics?.users.total || 0}
-              icon={<UserCog className="w-5 h-5" />}
-              color="purple"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => openListModal('activeTeachers')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('activeTeachers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Professores Ativos"
-              value={metrics?.teachers.ACTIVE || 0}
-              icon={<GraduationCap className="w-5 h-5" />}
-              color="green"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => openListModal('inactiveTeachers')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('inactiveTeachers')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Professores Inativos"
-              value={metrics?.teachers.INACTIVE || 0}
-              icon={<GraduationCap className="w-5 h-5" />}
-              color="red"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
             onClick={() => openListModal('studentsWith3ConsecutiveAbsences')}
             onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsWith3ConsecutiveAbsences')}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
@@ -782,16 +740,47 @@ export default function AdminDashboardPage() {
                           <td className="py-2 pr-4">{row.escolaMatriculaLabel ?? '—'}</td>
                           <td className="py-2 pr-4">{dataFormatada}</td>
                           <td className="py-2 pr-4">{vencFormatado}</td>
-                          <td className="py-2 pr-4">{row.recebeuBoleto ? '✓ Sim' : '—'}</td>
+                          <td className="py-2 pr-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {row.boletoUrl ? (
+                                <a
+                                  href={row.boletoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-sm text-emerald-700 hover:bg-emerald-50 rounded"
+                                  title="Baixar/visualizar boleto"
+                                >
+                                  <Download className="w-4 h-4" />
+                                  Boleto
+                                </a>
+                              ) : null}
+                              {row.pixCopyPaste ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(row.pixCopyPaste!)
+                                    setCopiedPixId(row.id)
+                                    setTimeout(() => setCopiedPixId(null), 2500)
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-sm text-sky-700 hover:bg-sky-50 rounded"
+                                  title="Copiar link PIX para enviar ao aluno"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                  {copiedPixId === row.id ? 'Copiado!' : 'PIX'}
+                                </button>
+                              ) : null}
+                              {!row.boletoUrl && !row.pixCopyPaste ? '—' : null}
+                            </div>
+                          </td>
                           <td className="py-2 pr-4">{jaPagou ? '✓ Sim' : '—'}</td>
                           <td className="py-2">
                             <div className="flex flex-col gap-1">
-                              <div className="flex flex-wrap gap-2">
+                              <div className="flex flex-col gap-2">
                                 <button
                                   type="button"
                                   onClick={() => marcarLinkPagEnviado(row.id)}
                                   disabled={isLoadingLink || linkEnviado}
-                                  className={`px-3 py-1.5 text-sm font-medium rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  className={`w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg disabled:cursor-not-allowed disabled:opacity-50 ${
                                     linkEnviado
                                       ? 'bg-gray-200 text-gray-600 cursor-default'
                                       : 'bg-sky-600 text-white hover:opacity-90'
@@ -802,7 +791,7 @@ export default function AdminDashboardPage() {
                                 <button
                                   type="button"
                                   onClick={() => setDesignarAulaEnrollment(row)}
-                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                                  className="w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
                                 >
                                   {temAula ? 'Editar aulas' : 'Selecionar aulas'}
                                 </button>
@@ -810,9 +799,13 @@ export default function AdminDashboardPage() {
                                   type="button"
                                   onClick={() => marcarAulasAdicionadas(row.id)}
                                   disabled={isLoadingAulas}
-                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  {isLoadingAulas ? 'Salvando...' : 'Já adicionei aulas'}
+                                  {isLoadingAulas
+                                    ? 'Salvando...'
+                                    : jaPagou && temAula
+                                      ? 'Aluno pronto'
+                                      : 'Já adicionei aulas'}
                                 </button>
                               </div>
                               {temAula && primeiraAulaDataHora ? (
