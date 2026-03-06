@@ -255,7 +255,7 @@ function getLessonStudentLabel(
       .map((x) => x.nome)
     return `${key} — ${members.join(', ')}`
   }
-  return l.enrollment.nome
+  return l.enrollment?.nome ?? 'Sem aluno'
 }
 
 function toDatetimeLocal(d: Date): string {
@@ -1498,7 +1498,7 @@ export default function AdminCalendarioPage() {
     s === 'CONFIRMED' ? 'Confirmada' : s === 'CANCELLED' ? 'Cancelada' : 'Reposição'
 
   const isPaused = (lesson: Lesson): boolean => {
-    if (lesson.enrollment.status !== 'PAUSED' || !lesson.enrollment.pausedAt) return false
+    if (lesson.enrollment?.status !== 'PAUSED' || !lesson.enrollment?.pausedAt) return false
     const pausedAt = new Date(lesson.enrollment.pausedAt)
     pausedAt.setHours(0, 0, 0, 0)
     const lessonDate = new Date(lesson.startAt)
@@ -3288,9 +3288,9 @@ export default function AdminCalendarioPage() {
                               notes: lesson.notes,
                               createdByName: lesson.createdByName,
                               enrollment: {
-                                id: lesson.enrollment.id,
-                                nome: lesson.enrollment.nome,
-                                frequenciaSemanal: lesson.enrollment.frequenciaSemanal,
+                                id: lesson.enrollment?.id,
+                                nome: lesson.enrollment?.nome ?? 'Sem aluno',
+                                frequenciaSemanal: lesson.enrollment?.frequenciaSemanal,
                               },
                               teacher: {
                                 id: lesson.teacher?.id,
@@ -3323,7 +3323,7 @@ export default function AdminCalendarioPage() {
                       }
                     }}
                   >
-                    <div className="font-medium">{request.lesson.enrollment.nome}</div>
+                    <div className="font-medium">{request.lesson.enrollment?.nome ?? 'Sem aluno'}</div>
                     <div className="text-gray-600">
                       Aula atual: {request.lesson.teacher?.nome ?? 'Sem professor'} – {startDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(request.lesson.startAt)}
                     </div>
