@@ -2018,10 +2018,10 @@ export default function AdminCalendarioPage() {
                             type="button"
                             onClick={() => openEditLesson(l)}
                             className={`block w-full text-left text-xs px-2 py-1 rounded-lg border shadow-sm hover:shadow transition-shadow break-words relative ${statusColor(l.status, l)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
+                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                           >
                             <div className="line-clamp-2 pr-8 pb-3">
-                              {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome} {formatTime(l.startAt)}
+                              {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'} {formatTime(l.startAt)}
                               {l.enrollment.curso && (
                                 <span className="ml-1 text-[9px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
                               )}
@@ -2116,10 +2116,10 @@ export default function AdminCalendarioPage() {
                             type="button"
                             onClick={() => openEditLesson(l)}
                             className={`text-[10px] text-left px-1.5 py-1 rounded-lg border shadow-sm hover:shadow break-words relative ${statusColor(l.status, l)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
+                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                           >
                             <div className="line-clamp-2 pr-8 pb-3">
-                              {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome}
+                              {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'}
                               {l.enrollment.curso && (
                                 <span className="ml-1 text-[8px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
                               )}
@@ -2197,10 +2197,10 @@ export default function AdminCalendarioPage() {
                           type="button"
                           onClick={() => openEditLesson(l)}
                           className={`text-sm text-left px-3 py-1.5 rounded-lg border shadow-sm hover:shadow w-fit max-w-full break-words relative ${statusColor(l.status, l)}`}
-                          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher.nome} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
+                          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
                         >
                           <div className="line-clamp-2 pr-12 pb-4">
-                            {getLessonStudentLabel(l, enrollments)} – {l.teacher.nome} – {statusLabel(l.status)} ({formatTime(l.startAt)})
+                            {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'} – {statusLabel(l.status)} ({formatTime(l.startAt)})
                             {l.enrollment.curso && (
                               <span className="ml-1 text-[10px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
                             )}
@@ -3219,7 +3219,7 @@ export default function AdminCalendarioPage() {
                         >
                           <div className="font-medium">{studentLabel}</div>
                           <div className="text-gray-600">
-                            {lesson.teacher.nome} – {startDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(lesson.startAt)}
+                            {lesson.teacher?.nome ?? 'Sem professor'} – {startDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(lesson.startAt)}
                           </div>
                           {lesson.notes && (
                             <div className="text-xs text-gray-500 mt-1">{lesson.notes.split('\n').slice(-1)[0]}</div>
@@ -3293,8 +3293,8 @@ export default function AdminCalendarioPage() {
                                 frequenciaSemanal: lesson.enrollment.frequenciaSemanal,
                               },
                               teacher: {
-                                id: lesson.teacher.id,
-                                nome: lesson.teacher.nome,
+                                id: lesson.teacher?.id,
+                                nome: lesson.teacher?.nome ?? 'Sem professor',
                               },
                             }
                             setEditingLesson(lessonForEdit)
@@ -3325,16 +3325,16 @@ export default function AdminCalendarioPage() {
                   >
                     <div className="font-medium">{request.lesson.enrollment.nome}</div>
                     <div className="text-gray-600">
-                      Aula atual: {request.lesson.teacher.nome} – {startDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(request.lesson.startAt)}
+                      Aula atual: {request.lesson.teacher?.nome ?? 'Sem professor'} – {startDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(request.lesson.startAt)}
                     </div>
                     {request.type === 'TROCA_AULA' && requestedDate && (
                       <div className="text-gray-600">
-                        Solicitado para: {request.requestedTeacher?.nome || request.lesson.teacher.nome} – {requestedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(request.requestedStartAt!)}
+                        Solicitado para: {request.requestedTeacher?.nome ?? request.lesson.teacher?.nome ?? 'Sem professor'} – {requestedDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} às {formatTime(request.requestedStartAt!)}
                       </div>
                     )}
                     {request.type === 'TROCA_PROFESSOR' && request.requestedTeacher && (
                       <div className="text-gray-600">
-                        Solicitado professor: {request.requestedTeacher.nome}
+                        Solicitado professor: {request.requestedTeacher?.nome ?? 'Sem professor'}
                       </div>
                     )}
                     {request.status === 'TEACHER_REJECTED' && (
