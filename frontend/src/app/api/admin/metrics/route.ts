@@ -114,11 +114,27 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar novos matriculados:', err)
     }
 
-    // Alunos para redirecionar: têm aulas futuras fora da disponibilidade atual do professor
+    // Alunos para redirecionar: (1) aulas fora da disponibilidade do professor; (2) aulas sem professor (professor desistiu)
     let alunosParaRedirecionarCount = 0
     try {
       const hoje = new Date()
       hoje.setHours(0, 0, 0, 0)
+      const enrollmentIdsToRedirect = new Set<string>()
+
+      // (2) Alunos com aulas futuras sem professor
+      const lessonsSemProfessor = await prisma.lesson.findMany({
+        where: {
+          teacherId: null,
+          status: { not: 'CANCELLED' },
+          startAt: { gte: hoje },
+        },
+        select: { enrollmentId: true },
+      })
+      for (const l of lessonsSemProfessor) {
+        enrollmentIdsToRedirect.add(l.enrollmentId)
+      }
+
+      // (1) Aulas fora da disponibilidade do professor
       const teachers = await prisma.teacher.findMany({
         where: { status: 'ACTIVE' },
         select: {
@@ -128,7 +144,6 @@ export async function GET(request: NextRequest) {
           },
         },
       })
-      const enrollmentIdsToRedirect = new Set<string>()
       for (const teacher of teachers) {
         const slots = teacher.availabilitySlots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]
         if (!slots || slots.length === 0) continue

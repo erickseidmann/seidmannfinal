@@ -55,15 +55,15 @@ export async function GET(request: NextRequest) {
       ? { status: statusParam }
       : {} // Se não especificado, busca todos
 
-    // Construir filtro de busca (nome, email, whatsapp)
+    // Construir filtro de busca (nome, email, whatsapp, nomeGrupo)
     // MySQL não suporta mode: 'insensitive', mas aceita contains (case-sensitive)
-    // Para case-insensitive, usar lower() no banco ou normalizar no código
     const searchFilter: any = searchParam
       ? {
           OR: [
             { nome: { contains: searchParam } },
             { email: { contains: searchParam } },
             { whatsapp: { contains: searchParam } },
+            { nomeGrupo: { contains: searchParam } },
           ],
         }
       : {}
@@ -223,10 +223,10 @@ export async function GET(request: NextRequest) {
             emailResponsavel: (e as any).emailResponsavel ?? null,
             cpf: (e as any).cpf ?? null,
             cpfResponsavel: (e as any).cpfResponsavel ?? null,
-            curso: (e as any).curso ?? null,
+            curso: ((e as any).curso?.trim()) || 'INGLES',
             frequenciaSemanal: (e as any).frequenciaSemanal ?? null,
             tempoAulaMinutos: (e as any).tempoAulaMinutos ?? null,
-            tipoAula: (e as any).tipoAula ?? null,
+            tipoAula: ((e as any).tipoAula?.trim()) || 'PARTICULAR',
             nomeGrupo: (e as any).nomeGrupo ?? null,
             teacherNameForWeek: teacherNamesByEnrollment[e.id] ?? null,
             agenda: agendaByEnrollment[e.id] ?? null,

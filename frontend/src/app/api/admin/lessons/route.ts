@@ -62,8 +62,11 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const where: { startAt: { gte: Date; lte: Date }; teacherId?: string } = {
+    const where: Record<string, unknown> = {
       startAt: { gte: startAt, lte: endAt },
+      status: { not: 'CANCELLED' },
+      // Não mostrar aulas sem professor: nenhum aluno pode ficar no calendário sem professor
+      teacherId: { not: null },
     }
     if (teacherIdParam?.trim()) {
       where.teacherId = teacherIdParam.trim()

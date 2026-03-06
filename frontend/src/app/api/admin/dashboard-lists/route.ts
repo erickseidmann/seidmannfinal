@@ -145,10 +145,39 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Alunos para redirecionar: têm aulas futuras fora da disponibilidade atual do professor
+    // Alunos para redirecionar: (1) aulas futuras fora da disponibilidade do professor; (2) aulas futuras sem professor (professor desistiu)
     if (type === 'alunosParaRedirecionar') {
       const hoje = new Date()
       hoje.setHours(0, 0, 0, 0)
+      type RedirectItem = { nome: string; professores: string[]; frequenciaSemanal: number | null; tempoAulaMinutos: number | null }
+      const byEnrollment = new Map<string, RedirectItem>()
+
+      // (2) Alunos com aulas futuras sem professor (professor desistiu)
+      const lessonsSemProfessor = await prisma.lesson.findMany({
+        where: {
+          teacherId: null,
+          status: { not: 'CANCELLED' },
+          startAt: { gte: hoje },
+        },
+        select: {
+          enrollmentId: true,
+          enrollment: { select: { nome: true, frequenciaSemanal: true, tempoAulaMinutos: true } },
+        },
+      })
+      for (const l of lessonsSemProfessor) {
+        const enr = l.enrollment as { nome?: string; frequenciaSemanal?: number | null; tempoAulaMinutos?: number | null }
+        const nome = enr?.nome ?? 'Aluno desconhecido'
+        if (!byEnrollment.has(l.enrollmentId)) {
+          byEnrollment.set(l.enrollmentId, {
+            nome,
+            professores: ['Professor desistiu'],
+            frequenciaSemanal: enr?.frequenciaSemanal ?? null,
+            tempoAulaMinutos: enr?.tempoAulaMinutos ?? null,
+          })
+        }
+      }
+
+      // (1) Aulas fora da disponibilidade do professor
       const teachers = await prisma.teacher.findMany({
         where: { status: 'ACTIVE' },
         select: {
@@ -159,8 +188,6 @@ export async function GET(request: NextRequest) {
           },
         },
       })
-      type RedirectItem = { nome: string; professores: string[]; frequenciaSemanal: number | null; tempoAulaMinutos: number | null }
-      const byEnrollment = new Map<string, RedirectItem>()
       for (const teacher of teachers) {
         const slots = teacher.availabilitySlots as { dayOfWeek: number; startMinutes: number; endMinutes: number }[]
         if (!slots || slots.length === 0) continue

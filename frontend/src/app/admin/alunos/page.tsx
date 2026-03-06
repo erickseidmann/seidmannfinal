@@ -201,7 +201,7 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'cpf', label: 'CPF', getValue: (s) => (s.cpf ?? '').replace(/;/g, ',') },
   { key: 'endereco', label: 'Endereço', getValue: (s) => formatEndereco(s).replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'valorMensalidade', label: 'Valor', getValue: (s) => (s.valorMensalidade != null ? String(s.valorMensalidade).replace('.', ',') : '—') },
-  { key: 'tipoAula', label: 'Tipo', getValue: (s) => (s.tipoAula === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : s.tipoAula ?? '—') },
+  { key: 'tipoAula', label: 'Tipo', getValue: (s) => ((s.tipoAula?.trim()) || 'PARTICULAR') === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : 'Grupo' },
   { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.status === 'INACTIVE' ? '—' : (s.teacherNameForWeek ?? 's/ professor')).replace(/;/g, ',') },
   { key: 'agenda', label: 'Agenda', getValue: (s) => (s.agenda ?? '—').replace(/;/g, ',') },
   { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
@@ -524,10 +524,10 @@ export default function AdminAlunosPage() {
       emailResponsavel: s.emailResponsavel ?? '',
       cpf: s.cpf ?? '',
       cpfResponsavel: s.cpfResponsavel ?? '',
-      curso: s.curso ?? '',
+      curso: s.curso?.trim() || 'INGLES',
       frequenciaSemanal: s.frequenciaSemanal != null ? String(s.frequenciaSemanal) : '',
       tempoAulaMinutos: s.tempoAulaMinutos != null ? String(s.tempoAulaMinutos) : '',
-      tipoAula: s.tipoAula ?? '',
+      tipoAula: s.tipoAula?.trim() || 'PARTICULAR',
       nomeGrupo: s.nomeGrupo ?? '',
       cep: s.cep ?? '',
       rua: s.rua ?? '',
@@ -1138,7 +1138,7 @@ export default function AdminAlunosPage() {
       case 'valorMensalidade':
         return typeof s.valorMensalidade === 'number' ? s.valorMensalidade : parseFloat(String(s.valorMensalidade ?? '')) || -1
       case 'tipoAula':
-        return ((s.tipoAula ?? '') + (s.nomeGrupo ?? '')).toLowerCase()
+        return (((s.tipoAula ?? '') || 'PARTICULAR') + (s.nomeGrupo ?? '')).toLowerCase()
       case 'teacherNameForWeek':
         return (s.teacherNameForWeek ?? '').toLowerCase()
       case 'agenda':
@@ -1167,9 +1167,9 @@ export default function AdminAlunosPage() {
     }
     if (filters.tipo) {
       if (filters.tipo === 'GRUPO') {
-        list = list.filter((s) => s.tipoAula === 'GRUPO')
+        list = list.filter((s) => (s.tipoAula ?? 'PARTICULAR') === 'GRUPO')
       } else {
-        list = list.filter((s) => s.tipoAula === filters.tipo)
+        list = list.filter((s) => (s.tipoAula ?? 'PARTICULAR') === filters.tipo)
       }
     }
     if (filters.professor === 'com') {
@@ -1178,6 +1178,17 @@ export default function AdminAlunosPage() {
       list = list.filter((s) => !s.teacherNameForWeek?.trim())
     }
     list.sort((a, b) => {
+      // 1. Inativos (INACTIVE, PAUSED) sempre no final
+      const inactiveA = a.status !== 'ACTIVE' ? 1 : 0
+      const inactiveB = b.status !== 'ACTIVE' ? 1 : 0
+      if (inactiveA !== inactiveB) return inactiveA - inactiveB
+
+      // 2. Entre ativos: sem professor no topo
+      const semProfA = !a.teacherNameForWeek?.trim() ? 0 : 1
+      const semProfB = !b.teacherNameForWeek?.trim() ? 0 : 1
+      if (semProfA !== semProfB) return semProfA - semProfB
+
+      // 3. Dentro do grupo: ordenação do usuário (coluna)
       const va = getSortValue(a, sortKey)
       const vb = getSortValue(b, sortKey)
       const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))
@@ -1433,10 +1444,10 @@ export default function AdminAlunosPage() {
       key: 'tipoAula',
       label: 'Tipo',
       sortable: true,
-      sortValue: (s: Student) => ((s.tipoAula ?? '') + (s.nomeGrupo ?? '')).toLowerCase(),
+      sortValue: (s: Student) => (((s.tipoAula ?? '') || 'PARTICULAR') + (s.nomeGrupo ?? '')).toLowerCase(),
       render: (s: Student) => {
-        if (!s.tipoAula) return '—'
-        if (s.tipoAula === 'PARTICULAR') return 'Particular'
+        const tipo = (s.tipoAula?.trim()) || 'PARTICULAR'
+        if (tipo === 'PARTICULAR') return 'Particular'
         return s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : 'Grupo'
       },
     },
@@ -3272,7 +3283,7 @@ export default function AdminAlunosPage() {
                     list = list.filter((s) => s.status === reportFilters.status)
                   }
                   if (reportFilters.tipo) {
-                    list = list.filter((s) => s.tipoAula === reportFilters.tipo)
+                    list = list.filter((s) => (s.tipoAula ?? 'PARTICULAR') === reportFilters.tipo)
                   }
                   if (reportFilters.mes) {
                     const mes = parseInt(reportFilters.mes, 10)
