@@ -87,6 +87,30 @@ export async function GET(request: NextRequest) {
       orderBy: { nome: 'asc' },
     })
 
+    // No modo mês: buscar o período que TERMINA no mês selecionado (ex.: em abril mostrar 23/03–23/04, não 23/04–23/05).
+    type PmRow = { teacherId: string; periodoInicio: Date | null; periodoTermino: Date | null; paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; teacherConfirmedAt: Date | null }
+    let periodEndsInMonthMap = new Map<string, PmRow>()
+    if (useMonthMode && year != null && month != null) {
+      const firstDaySel = firstDayOfMonth(new Date(year, month - 1, 1))
+      const lastDaySel = lastDayOfMonth(new Date(year, month - 1, 1))
+      const rowsEnding = await prisma.teacherPaymentMonth.findMany({
+        where: {
+          teacherId: { in: teachers.map((t) => t.id) },
+          periodoTermino: { gte: firstDaySel, lte: lastDaySel },
+        },
+        select: {
+          teacherId: true,
+          periodoInicio: true,
+          periodoTermino: true,
+          paymentStatus: true,
+          valorPorPeriodo: true,
+          valorExtra: true,
+          teacherConfirmedAt: true,
+        },
+      })
+      rowsEnding.forEach((r) => periodEndsInMonthMap.set(r.teacherId, r as PmRow))
+    }
+
     const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
     if (!lessonRecord?.findMany) {
       return NextResponse.json(
@@ -113,11 +137,13 @@ export async function GET(request: NextRequest) {
       globalStart = periodStart.getTime()
       globalEnd = periodEnd.getTime()
       for (const t of teachers) {
-        const pm = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
+        const rowEndsInMonth = periodEndsInMonthMap.get(t.id)
+        const pmFallback = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
           ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
           : null
-        const start = pm?.periodoInicio ? startOfDay(pm.periodoInicio).getTime() : savedGlobalStart
-        const end = pm?.periodoTermino ? endOfDay(pm.periodoTermino).getTime() : savedGlobalEnd
+        const source = rowEndsInMonth ?? pmFallback
+        const start = source?.periodoInicio ? startOfDay(source.periodoInicio).getTime() : savedGlobalStart
+        const end = source?.periodoTermino ? endOfDay(source.periodoTermino).getTime() : savedGlobalEnd
         if (start < globalStart) globalStart = start
         if (end > globalEnd) globalEnd = end
         teacherPeriods.push({ id: t.id, start, end })
@@ -188,8 +214,10 @@ export async function GET(request: NextRequest) {
     const list = teachers.map((t) => {
       const period = teacherPeriods.find((p) => p.id === t.id)!
       const valorPorHora = t.valorPorHora != null ? Number(t.valorPorHora) : 0
-      const pm = useMonthMode && 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
-        ? (t.paymentMonths[0] as { paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; periodoInicio: Date | null; periodoTermino: Date | null; teacherConfirmedAt: Date | null })
+      const pm = useMonthMode
+        ? (periodEndsInMonthMap.get(t.id) ?? ('paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
+            ? (t.paymentMonths[0] as { paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; periodoInicio: Date | null; periodoTermino: Date | null; teacherConfirmedAt: Date | null })
+            : null))
         : null
 
       const valorPorPeriodo = useMonthMode && pm?.valorPorPeriodo != null
@@ -251,15 +279,17 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // No modo mês: exibir apenas professores cuja DATA TÉRMINO cai no mês/ano selecionado
-    // (ex.: período 15/02–15/03 aparece em março para pagar, não em fevereiro)
+    // No modo mês: exibir professores cujo período de pagamento TEM ALGUM DIA no mês/ano selecionado (sobreposição).
+    // Ex.: período 24/02–24/03 → aparece em fev e mar; período 23/03–23/04 → aparece em mar e abr (Maria em ambos).
     let professoresFinais = list
     if (useMonthMode && year != null && month != null) {
+      const primeiroDia = firstDayOfMonth(new Date(year, month - 1, 1)).getTime()
+      const ultimoDia = lastDayOfMonth(new Date(year, month - 1, 1)).getTime()
       professoresFinais = list.filter((p) => {
-        const termino = new Date(p.dataTermino + 'T12:00:00')
-        const anoTermino = termino.getFullYear()
-        const mesTermino = termino.getMonth() + 1
-        return anoTermino === year && mesTermino === month
+        const period = teacherPeriods.find((tp) => tp.id === p.id)
+        if (!period) return false
+        // Período sobrepõe o mês se: início do período <= fim do mês E fim do período >= início do mês
+        return period.start <= ultimoDia && period.end >= primeiroDia
       })
     }
 
