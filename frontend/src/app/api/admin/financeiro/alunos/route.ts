@@ -102,7 +102,15 @@ export async function GET(request: NextRequest) {
               const mesInativo = d.getMonth() + 1
               const viewingAfterOrSameInactiveMonth =
                 year > anoInativo || (year === anoInativo && month >= mesInativo)
-              return !viewingAfterOrSameInactiveMonth
+              if (viewingAfterOrSameInactiveMonth) return false
+              // Mesmo sendo INACTIVE ainda visível, verificar se foi removido manualmente do mês
+              const pmArr = (e as any).paymentMonths as { paymentStatus: string | null }[] | undefined
+              const pm = Array.isArray(pmArr) && pmArr.length > 0 ? pmArr[0] : null
+              if (pm && pm.paymentStatus === 'PENDING') {
+                removedThisMonthIds.add(e.id)
+                return false
+              }
+              return true
             }
             // Data de início: só aparecer a partir do mês em que ficou ativo
             const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
