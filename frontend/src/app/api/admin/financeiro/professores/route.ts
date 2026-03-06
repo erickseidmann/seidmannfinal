@@ -255,14 +255,11 @@ export async function GET(request: NextRequest) {
     // (ex.: período 15/02–15/03 aparece em março para pagar, não em fevereiro)
     let professoresFinais = list
     if (useMonthMode && year != null && month != null) {
-      const fimDoMesSelecionado = endOfDay(lastDayOfMonth(new Date(year, month - 1, 1)))
       professoresFinais = list.filter((p) => {
         const termino = new Date(p.dataTermino + 'T12:00:00')
         const anoTermino = termino.getFullYear()
         const mesTermino = termino.getMonth() + 1
-        if (anoTermino !== year || mesTermino !== month) return false
-        const criadoEm = new Date((p as { criadoEm: string }).criadoEm)
-        return criadoEm.getTime() <= fimDoMesSelecionado.getTime()
+        return anoTermino === year && mesTermino === month
       })
     }
 
