@@ -187,7 +187,11 @@ export async function POST(request: NextRequest) {
 
         if (!finance.cpf && !finance.cnpj) {
           return NextResponse.json(
-            { ok: false, message: 'CPF do aluno/responsável ou CNPJ da empresa não cadastrado' },
+            {
+              ok: false,
+              message: 'CPF do aluno ou do responsável (quando menor) não cadastrado. Verifique na matrícula: dados do aluno e, se houver responsável, CPF do responsável.',
+              error: 'CPF/CNPJ não cadastrado na matrícula',
+            },
             { status: 400 }
           )
         }
@@ -247,7 +251,7 @@ export async function POST(request: NextRequest) {
         console.error('[api/admin/nfse POST] Erro emissão individual', { enrollmentId, error: errorMessage })
         return NextResponse.json({
           ok: false,
-          message: 'Erro ao emitir NFSe',
+          message: errorMessage,
           error: errorMessage,
         })
       }

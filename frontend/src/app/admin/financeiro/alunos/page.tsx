@@ -50,6 +50,12 @@ interface AlunoFinanceiro {
   hasFinanceObservations?: boolean
 }
 
+interface AlunoRemovidoMes {
+  id: string
+  nome: string
+  motivo: string | null
+}
+
 /** Status efetivo: se não está PAGO e a data de próximo pagamento já passou → ATRASADO. */
 function getEffectiveStatus(a: AlunoFinanceiro): 'PAGO' | 'ATRASADO' | 'PENDING' {
   if (a.status === 'PAGO') return 'PAGO'
@@ -224,10 +230,12 @@ Equipe Seidmann Institute`
 export default function FinanceiroAlunosPage() {
   const router = useRouter()
   const [alunos, setAlunos] = useState<AlunoFinanceiro[]>([])
+  const [alunosRemovidosMes, setAlunosRemovidosMes] = useState<AlunoRemovidoMes[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [confirmUnpay, setConfirmUnpay] = useState<AlunoFinanceiro | null>(null)
   const [confirmBulkUnpay, setConfirmBulkUnpay] = useState(false)
+  const [bulkReasons, setBulkReasons] = useState<Record<string, string>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [fullTableView, setFullTableView] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -301,6 +309,7 @@ export default function FinanceiroAlunosPage() {
         return
       }
       setAlunos(json.data.alunos || [])
+      setAlunosRemovidosMes(json.data.removidosNesteMes || [])
     } catch {
       setToast({ message: 'Erro ao carregar alunos', type: 'error' })
     } finally {
@@ -509,7 +518,7 @@ export default function FinanceiroAlunosPage() {
     }
   }, [alunosNoMes])
 
-  const [cubeModal, setCubeModal] = useState<'atrasado' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | null>(null)
+  const [cubeModal, setCubeModal] = useState<'atrasado' | 'atrasadoCancelar' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | 'removidos' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
   const [filterPeriodo, setFilterPeriodo] = useState<string>('')
   const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
@@ -791,6 +800,14 @@ export default function FinanceiroAlunosPage() {
       for (const id of ids) {
         try {
           await patchCellBody(id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
+          const reason = (bulkReasons[id] ?? '').trim()
+          if (reason) {
+            await fetch('/api/admin/financeiro/observations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enrollmentId: id, message: reason }),
+            })
+          }
           ok++
         } catch {
           err++
@@ -801,6 +818,7 @@ export default function FinanceiroAlunosPage() {
         type: err === 0 ? 'success' : 'error',
       })
       setSelectedIds(new Set())
+      setBulkReasons({})
     } finally {
       setSaving(false)
     }
@@ -1348,7 +1366,7 @@ export default function FinanceiroAlunosPage() {
         {!fullTableView && (
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-3">
             <div
               role="button"
               tabIndex={0}
@@ -1358,6 +1376,16 @@ export default function FinanceiroAlunosPage() {
             >
               <p className="text-xs font-semibold text-red-800 uppercase tracking-wide">Total atrasado</p>
               <p className="mt-1 text-xl font-bold text-red-900">{formatMoney(totalAtrasado)}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('atrasadoCancelar')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('atrasadoCancelar')}
+              className="rounded-xl border-2 border-rose-300 bg-rose-50 p-4 shadow-sm cursor-pointer hover:bg-rose-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-rose-800 uppercase tracking-wide">Atrasados – cancelar curso</p>
+              <p className="mt-1 text-xl font-bold text-rose-900">{alunosAtrasado.length}</p>
             </div>
             <div
               role="button"
@@ -1408,6 +1436,16 @@ export default function FinanceiroAlunosPage() {
             >
               <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">NF emitida</p>
               <p className="mt-1 text-xl font-bold text-emerald-900">{nfEmitida}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('removidos')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('removidos')}
+              className="rounded-xl border-2 border-slate-300 bg-slate-50 p-4 shadow-sm cursor-pointer hover:bg-slate-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-slate-800 uppercase tracking-wide">Alunos removidos deste mês</p>
+              <p className="mt-1 text-xl font-bold text-slate-900">{alunosRemovidosMes.length}</p>
             </div>
           </div>
         </section>
@@ -1583,7 +1621,7 @@ export default function FinanceiroAlunosPage() {
                       disabled={selectedIds.size === 0 || saving}
                       className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                     >
-                      Desmarcar selecionados como pagos
+                      Remover alunos deste mês de pagamento
                     </button>
                   </div>
                 </div>
@@ -2080,8 +2118,8 @@ export default function FinanceiroAlunosPage() {
         <Modal
           isOpen={confirmBulkUnpay}
           onClose={() => setConfirmBulkUnpay(false)}
-          title="Desmarcar selecionados como pagos"
-          size="sm"
+          title="Remover alunos deste mês de pagamento"
+          size="md"
           footer={
             <>
               <Button variant="secondary" onClick={() => setConfirmBulkUnpay(false)}>
@@ -2095,19 +2133,38 @@ export default function FinanceiroAlunosPage() {
                 }}
                 disabled={saving || selectedIds.size === 0}
               >
-                {saving ? 'Salvando...' : 'Sim, desmarcar selecionados'}
+                {saving ? 'Salvando...' : 'Sim, remover deste mês'}
               </Button>
             </>
           }
         >
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-sm text-gray-700">
-              Tem certeza que deseja <span className="font-semibold text-red-600">desmarcar como pago</span> os{' '}
-              <span className="font-semibold">{selectedIds.size}</span> aluno(s) selecionado(s) neste mês?
+              Tem certeza que deseja <span className="font-semibold text-red-600">remover deste mês</span> os{' '}
+              <span className="font-semibold">{selectedIds.size}</span> aluno(s) selecionado(s)? Eles não aparecerão mais neste mês do financeiro de alunos.
             </p>
             <p className="text-xs text-gray-500">
-              Isso vai alterar o status para <strong>Pendente</strong> e remover a data do último pagamento de todos eles.
+              Opcionalmente, informe um motivo para cada aluno (será salvo como observação financeira). Pode deixar em branco.
             </p>
+            <div className="max-h-64 overflow-y-auto space-y-2 border-t border-gray-200 pt-3">
+              {alunos.filter((a) => selectedIds.has(a.id)).map((a) => (
+                <div key={a.id} className="space-y-1">
+                  <div className="text-sm font-medium text-gray-800">{a.nome}</div>
+                  <input
+                    type="text"
+                    value={bulkReasons[a.id] ?? ''}
+                    onChange={(e) =>
+                      setBulkReasons((prev) => ({
+                        ...prev,
+                        [a.id]: e.target.value,
+                      }))
+                    }
+                    className="input w-full text-sm"
+                    placeholder="Motivo (opcional)…"
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </Modal>
 
@@ -2322,7 +2379,9 @@ export default function FinanceiroAlunosPage() {
           title={
             cubeModal === 'atrasado'
               ? 'Alunos em atraso'
-              : cubeModal === 'pago'
+              : cubeModal === 'atrasadoCancelar'
+                ? 'Alunos atrasados – precisam cancelar o curso'
+                : cubeModal === 'pago'
                 ? 'Alunos com pagamento em dia'
                 : cubeModal === 'aReceber'
                   ? 'Alunos a receber'
@@ -2332,13 +2391,15 @@ export default function FinanceiroAlunosPage() {
                       ? 'NF em aberto'
                       : cubeModal === 'nfEmitida'
                         ? 'NF emitida'
-                        : 'Lista'
+                        : cubeModal === 'removidos'
+                          ? 'Alunos removidos deste mês'
+                          : 'Lista'
           }
           size="md"
           footer={
             (() => {
-              const list =
-                cubeModal === 'atrasado'
+              const list: (AlunoFinanceiro | AlunoRemovidoMes)[] =
+                cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar'
                   ? alunosAtrasado
                   : cubeModal === 'pago'
                     ? alunosPago
@@ -2350,20 +2411,23 @@ export default function FinanceiroAlunosPage() {
                           ? alunosNFEmAberto
                           : cubeModal === 'nfEmitida'
                             ? alunosNFEmitida
-                            : []
-              if (list.length === 0) return null
-              const showVencimento = cubeModal === 'atrasado' || cubeModal === 'aReceber'
+                            : cubeModal === 'removidos'
+                              ? (Array.isArray(alunosRemovidosMes) ? alunosRemovidosMes : [])
+                              : []
+              if (!Array.isArray(list) || list.length === 0) return null
+              const showVencimento = cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar' || cubeModal === 'aReceber'
               const showUltimoPag = cubeModal === 'pago'
-              const isAtrasado = cubeModal === 'atrasado'
               const copyText =
                 (showVencimento
-                  ? 'Aluno\tVencimento\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataProximoPagamento)}`).join('\n')
+                  ? 'Aluno\tVencimento\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataProximoPagamento)}`).join('\n')
                   : showUltimoPag
-                    ? 'Aluno\tÚltimo pag.\n' + list.map((a) => `${a.nome}\t${formatDate(a.dataUltimoPagamento)}`).join('\n')
-                    : 'Aluno\n' + list.map((a) => a.nome).join('\n'))
+                    ? 'Aluno\tÚltimo pag.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataUltimoPagamento)}`).join('\n')
+                    : cubeModal === 'removidos'
+                      ? 'Aluno\tMotivo\n' + (list as AlunoRemovidoMes[]).map((a) => `${a.nome}\t${a.motivo ?? ''}`).join('\n')
+                      : 'Aluno\n' + list.map((a: any) => a.nome).join('\n'))
               return (
                 <div className="flex justify-between items-center w-full gap-2 flex-wrap">
-                  {isAtrasado && (
+                  {(cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar') && (
                     <Button
                       variant="primary"
                       size="sm"
@@ -2395,8 +2459,8 @@ export default function FinanceiroAlunosPage() {
           }
         >
           {(() => {
-            const list =
-              cubeModal === 'atrasado'
+            const list: (AlunoFinanceiro | AlunoRemovidoMes)[] =
+              cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar'
                 ? alunosAtrasado
                 : cubeModal === 'pago'
                   ? alunosPago
@@ -2408,24 +2472,33 @@ export default function FinanceiroAlunosPage() {
                         ? alunosNFEmAberto
                         : cubeModal === 'nfEmitida'
                           ? alunosNFEmitida
-                          : []
-            if (list.length === 0) {
+                          : cubeModal === 'removidos'
+                            ? (Array.isArray(alunosRemovidosMes) ? alunosRemovidosMes : [])
+                            : []
+            if (!Array.isArray(list) || list.length === 0) {
               return <p className="text-gray-500 text-sm">Nenhum aluno nesta lista.</p>
             }
-            const showVencimento = cubeModal === 'atrasado' || cubeModal === 'aReceber'
+            const showVencimento = cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar' || cubeModal === 'aReceber'
             const showUltimoPag = cubeModal === 'pago'
             return (
               <>
                 <ul className="space-y-2 max-h-80 overflow-y-auto">
                   {list.map((a) => (
                     <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                      <span className="min-w-0 flex-1">{a.nome}</span>
+                      <span className="min-w-0 flex-1">
+                        {a.nome}
+                        {cubeModal === 'removidos' && (a as AlunoRemovidoMes).motivo && (
+                          <span className="block text-xs text-gray-500 mt-0.5">
+                            Motivo: {(a as AlunoRemovidoMes).motivo}
+                          </span>
+                        )}
+                      </span>
                       <div className="flex items-center gap-2 shrink-0">
-                        {cubeModal === 'atrasado' && (
+                        {(cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar') && (
                           <button
                             type="button"
                             onClick={() => openCobrancaModal(a.id, a.nome)}
-                            disabled={!a.email || loadingCobrancaForId === a.id}
+                            disabled={!(a as AlunoFinanceiro).email || loadingCobrancaForId === a.id}
                             className="text-xs px-2 py-1 rounded bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {loadingCobrancaForId === a.id ? (
@@ -2438,10 +2511,10 @@ export default function FinanceiroAlunosPage() {
                         {(showVencimento || showUltimoPag) && (
                           <span className="text-sm text-gray-600">
                             {showVencimento && (
-                              <>Venc.: {formatDate(a.dataProximoPagamento)}</>
+                              <>Venc.: {formatDate((a as AlunoFinanceiro).dataProximoPagamento)}</>
                             )}
                             {showUltimoPag && !showVencimento && (
-                              <>Últ. pag.: {formatDate(a.dataUltimoPagamento)}</>
+                              <>Últ. pag.: {formatDate((a as AlunoFinanceiro).dataUltimoPagamento)}</>
                             )}
                           </span>
                         )}

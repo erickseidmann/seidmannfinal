@@ -89,6 +89,8 @@ export async function GET(request: NextRequest) {
 
     // Se estiver filtrando por mês/ano: remover inativos a partir do mês de inativação;
     // e só incluir alunos cuja data de início seja no mês selecionado ou antes (não aparecem antes do mês de início)
+    const removedThisMonthIds = new Set<string>()
+
     const filteredEnrollments =
       hasMonthFilter && year != null && month != null
         ? enrollments.filter((e) => {
@@ -109,6 +111,13 @@ export async function GET(request: NextRequest) {
               const anoInicio = di.getFullYear()
               const mesInicio = di.getMonth() + 1
               if (year < anoInicio || (year === anoInicio && month < mesInicio)) return false
+            }
+            // Remover explicitamente alunos marcados como "PENDING" para este mês em EnrollmentPaymentMonth
+            const pmArr = (e as any).paymentMonths as { paymentStatus: string | null }[] | undefined
+            const pm = Array.isArray(pmArr) && pmArr.length > 0 ? pmArr[0] : null
+            if (pm && pm.paymentStatus === 'PENDING') {
+              removedThisMonthIds.add(e.id)
+              return false
             }
             return true
           })
@@ -154,17 +163,36 @@ export async function GET(request: NextRequest) {
 
     // Buscar todas as NFSe autorizadas para calcular nfEmitida automaticamente
     // Mapear por enrollmentId + year + month
-    const nfseAutorizadas = await prisma.nfseInvoice.findMany({
-      where: {
-        status: 'autorizado',
-        cancelledAt: null,
-      },
-      select: {
-        enrollmentId: true,
-        year: true,
-        month: true,
-      },
+    const nfseAutorizadasPromise = prisma.nfseInvoice.findMany({
+      where: { status: 'autorizado', cancelledAt: null },
+      select: { enrollmentId: true, year: true, month: true },
     })
+
+    let removedWithReasons: { id: string; nome: string; motivo: string | null }[] = []
+    if (removedThisMonthIds.size > 0) {
+      const removedArray = Array.from(removedThisMonthIds)
+      const obs = await prisma.financeObservation.findMany({
+        where: { enrollmentId: { in: removedArray } },
+        orderBy: { criadoEm: 'desc' },
+        select: { enrollmentId: true, message: true, criadoEm: true },
+      })
+      const latestByEnrollment = new Map<string, string>()
+      for (const o of obs) {
+        if (!o.enrollmentId) continue
+        if (!latestByEnrollment.has(o.enrollmentId)) {
+          latestByEnrollment.set(o.enrollmentId, o.message)
+        }
+      }
+      removedWithReasons = enrollments
+        .filter((e) => removedThisMonthIds.has(e.id))
+        .map((e) => ({
+          id: e.id,
+          nome: e.nome,
+          motivo: latestByEnrollment.get(e.id) ?? null,
+        }))
+    }
+
+    const nfseAutorizadas = await nfseAutorizadasPromise
     const nfseMap = new Map<string, boolean>()
     for (const nf of nfseAutorizadas) {
       const key = `${nf.enrollmentId}:${nf.year}:${nf.month}`
@@ -296,7 +324,7 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    return NextResponse.json({ ok: true, data: { alunos: rows } })
+    return NextResponse.json({ ok: true, data: { alunos: rows, removidosNesteMes: removedWithReasons } })
   } catch (error) {
     console.error('[api/admin/financeiro/alunos GET]', error)
     return NextResponse.json(

@@ -294,7 +294,8 @@ export default function FinanceiroNfsePage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        setToast({ message: json.message || json.error || 'Erro ao reemitir nota', type: 'error' })
+        const msg = json.error || json.message || 'Erro ao reemitir nota'
+        setToast({ message: msg, type: 'error' })
         return
       }
       setToast({ message: 'Nota reenviada para emissão', type: 'success' })
@@ -363,7 +364,8 @@ export default function FinanceiroNfsePage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        setToast({ message: json.message || json.error || 'Erro ao emitir nota', type: 'error' })
+        const msg = json.error || json.message || 'Erro ao emitir nota'
+        setToast({ message: msg, type: 'error' })
         return
       }
       setToast({ message: 'Nota manual enviada para emissão', type: 'success' })

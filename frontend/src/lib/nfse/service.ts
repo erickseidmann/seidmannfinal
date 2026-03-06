@@ -1,12 +1,19 @@
 /**
  * Camada de serviço para emissão e gestão de NFSe.
  * Orquestra a integração com Focus NFe e o banco de dados.
+ *
+ * Por que a NF pode não ser gerada mesmo com CPF "correto"?
+ * 1) CPF com dígitos verificadores errados → validamos aqui e retornamos mensagem clara.
+ * 2) CPF irregular/cancelado na Receita Federal → a prefeitura (via Focus NFe) rejeita.
+ * 3) Nome do tomador diferente do que consta na base da Receita → prefeitura pode rejeitar.
+ * 4) Restrições do município ou ambiente (homologação vs produção).
  */
 
 import { emitirNfse, consultarNfse, cancelarNfse, downloadNfseXml, generateNfseRef } from './client'
 import { buildNfsePayload } from './builder'
 import { NfseRecord, NfseStatus } from './types'
 import { prisma } from '@/lib/prisma'
+import { isValidCPF, isValidCNPJ } from '@/lib/finance/validators'
 
 const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
 
@@ -50,7 +57,17 @@ export async function emitirNfseParaAluno(params: EmitirNfseParams): Promise<Nfs
   } = params
   const doc = cnpj ? cnpj.replace(/\D/g, '') : (cpf ? cpf.replace(/\D/g, '') : '')
   if (!doc || (cnpj && doc.length !== 14) || (cpf && !cnpj && doc.length !== 11)) {
-    throw new Error(cnpj ? 'CNPJ inválido' : 'CPF inválido')
+    throw new Error(cnpj ? 'CNPJ não informado ou com quantidade de dígitos incorreta.' : 'CPF não informado ou com quantidade de dígitos incorreta (deve ter 11 dígitos).')
+  }
+  // Validar dígitos verificadores (evita enviar à prefeitura e receber rejeição genérica)
+  if (cnpj && doc.length === 14) {
+    if (!isValidCNPJ(cnpj)) {
+      throw new Error('CNPJ com dígitos verificadores inválidos. Verifique o número no cadastro do aluno.')
+    }
+  } else if (cpf && doc.length === 11) {
+    if (!isValidCPF(cpf)) {
+      throw new Error('CPF com dígitos verificadores inválidos. Verifique o número no cadastro do aluno.')
+    }
   }
 
   // Verifica se já existe nota para este aluno/mês (não cancelada)
@@ -138,7 +155,12 @@ export async function emitirNfseParaAluno(params: EmitirNfseParams): Promise<Nfs
         errorMessage,
       },
     })
-    throw error
+    // Mensagem mais clara quando a rejeição vem da Focus NFe/prefeitura (ex.: CPF irregular na Receita, nome não confere)
+    const hint =
+      errorMessage.includes('Focus NFe') || errorMessage.includes('refused') || errorMessage.includes('rejeit')
+        ? ' A prefeitura pode rejeitar quando: CPF está irregular na Receita Federal, nome do tomador não confere com a base da Receita, ou há restrição no município.'
+        : ''
+    throw new Error(errorMessage + hint)
   }
 }
 
