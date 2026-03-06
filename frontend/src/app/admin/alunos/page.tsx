@@ -3051,6 +3051,7 @@ export default function AdminAlunosPage() {
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Por que está incorreta</th>
                     <th className="py-2 pr-4 font-semibold text-gray-700">Ação Necessária</th>
                     <th className="py-2 font-semibold text-gray-700">Ações</th>
                   </tr>
@@ -3058,7 +3059,7 @@ export default function AdminAlunosPage() {
                 <tbody>
                   {(listModal?.type === 'wrongFrequencyProximaSemana' ? wrongFrequencyStatsProximaSemana.list : wrongFrequencyStats.list).length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="py-4 text-center text-gray-500">
+                      <td colSpan={4} className="py-4 text-center text-gray-500">
                         {listModal?.type === 'wrongFrequencyProximaSemana' ? 'Nenhum aluno com frequência incorreta na próxima semana.' : 'Nenhum aluno com frequência incorreta esta semana.'}
                       </td>
                     </tr>
@@ -3070,9 +3071,15 @@ export default function AdminAlunosPage() {
                         : diff < 0
                           ? `Remover ${Math.abs(diff)} aula${Math.abs(diff) > 1 ? 's' : ''}`
                           : '—'
+                      const razao = diff > 0
+                        ? `${item.actual} aula(s) agendada(s) de ${item.expected} necessárias`
+                        : diff < 0
+                          ? `${item.actual} aula(s) agendada(s), frequência semanal é ${item.expected}`
+                          : '—'
                       return (
                         <tr key={item.enrollmentId} className="border-b border-gray-100">
                           <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
+                          <td className="py-3 pr-4 text-sm text-gray-600">{razao}</td>
                           <td className="py-3 pr-4">
                             <span className="inline-flex items-center px-2 py-1 rounded-md bg-orange-100 text-orange-800 text-xs font-medium">
                               {acaoNecessaria}
