@@ -464,6 +464,13 @@ export default function FinanceiroAlunosPage() {
     return ano < anoInativo || (ano === anoInativo && mes < mesInativo)
   }, [])
 
+  /** Verdadeiro se o vencimento (dataProximoPagamento) do aluno cai no ano/mês informado. */
+  const isVencimentoNoMes = useCallback((a: AlunoFinanceiro, ano: number, mes: number) => {
+    if (!a.dataProximoPagamento) return false
+    const d = new Date(a.dataProximoPagamento)
+    return d.getFullYear() === ano && d.getMonth() + 1 === mes
+  }, [])
+
   const alunosNoMes = useMemo(
     () => alunos.filter((a) => wasActiveInMonth(a, selectedAno, selectedMes)),
     [alunos, selectedAno, selectedMes, wasActiveInMonth]
@@ -483,17 +490,22 @@ export default function FinanceiroAlunosPage() {
     alunosNoMes.forEach((a) => {
       const status = getEffectiveStatus(a)
       const valor = a.valorMensal ?? 0
+      const vencimentoNoMes = isVencimentoNoMes(a, selectedAno, selectedMes)
       if (status === 'ATRASADO') {
         atrasado += valor
-        aReceber += valor
+        if (vencimentoNoMes) {
+          aReceber += valor
+          aReceberList.push(a)
+        }
         atrasadoList.push(a)
-        aReceberList.push(a)
       } else if (status === 'PAGO') {
         pago += valor
         pagoList.push(a)
       } else {
-        aReceber += valor
-        aReceberList.push(a)
+        if (vencimentoNoMes) {
+          aReceber += valor
+          aReceberList.push(a)
+        }
       }
       if (a.notaFiscalEmitida === true) {
         emitida++
@@ -516,7 +528,7 @@ export default function FinanceiroAlunosPage() {
       alunosNFEmAberto: nfEmAbertoList,
       alunosNFEmitida: nfEmitidaList,
     }
-  }, [alunosNoMes])
+  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes])
 
   const [cubeModal, setCubeModal] = useState<'atrasado' | 'atrasadoCancelar' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | 'removidos' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
