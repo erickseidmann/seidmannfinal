@@ -806,31 +806,54 @@ export default function FinanceiroAlunosPage() {
       return
     }
     setSaving(true)
+    let lastError: string | null = null
     try {
       let ok = 0
       let err = 0
       for (const id of ids) {
         try {
-          await patchCellBody(id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
+          const res = await fetch(`/api/admin/financeiro/alunos/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              paymentStatus: 'PENDING',
+              year: selectedAno,
+              month: selectedMes,
+            }),
+          })
+          const json = await res.json()
+          if (!res.ok || !json.ok) {
+            lastError = json.message || 'Erro ao atualizar'
+            err++
+            continue
+          }
           const reason = (bulkReasons[id] ?? '').trim()
           if (reason) {
             await fetch('/api/admin/financeiro/observations', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
               body: JSON.stringify({ enrollmentId: id, message: reason }),
             })
           }
           ok++
-        } catch {
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : 'Erro de rede'
           err++
         }
       }
       setToast({
-        message: err === 0 ? `Marcado como Pendente para ${ok} aluno(s).` : `${ok} atualizado(s), ${err} erro(s).`,
+        message:
+          err === 0
+            ? `${ok} aluno(s) removido(s) deste mês.`
+            : `${ok} removido(s), ${err} erro(s).${lastError ? ` Detalhe: ${lastError}` : ''}`,
         type: err === 0 ? 'success' : 'error',
       })
       setSelectedIds(new Set())
       setBulkReasons({})
+      setConfirmBulkUnpay(false)
+      await fetchAlunos(selectedAno, selectedMes)
     } finally {
       setSaving(false)
     }
@@ -2139,10 +2162,7 @@ export default function FinanceiroAlunosPage() {
               </Button>
               <Button
                 variant="primary"
-                onClick={async () => {
-                  await bulkMarkPending()
-                  setConfirmBulkUnpay(false)
-                }}
+                onClick={() => void bulkMarkPending()}
                 disabled={saving || selectedIds.size === 0}
               >
                 {saving ? 'Salvando...' : 'Sim, remover deste mês'}
