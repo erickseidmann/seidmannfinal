@@ -122,12 +122,27 @@ export async function POST(
     })
 
     // Marcar pagamento como PAGO
+    // Preferir o registro cujo período TERMINA no mês/ano selecionado (mesma regra da listagem).
+    const rangeStart = new Date(Date.UTC(year, month - 1, 1))
+    const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+    const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
+      where: {
+        teacherId,
+        periodoTermino: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+      },
+    })
+    const keyYear = existingByEnd?.year ?? year
+    const keyMonth = existingByEnd?.month ?? month
+
     await prisma.teacherPaymentMonth.upsert({
-      where: { teacherId_year_month: { teacherId, year, month } },
+      where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
       create: {
         teacherId,
-        year,
-        month,
+        year: keyYear,
+        month: keyMonth,
         paymentStatus: 'PAGO',
       },
       update: {

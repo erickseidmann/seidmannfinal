@@ -111,23 +111,38 @@ export async function PATCH(
       return NextResponse.json({ ok: true, message: 'Nada a atualizar' })
     }
 
-    const wasMarkedAsPaid =
-      paymentStatus === 'PAGO' && updateData.paymentStatus === 'PAGO'
+    const wasMarkedAsPaid = paymentStatus === 'PAGO' && updateData.paymentStatus === 'PAGO'
 
     if (Object.keys(updateData).length > 0) {
+      // Encontrar o registro cujo período TERMINA no mês/ano selecionado, se existir.
+      // Isso garante que mudar status/valores na tela de Abril, por exemplo, atualize o período que termina em abril.
+      const rangeStart = new Date(Date.UTC(year, month - 1, 1))
+      const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+      const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
+        where: {
+          teacherId,
+          periodoTermino: {
+            gte: rangeStart,
+            lte: rangeEnd,
+          },
+        },
+      })
+      const keyYear = existingByEnd?.year ?? year
+      const keyMonth = existingByEnd?.month ?? month
+
       const existing = await prisma.teacherPaymentMonth.findUnique({
-        where: { teacherId_year_month: { teacherId, year, month } },
+        where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
       })
       const previousStatus = existing?.paymentStatus
 
       await prisma.teacherPaymentMonth.upsert({
         where: {
-          teacherId_year_month: { teacherId, year, month },
+          teacherId_year_month: { teacherId, year: keyYear, month: keyMonth },
         },
         create: {
           teacherId,
-          year,
-          month,
+          year: keyYear,
+          month: keyMonth,
           paymentStatus: updateData.paymentStatus ?? null,
           valorPorPeriodo: updateData.valorPorPeriodo ?? null,
           valorExtra: updateData.valorExtra ?? null,
@@ -142,12 +157,12 @@ export async function PATCH(
         updateData.periodoInicio !== undefined || updateData.periodoTermino !== undefined
       if (updatedPeriod) {
         const current = await prisma.teacherPaymentMonth.findUnique({
-          where: { teacherId_year_month: { teacherId, year, month } },
+          where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
         })
         const terminoDate = current?.periodoTermino
         if (terminoDate) {
           let lastTermino = new Date(terminoDate)
-          let nextYm = nextYearMonth(year, month)
+          let nextYm = nextYearMonth(keyYear, keyMonth)
           const maxMonths = 12
           for (let i = 0; i < maxMonths; i++) {
             const nextInicio = new Date(lastTermino)
