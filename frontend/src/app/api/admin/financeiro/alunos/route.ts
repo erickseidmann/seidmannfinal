@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
               }
               return true
             }
-            // Data de início: só aparecer a partir do mês em que ficou ativo
+            // Só aparecer a partir do mês da data de início (mesmo sendo independente da página Alunos)
             const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
             if (dataInicio) {
               const di = new Date(dataInicio)

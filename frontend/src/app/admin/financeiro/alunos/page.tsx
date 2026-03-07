@@ -802,6 +802,76 @@ export default function FinanceiroAlunosPage() {
     }
   }
 
+  const [removingFromMonthId, setRemovingFromMonthId] = useState<string | null>(null)
+  const [revertingRemovedId, setRevertingRemovedId] = useState<string | null>(null)
+
+  const revertRemovedFromMonth = useCallback(
+    async (enrollmentId: string) => {
+      setRevertingRemovedId(enrollmentId)
+      try {
+        const res = await fetch(`/api/admin/financeiro/alunos/${enrollmentId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            paymentStatus: null,
+            year: selectedAno,
+            month: selectedMes,
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) {
+          setToast({ message: 'Aluno devolvido ao mês.', type: 'success' })
+          await fetchAlunos(selectedAno, selectedMes)
+        } else {
+          setToast({ message: json.message || 'Erro ao reverter.', type: 'error' })
+        }
+      } catch {
+        setToast({ message: 'Erro ao reverter.', type: 'error' })
+      } finally {
+        setRevertingRemovedId(null)
+      }
+    },
+    [selectedAno, selectedMes, fetchAlunos]
+  )
+
+  const removeFromMonth = useCallback(
+    async (a: AlunoFinanceiro) => {
+      if (
+        !window.confirm(
+          `Remover ${a.nome} de ${selectedMes}/${selectedAno}? O aluno não aparecerá neste mês no Financeiro (o status na página Alunos não muda).`
+        )
+      ) {
+        return
+      }
+      setRemovingFromMonthId(a.id)
+      try {
+        const res = await fetch(`/api/admin/financeiro/alunos/${a.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            paymentStatus: 'PENDING',
+            year: selectedAno,
+            month: selectedMes,
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) {
+          setToast({ message: `${a.nome} removido deste mês.`, type: 'success' })
+          await fetchAlunos(selectedAno, selectedMes)
+        } else {
+          setToast({ message: json.message || 'Erro ao remover.', type: 'error' })
+        }
+      } catch {
+        setToast({ message: 'Erro ao remover.', type: 'error' })
+      } finally {
+        setRemovingFromMonthId(null)
+      }
+    },
+    [selectedAno, selectedMes, fetchAlunos]
+  )
+
   const bulkMarkPending = async () => {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) {
@@ -2098,6 +2168,15 @@ export default function FinanceiroAlunosPage() {
                         >
                           {loadingCobrancaForId === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeFromMonth(a)}
+                          disabled={removingFromMonthId === a.id}
+                          className="ml-1 text-gray-500 hover:text-red-600 p-1 disabled:opacity-50"
+                          title="Remover deste mês (não vamos receber dele neste mês; não altera o status na página Alunos)"
+                        >
+                          {removingFromMonthId === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        </button>
                       </td>
                       )}
                     </tr>
@@ -2521,7 +2600,23 @@ export default function FinanceiroAlunosPage() {
                   {list.map((a) => (
                     <li key={a.id} className="py-1.5 px-2 rounded bg-gray-50 text-gray-800 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                       <span className="min-w-0 flex-1">
-                        {a.nome}
+                        {cubeModal === 'removidos' ? (
+                          <>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => void revertRemovedFromMonth(a.id)}
+                              disabled={revertingRemovedId === a.id}
+                              className="mr-2"
+                            >
+                              {revertingRemovedId === a.id ? <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> : null}
+                              Reverter
+                            </Button>
+                            {a.nome}
+                          </>
+                        ) : (
+                          a.nome
+                        )}
                         {cubeModal === 'removidos' && (a as AlunoRemovidoMes).motivo && (
                           <span className="block text-xs text-gray-500 mt-0.5">
                             Motivo: {(a as AlunoRemovidoMes).motivo}

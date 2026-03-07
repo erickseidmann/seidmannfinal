@@ -36,6 +36,7 @@ interface EnrollmentData {
 
 export interface CorrectionData {
   existingLessonTimes: string[]
+  existingLessons?: { startAt: string; teacherName?: string }[]
   expected: number
   actual: number
 }
@@ -289,9 +290,10 @@ export default function DesignarAulaModal({
             <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-2">
               <p className="text-sm font-medium text-red-800">Já agendado nesta semana:</p>
               <ul className="space-y-1">
-                {correctionData.existingLessonTimes.map((isoStr, idx) => (
+                {((correctionData.existingLessons ?? correctionData.existingLessonTimes.map((isoStr) => ({ startAt: isoStr }))) as { startAt: string; teacherName?: string }[]).map((lesson, idx) => (
                   <li key={idx} className="text-sm text-red-700 font-medium">
-                    {formatLessonDateTime(isoStr)}
+                    {formatLessonDateTime(lesson.startAt)}
+                    {lesson.teacherName && <span className="text-red-600"> – Prof. {lesson.teacherName}</span>}
                   </li>
                 ))}
               </ul>

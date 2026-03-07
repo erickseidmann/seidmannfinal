@@ -412,6 +412,7 @@ export default function AdminCalendarioPage() {
   } | null>(null)
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
+    existingLessons?: { startAt: string; teacherName?: string }[]
     expected: number
     actual: number
   } | null>(null)
@@ -3108,6 +3109,7 @@ export default function AdminCalendarioPage() {
                           })
                           setDesignarAulaCorrectionData({
                             existingLessonTimes: item.lessonTimesThisWeek ?? [],
+                            existingLessons: item.lessonsThisWeek?.map((l) => ({ startAt: l.startAt, teacherName: l.teacherName })),
                             expected: item.expected,
                             actual: item.actual,
                           })

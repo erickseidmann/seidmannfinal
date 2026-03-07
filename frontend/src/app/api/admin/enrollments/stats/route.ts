@@ -130,6 +130,33 @@ export async function GET(request: NextRequest) {
       (e) => !enrollmentIdsWithTeacherNextWeek.has(e.id)
     ).length
 
+    // Alunos com repetição no fim: última aula (max startAt) entre agora e agora+7 dias
+    const agora = new Date()
+    const limiteRepeticao = new Date(agora)
+    limiteRepeticao.setDate(limiteRepeticao.getDate() + 7)
+    limiteRepeticao.setHours(23, 59, 59, 999)
+    const lessonsEndingSoon = await prisma.lesson.findMany({
+      where: {
+        status: { not: 'CANCELLED' },
+        startAt: { gte: agora, lte: limiteRepeticao },
+        enrollment: { status: 'ACTIVE' },
+      },
+      select: { enrollmentId: true },
+    })
+    const enrollmentIdsWithLessonsEndingSoon = [...new Set(lessonsEndingSoon.map((l) => l.enrollmentId))]
+    let repetitionEndingSoonCount = 0
+    for (const eid of enrollmentIdsWithLessonsEndingSoon) {
+      const last = await prisma.lesson.findFirst({
+        where: { enrollmentId: eid, status: { not: 'CANCELLED' } },
+        orderBy: { startAt: 'desc' },
+        select: { startAt: true },
+      })
+      if (last) {
+        const d = new Date(last.startAt)
+        if (d >= agora && d <= limiteRepeticao) repetitionEndingSoonCount++
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
@@ -146,6 +173,7 @@ export async function GET(request: NextRequest) {
         },
         semProfessor: semProfessorCount,
         semProfessorProximaSemana: semProfessorProximaSemanaCount,
+        repetitionEndingSoon: repetitionEndingSoonCount,
       },
     })
   } catch (error) {

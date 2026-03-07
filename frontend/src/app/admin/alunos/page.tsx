@@ -315,6 +315,7 @@ export default function AdminAlunosPage() {
     porStatus: { ativos: number; inativos: number; pausados: number }
     semProfessor: number
     semProfessorProximaSemana: number
+    repetitionEndingSoon?: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
   const [listModal, setListModal] = useState<{ title: string; type: string } | null>(null)
@@ -336,8 +337,14 @@ export default function AdminAlunosPage() {
     count: number
     list: { enrollmentId: string; studentName: string; expected: number; actual: number; lessonTimesThisWeek?: string[] }[]
   }>({ count: 0, list: [] })
+  const [repetitionEndingStats, setRepetitionEndingStats] = useState<{
+    count: number
+    list: { enrollmentId: string; studentName: string; lastLessonAt: string }[]
+  }>({ count: 0, list: [] })
+  const [extendingRepetitionId, setExtendingRepetitionId] = useState<string | null>(null)
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
+    existingLessons?: { startAt: string; teacherName?: string }[]
     expected: number
     actual: number
   } | null>(null)
@@ -358,7 +365,27 @@ export default function AdminAlunosPage() {
     fetchStats()
     fetchWrongFrequencyStats()
     fetchWrongFrequencyStatsProximaSemana()
+    fetchRepetitionEndingStats()
   }, [filters])
+
+  const fetchRepetitionEndingStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/enrollments/repetition-ending?withinDays=7', { credentials: 'include' })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && Array.isArray(json.data)) {
+          setRepetitionEndingStats({ count: json.count ?? json.data.length, list: json.data })
+        } else {
+          setRepetitionEndingStats({ count: 0, list: [] })
+        }
+      } else {
+        setRepetitionEndingStats({ count: 0, list: [] })
+      }
+    } catch (e) {
+      console.error(e)
+      setRepetitionEndingStats({ count: 0, list: [] })
+    }
+  }, [])
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true)
@@ -1794,6 +1821,30 @@ export default function AdminAlunosPage() {
               subtitle="Ação necessária na próxima semana"
             />
           </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListModal({ title: 'Alunos com repetição no fim', type: 'repetitionEnding' })
+              setListData([])
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListModal({ title: 'Alunos com repetição no fim', type: 'repetitionEnding' })
+                setListData([])
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Repetição no fim"
+              value={repetitionEndingStats.count}
+              icon={<CalendarPlus className="w-5 h-5" />}
+              color="indigo"
+              subtitle="Aulas terminando em 1 semana ou menos"
+            />
+          </div>
           {/* Total por escola */}
           <div
             role="button"
@@ -3099,6 +3150,7 @@ export default function AdminAlunosPage() {
                                 } as Student)
                                 setDesignarAulaCorrectionData({
                                   existingLessonTimes: item.lessonTimesThisWeek ?? [],
+                                  existingLessons: (item as { lessonsThisWeek?: { startAt: string; teacherName?: string }[] }).lessonsThisWeek?.map((l) => ({ startAt: l.startAt, teacherName: l.teacherName })),
                                   expected: item.expected,
                                   actual: item.actual,
                                 })
@@ -3106,6 +3158,77 @@ export default function AdminAlunosPage() {
                               className="px-3 py-1.5 text-sm font-medium"
                             >
                               Corrigir
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : listModal?.type === 'repetitionEnding' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Última aula</th>
+                    <th className="py-2 font-semibold text-gray-700">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repetitionEndingStats.list.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="py-4 text-center text-gray-500">
+                        Nenhum aluno com repetição terminando em 1 semana ou menos.
+                      </td>
+                    </tr>
+                  ) : (
+                    repetitionEndingStats.list.map((item) => {
+                      const lastDate = new Date(item.lastLessonAt)
+                      const formatted = lastDate.toLocaleDateString('pt-BR', {
+                        weekday: 'short',
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                      return (
+                        <tr key={item.enrollmentId} className="border-b border-gray-100">
+                          <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
+                          <td className="py-3 pr-4 text-sm text-gray-600">{formatted}</td>
+                          <td className="py-3">
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              disabled={extendingRepetitionId === item.enrollmentId}
+                              onClick={async () => {
+                                setExtendingRepetitionId(item.enrollmentId)
+                                try {
+                                  const res = await fetch(`/api/admin/enrollments/${item.enrollmentId}/extend-repetition`, {
+                                    method: 'PATCH',
+                                    credentials: 'include',
+                                  })
+                                  const json = await res.json()
+                                  if (res.ok && json.ok) {
+                                    setToast({ message: json.data?.message ?? 'Aulas repetidas por mais um ano.', type: 'success' })
+                                    fetchRepetitionEndingStats()
+                                    fetchStats()
+                                  } else {
+                                    setToast({ message: json.message ?? 'Erro ao repetir aulas.', type: 'error' })
+                                  }
+                                } catch (e) {
+                                  setToast({ message: 'Erro ao repetir aulas.', type: 'error' })
+                                } finally {
+                                  setExtendingRepetitionId(null)
+                                }
+                              }}
+                              className="px-3 py-1.5 text-sm font-medium"
+                            >
+                              {extendingRepetitionId === item.enrollmentId ? 'Repetindo...' : 'Repetir por mais um ano'}
                             </Button>
                           </td>
                         </tr>

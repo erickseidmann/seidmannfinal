@@ -7,7 +7,6 @@ import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 import {
   sendPaymentReminder,
   sendPaymentOverdueReminder,
-  sendEnrollmentDeactivated,
 } from '@/lib/email/payment-notifications'
 import { generateMonthlyBilling } from '@/lib/cora/billing'
 import { atualizarStatusNfse } from '@/lib/nfse/service'
@@ -361,25 +360,10 @@ export async function runPaymentNotifications(): Promise<{
         else errors++
         await sleep(DELAY_MS)
       }
-    } else if (daysOverdue > 30) {
-      if (!(await checkAlreadySent('deactivated'))) {
-        await prisma.enrollment.update({
-          where: { id: enrollment.id },
-          data: { status: 'INACTIVE', inactiveAt: now },
-        })
-        logFinanceAction({
-          entityType: 'ENROLLMENT',
-          entityId: enrollment.id,
-          action: 'AUTO_DEACTIVATED_OVERDUE',
-          newValue: { daysOverdue, year, month },
-          performedBy: 'CRON_PAYMENT_NOTIFICATIONS',
-        }).catch(() => {})
-        const r = await sendEnrollmentDeactivated(fullEnrollment, year, month)
-        if (r.sent) deactivated++
-        else errors++
-        await sleep(DELAY_MS)
-      }
     }
+    // Nota: alunos NÃO são mais desativados automaticamente por inadimplência.
+    // Apenas usuários do ADM podem marcar como inativo (via Alunos ou Financeiro).
+    // Após 30 dias de atraso, continuamos enviando lembretes; nenhuma alteração de status automática.
   }
 
   return {
