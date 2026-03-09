@@ -331,6 +331,17 @@ export default function AdminCalendarioPage() {
   const [savingLesson, setSavingLesson] = useState(false)
   const [deletingLesson, setDeletingLesson] = useState(false)
   const [enrollmentIdsWithFullWeek, setEnrollmentIdsWithFullWeek] = useState<string[]>([])
+  const [weeklyLessonsByEnrollment, setWeeklyLessonsByEnrollment] = useState<
+    Record<
+      string,
+      {
+        id: string
+        startAt: string
+        status: string
+        teacherName: string
+      }[]
+    >
+  >({})
   const [listModal, setListModal] = useState<{
     title: string
     type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados' | 'alunosParaRedirecionar'
@@ -465,17 +476,18 @@ export default function AdminCalendarioPage() {
     ? enrollments.find((e) => e.id === selectedStudentId)
     : null
 
-  // Opções para o select de aluno: grupos ou aluno individual; exclui quem já tem frequência correta na semana
+  // Opções para o select de aluno: grupos ou aluno individual.
+  // Alunos com frequência correta na semana aparecem desabilitados, com resumo das aulas já agendadas.
   const studentOptions = useMemo(() => {
     const fullSet = new Set(enrollmentIdsWithFullWeek)
-    const list: { value: string; label: string }[] = []
+    const list: { value: string; label: string; disabled?: boolean }[] = []
     const groupKeys = new Set<string>()
     // Se estiver editando uma aula, garantir que o aluno dessa aula sempre apareça nas opções
     const editingEnrollmentId = editingLesson?.enrollmentId
     
     for (const e of enrollments) {
-      // Incluir alunos com frequência correta apenas se estiverem sendo editados
-      if (fullSet.has(e.id) && e.id !== editingEnrollmentId) continue
+      const hasFullWeek = fullSet.has(e.id)
+      const isEditingThisEnrollment = e.id === editingEnrollmentId
       
       if (e.tipoAula === 'GRUPO' && e.nomeGrupo?.trim()) {
         const key = e.nomeGrupo.trim()
@@ -484,19 +496,83 @@ export default function AdminCalendarioPage() {
         const members = enrollments
           .filter((x) => x.tipoAula === 'GRUPO' && x.nomeGrupo?.trim() === key)
           .map((x) => x.nome)
-        const freq = enrollments.find((x) => x.tipoAula === 'GRUPO' && x.nomeGrupo?.trim() === key)?.frequenciaSemanal
+        const freq = enrollments.find(
+          (x) => x.tipoAula === 'GRUPO' && x.nomeGrupo?.trim() === key
+        )?.frequenciaSemanal
         const freqLabel = freq != null ? ` (${freq}x/sem)` : ''
+        const anyEnrollmentId = enrollments.find(
+          (x) => x.tipoAula === 'GRUPO' && x.nomeGrupo?.trim() === key
+        )!.id
+
+        const hasFullForGroup = fullSet.has(anyEnrollmentId)
+        const lessonsForGroup =
+          weeklyLessonsByEnrollment[anyEnrollmentId] ?? []
+        const resumo =
+          lessonsForGroup.length > 0
+            ? ` — já está com ${lessonsForGroup
+                .map((l) => {
+                  const d = new Date(l.startAt)
+                  const dia = d.toLocaleDateString('pt-BR', {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: '2-digit',
+                  })
+                  const hora = d.toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                  const statusLabel =
+                    l.status === 'CONFIRMED'
+                      ? 'Confirmada'
+                      : l.status === 'CANCELLED'
+                        ? 'Cancelada'
+                        : 'Reposição'
+                  return `${dia} ${hora} – ${l.teacherName} (${statusLabel})`
+                })
+                .join(' | ')}`
+            : ''
         list.push({
-          value: enrollments.find((x) => x.tipoAula === 'GRUPO' && x.nomeGrupo?.trim() === key)!.id,
-          label: `${key} — ${members.join(', ')}${freqLabel}`,
+          value: anyEnrollmentId,
+          label: `${key} — ${members.join(', ')}${freqLabel}${resumo}`,
+          disabled: hasFullForGroup && !isEditingThisEnrollment,
         })
       } else {
-        const freqLabel = e.frequenciaSemanal != null ? ` (${e.frequenciaSemanal}x/sem)` : ''
-        list.push({ value: e.id, label: `${e.nome}${freqLabel}` })
+        const freqLabel =
+          e.frequenciaSemanal != null ? ` (${e.frequenciaSemanal}x/sem)` : ''
+        const lessonsForEnrollment = weeklyLessonsByEnrollment[e.id] ?? []
+        const resumo =
+          lessonsForEnrollment.length > 0
+            ? ` — já está com ${lessonsForEnrollment
+                .map((l) => {
+                  const d = new Date(l.startAt)
+                  const dia = d.toLocaleDateString('pt-BR', {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: '2-digit',
+                  })
+                  const hora = d.toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                  const statusLabel =
+                    l.status === 'CONFIRMED'
+                      ? 'Confirmada'
+                      : l.status === 'CANCELLED'
+                        ? 'Cancelada'
+                        : 'Reposição'
+                  return `${dia} ${hora} – ${l.teacherName} (${statusLabel})`
+                })
+                .join(' | ')}`
+            : ''
+        list.push({
+          value: e.id,
+          label: `${e.nome}${freqLabel}${resumo}`,
+          disabled: hasFullWeek && !isEditingThisEnrollment,
+        })
       }
     }
     return list
-  }, [enrollments, enrollmentIdsWithFullWeek, editingLesson])
+  }, [enrollments, enrollmentIdsWithFullWeek, weeklyLessonsByEnrollment, editingLesson])
 
   const fetchLessons = useCallback(async () => {
     let start: Date
@@ -716,23 +792,69 @@ export default function AdminCalendarioPage() {
   useEffect(() => {
     if (!lessonModalOpen) {
       setEnrollmentIdsWithFullWeek([])
+      setWeeklyLessonsByEnrollment({})
       return
     }
     const refDate = lessonForm.startAt ? new Date(lessonForm.startAt) : new Date()
     if (Number.isNaN(refDate.getTime())) return
     const weekStart = getMonday(refDate)
-    fetch(`/api/admin/lessons/enrollments-with-full-week?weekStart=${weekStart.toISOString()}`, {
-      credentials: 'include',
-    })
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.ok && Array.isArray(j.data?.enrollmentIds)) {
-          setEnrollmentIdsWithFullWeek(j.data.enrollmentIds)
+    const saturdayEnd = (() => {
+      const d = new Date(weekStart)
+      d.setDate(d.getDate() + 5)
+      d.setHours(23, 59, 59, 999)
+      return d
+    })()
+
+    Promise.all([
+      fetch(
+        `/api/admin/lessons/enrollments-with-full-week?weekStart=${weekStart.toISOString()}`,
+        { credentials: 'include' }
+      ).then((r) => r.json()),
+      fetch(
+        `/api/admin/lessons?start=${weekStart.toISOString()}&end=${saturdayEnd.toISOString()}`,
+        { credentials: 'include' }
+      ).then((r) => r.json()),
+    ])
+      .then(([fullWeekJson, lessonsJson]) => {
+        if (fullWeekJson.ok && Array.isArray(fullWeekJson.data?.enrollmentIds)) {
+          setEnrollmentIdsWithFullWeek(fullWeekJson.data.enrollmentIds)
         } else {
           setEnrollmentIdsWithFullWeek([])
         }
+
+        if (lessonsJson.ok && Array.isArray(lessonsJson.data?.lessons)) {
+          const map: Record<
+            string,
+            {
+              id: string
+              startAt: string
+              status: string
+              teacherName: string
+            }[]
+          > = {}
+          for (const l of lessonsJson.data.lessons as any[]) {
+            const eid = l.enrollmentId as string
+            if (!eid) continue
+            if (!map[eid]) map[eid] = []
+            map[eid].push({
+              id: String(l.id),
+              startAt: String(l.startAt),
+              status: String(l.status),
+              teacherName:
+                (l.teacher && typeof l.teacher.nome === 'string'
+                  ? l.teacher.nome
+                  : 'N/A') ?? 'N/A',
+            })
+          }
+          setWeeklyLessonsByEnrollment(map)
+        } else {
+          setWeeklyLessonsByEnrollment({})
+        }
       })
-      .catch(() => setEnrollmentIdsWithFullWeek([]))
+      .catch(() => {
+        setEnrollmentIdsWithFullWeek([])
+        setWeeklyLessonsByEnrollment({})
+      })
   }, [lessonModalOpen, lessonForm.startAt])
 
   const getHolidaysRange = useCallback(() => {
@@ -1193,6 +1315,15 @@ export default function AdminCalendarioPage() {
     setSavingLesson(true)
     try {
       if (editingLesson) {
+        // Detectar se houve mudança de horário ou professor em relação à aula original
+        const teacherChanged = lessonForm.teacherId !== editingLesson.teacherId
+        const startChanged = new Date(editingLesson.startAt).getTime() !== startAt.getTime()
+        let applyToFuture = false
+
+        if ((teacherChanged || startChanged) && window.confirm('Deseja aplicar esta alteração de professor/horário também para todas as aulas futuras deste aluno?')) {
+          applyToFuture = true
+        }
+
         const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -1205,6 +1336,7 @@ export default function AdminCalendarioPage() {
             durationMinutes: lessonForm.durationMinutes,
             notes: lessonForm.notes || null,
             createdByName: lessonForm.createdByName?.trim() || null,
+            ...(applyToFuture ? { applyToFuture: true } : {}),
           }),
         })
         const json = await res.json()
@@ -2322,8 +2454,10 @@ export default function AdminCalendarioPage() {
                             key={opt.value}
                             type="button"
                             onClick={() => {
+                              if (opt.disabled) return
                               const enrollment = enrollments.find((e) => e.id === opt.value)
-                              const duration = enrollment?.tempoAulaMinutos != null ? enrollment.tempoAulaMinutos : 30
+                              const duration =
+                                enrollment?.tempoAulaMinutos != null ? enrollment.tempoAulaMinutos : 30
                               setLessonForm({
                                 ...lessonForm,
                                 enrollmentId: opt.value,
@@ -2332,7 +2466,10 @@ export default function AdminCalendarioPage() {
                               setLessonAlunoSearch('')
                               setLessonAlunoDropdownOpen(false)
                             }}
-                            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                            disabled={opt.disabled}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 ${
+                              opt.disabled ? 'cursor-not-allowed opacity-60 hover:bg-white' : ''
+                            }`}
                           >
                             {opt.label}
                           </button>

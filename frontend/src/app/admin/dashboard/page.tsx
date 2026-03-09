@@ -79,6 +79,21 @@ interface CalendarStats {
   }[]
 }
 
+/** Entrada para a lista detalhada de frequência da semana (inclui alunos corretos e incorretos) */
+interface WeeklyFrequencyEntry {
+  enrollmentId: string
+  studentName: string
+  /** true = frequência da semana bate com o cadastro; false = incorreta (mesma lógica do cubo) */
+  isCorrect: boolean
+  /** Aulas da semana (seg–sáb) com professor, horário e status */
+  lessons: {
+    id: string
+    startAt: string
+    status: string
+    teacherName: string
+  }[]
+}
+
 interface Metrics {
   users: {
     ACTIVE: number
@@ -182,6 +197,7 @@ export default function AdminDashboardPage() {
   const [listLoading, setListLoading] = useState(false)
   const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
   const [calendarStatsLoading, setCalendarStatsLoading] = useState(true)
+  const [weeklyFrequencyEntries, setWeeklyFrequencyEntries] = useState<WeeklyFrequencyEntry[]>([])
   const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
@@ -220,17 +236,127 @@ export default function AdminDashboardPage() {
     setCalendarStatsLoading(true)
     try {
       const monday = getMonday(new Date())
-      const res = await fetch(
-        `/api/admin/lessons/stats?weekStart=${monday.toISOString()}`,
-        { credentials: 'include' }
-      )
-      if (!res.ok) return
-      const json = await res.json()
-      if (json.ok && json.data) {
-        setCalendarStats({
-          wrongFrequencyCount: json.data.wrongFrequencyCount ?? 0,
-          wrongFrequencyList: json.data.wrongFrequencyList ?? [],
-        })
+      const saturdayEnd = (() => {
+        const d = new Date(monday)
+        d.setDate(d.getDate() + 5)
+        d.setHours(23, 59, 59, 999)
+        return d
+      })()
+
+      const [statsRes, fullWeekRes, lessonsRes] = await Promise.all([
+        fetch(`/api/admin/lessons/stats?weekStart=${monday.toISOString()}`, {
+          credentials: 'include',
+        }),
+        fetch(
+          `/api/admin/lessons/enrollments-with-full-week?weekStart=${monday.toISOString()}`,
+          { credentials: 'include' }
+        ),
+        fetch(
+          `/api/admin/lessons?start=${monday.toISOString()}&end=${saturdayEnd.toISOString()}`,
+          { credentials: 'include' }
+        ),
+      ])
+
+      if (statsRes.ok) {
+        const json = await statsRes.json()
+        if (json.ok && json.data) {
+          setCalendarStats({
+            wrongFrequencyCount: json.data.wrongFrequencyCount ?? 0,
+            wrongFrequencyList: json.data.wrongFrequencyList ?? [],
+          })
+
+          // Montar lista detalhada de frequência da semana (inclui corretos e incorretos)
+          const wrongList: CalendarStats['wrongFrequencyList'] =
+            json.data.wrongFrequencyList ?? []
+          const wrongMap = new Map(
+            wrongList.map((item: any) => [item.enrollmentId, item])
+          )
+
+          const fullWeekIds: string[] =
+            fullWeekRes.ok ? (await fullWeekRes.json()).data?.enrollmentIds ?? [] : []
+
+          const lessonsJson = lessonsRes.ok ? await lessonsRes.json() : null
+          const lessons: {
+            id: string
+            enrollmentId: string
+            status: string
+            startAt: string
+            teacher?: { nome?: string }
+            enrollment?: { nome?: string }
+          }[] = lessonsJson?.data?.lessons ?? []
+
+          const lessonsByEnrollment = new Map<
+            string,
+            {
+              id: string
+              startAt: string
+              status: string
+              teacherName: string
+              studentName: string
+            }[]
+          >()
+          for (const l of lessons) {
+            const arr =
+              lessonsByEnrollment.get(l.enrollmentId) ??
+              []
+            const teacherName = l.teacher?.nome ?? 'N/A'
+            const studentName = l.enrollment?.nome ?? 'Aluno'
+            arr.push({
+              id: l.id,
+              startAt: l.startAt,
+              status: l.status,
+              teacherName,
+              studentName,
+            })
+            lessonsByEnrollment.set(l.enrollmentId, arr)
+          }
+
+          const entries: WeeklyFrequencyEntry[] = []
+
+          // Primeiro: alunos com frequência incorreta (já estavam na lista antiga)
+          for (const item of wrongList as any[]) {
+            const lessonsForEnrollment = lessonsByEnrollment.get(item.enrollmentId) ?? []
+            const studentNameFromLessons =
+              lessonsForEnrollment[0]?.studentName ?? item.studentName
+            entries.push({
+              enrollmentId: item.enrollmentId,
+              studentName: studentNameFromLessons,
+              isCorrect: false,
+              lessons: lessonsForEnrollment.map((l) => ({
+                id: l.id,
+                startAt: l.startAt,
+                status: l.status,
+                teacherName: l.teacherName,
+              })),
+            })
+          }
+
+          // Depois: alunos com frequência correta (full week) que não estão na lista de erros
+          const wrongIds = new Set(wrongList.map((w) => w.enrollmentId))
+          for (const eid of fullWeekIds) {
+            if (wrongIds.has(eid)) continue
+            const lessonsForEnrollment = lessonsByEnrollment.get(eid) ?? []
+            if (lessonsForEnrollment.length === 0) continue
+            const studentNameFromLessons = lessonsForEnrollment[0].studentName
+            entries.push({
+              enrollmentId: eid,
+              studentName: studentNameFromLessons,
+              isCorrect: true,
+              lessons: lessonsForEnrollment.map((l) => ({
+                id: l.id,
+                startAt: l.startAt,
+                status: l.status,
+                teacherName: l.teacherName,
+              })),
+            })
+          }
+
+          // Ordenar por nome do aluno
+          entries.sort((a, b) =>
+            a.studentName.localeCompare(b.studentName, 'pt-BR')
+          )
+          setWeeklyFrequencyEntries(entries)
+        }
       }
     } catch (e) {
       console.error(e)
@@ -1087,37 +1213,95 @@ export default function AdminDashboardPage() {
           size="xl"
         >
           <p className="text-xs text-gray-500 mb-4">
-            Alunos ativos cujo total de aulas na semana (seg–sáb) não confere com a frequência cadastrada.
+            Visão geral da frequência semanal (seg–sáb). Mostra alunos com frequência incorreta e também alunos cuja
+            frequência está correta, com os horários e status das aulas desta semana.
           </p>
           {!calendarStats ? (
             <p className="text-gray-500">Carregando...</p>
-          ) : calendarStats.wrongFrequencyList.length === 0 ? (
-            <p className="text-gray-500">Nenhum aluno com frequência incorreta nesta semana.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
-                    <th className="py-2 pr-4 font-semibold text-gray-700">Horários de aula (semana)</th>
-                    <th className="py-2 font-semibold text-gray-700">Último livro</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {calendarStats.wrongFrequencyList.map((item) => (
-                    <tr key={item.enrollmentId} className="border-b border-gray-100">
-                      <td className="py-2 pr-4">{item.studentName}</td>
-                      <td className="py-2 pr-4">
-                        {item.lessonTimesThisWeek?.length
-                          ? item.lessonTimesThisWeek.map((iso) => formatDateTime(iso)).join(', ')
-                          : '—'}
-                      </td>
-                      <td className="py-2">{item.lastBook ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {weeklyFrequencyEntries.length === 0 ? (
+                <p className="text-gray-500">
+                  Nenhum aluno com frequência cadastrada encontrado para esta semana.
+                </p>
+              ) : (
+                <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
+                  {weeklyFrequencyEntries.map((entry) => {
+                    const wrongItem = calendarStats.wrongFrequencyList.find(
+                      (w) => w.enrollmentId === entry.enrollmentId
+                    )
+                    const descricaoFrequencia = (() => {
+                      if (!wrongItem) {
+                        return 'Frequência correta nesta semana.'
+                      }
+                      if (
+                        wrongItem.expectedMinutes != null &&
+                        wrongItem.actualMinutes != null
+                      ) {
+                        return `Frequência incorreta: cadastro ${wrongItem.expectedMinutes} min/sem (ex.: ${wrongItem.expected}x${Math.round(
+                          wrongItem.expectedMinutes / wrongItem.expected
+                        )}min), nesta semana ${wrongItem.actualMinutes} min.`
+                      }
+                      return `Frequência incorreta: cadastro ${wrongItem.expected} aula(s)/sem, nesta semana ${wrongItem.actual} aula(s).`
+                    })()
+                    return (
+                      <div
+                        key={entry.enrollmentId}
+                        className={`p-3 rounded-lg border text-sm ${
+                          entry.isCorrect
+                            ? 'border-emerald-200 bg-emerald-50'
+                            : 'border-orange-200 bg-orange-50'
+                        }`}
+                      >
+                        <div className="flex flex-col gap-1">
+                          <span className="font-semibold text-gray-900">
+                            {entry.studentName}
+                          </span>
+                          <span
+                            className={`text-xs font-medium ${
+                              entry.isCorrect ? 'text-emerald-700' : 'text-orange-700'
+                            }`}
+                          >
+                            {descricaoFrequencia}
+                          </span>
+                          {entry.lessons.length > 0 ? (
+                            <ul className="mt-1 space-y-0.5 text-xs text-gray-700">
+                              {entry.lessons.map((lesson) => {
+                                const d = new Date(lesson.startAt)
+                                const dia = d.toLocaleDateString('pt-BR', {
+                                  weekday: 'short',
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                })
+                                const hora = d.toLocaleTimeString('pt-BR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                                const statusLabel =
+                                  lesson.status === 'CONFIRMED'
+                                    ? 'Confirmada'
+                                    : lesson.status === 'CANCELLED'
+                                      ? 'Cancelada'
+                                      : 'Reposição'
+                                return (
+                                  <li key={lesson.id}>
+                                    {dia} às {hora} – {lesson.teacherName} ({statusLabel})
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500">
+                              Nenhuma aula nesta semana.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
           )}
         </Modal>
       </div>

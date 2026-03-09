@@ -122,6 +122,7 @@ export async function PATCH(
       durationMinutes,
       notes,
       createdByName,
+      applyToFuture, // opcional: se true, aplica alterações a aulas futuras do mesmo aluno
     } = body
 
     const updateData: {
@@ -262,14 +263,35 @@ export async function PATCH(
       }
     }
     
-    const lesson = await prisma.lesson.update({
-      where: { id },
-      data: updateData,
-      include: {
-        enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-        teacher: { select: { id: true, nome: true, email: true } },
-      },
-    })
+    // Função auxiliar para aplicar atualização em uma aula específica
+    const updateSingleLesson = async (lessonId: string) => {
+      return prisma.lesson.update({
+        where: { id: lessonId },
+        data: updateData,
+        include: {
+          enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+          teacher: { select: { id: true, nome: true, email: true } },
+        },
+      })
+    }
+
+    // Atualiza a aula atual
+    const lesson = await updateSingleLesson(id)
+
+    // Se applyToFuture === true, atualizar também aulas futuras desse mesmo enrollment
+    if (applyToFuture === true && effectiveEnrollmentId) {
+      const futureLessons = await prisma.lesson.findMany({
+        where: {
+          enrollmentId: effectiveEnrollmentId,
+          startAt: { gt: effectiveStartAt },
+        },
+        select: { id: true },
+      })
+
+      for (const fl of futureLessons) {
+        await updateSingleLesson(fl.id)
+      }
+    }
 
     // E-mail: envia quando o status mudou para CANCELLED (ex.: Confirmada→Cancelada ou Reposição→Cancelada) ou para REPOSICAO
     if (statusChanged && newStatus && lesson.enrollment && lesson.teacher) {
