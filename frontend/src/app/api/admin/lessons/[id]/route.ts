@@ -263,33 +263,43 @@ export async function PATCH(
       }
     }
     
-    // Função auxiliar para aplicar atualização em uma aula específica
-    const updateSingleLesson = async (lessonId: string) => {
-      return prisma.lesson.update({
-        where: { id: lessonId },
-        data: updateData,
-        include: {
-          enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-          teacher: { select: { id: true, nome: true, email: true } },
-        },
-      })
-    }
+    // Atualiza apenas a aula atual (com todos os campos)
+    const lesson = await prisma.lesson.update({
+      where: { id },
+      data: updateData,
+      include: {
+        enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+        teacher: { select: { id: true, nome: true, email: true } },
+      },
+    })
 
-    // Atualiza a aula atual
-    const lesson = await updateSingleLesson(id)
-
-    // Se applyToFuture === true, atualizar também aulas futuras desse mesmo enrollment
+    // Se applyToFuture === true: nas aulas futuras aplicamos só professor e horário (hora/minuto),
+    // mantendo o DIA de cada aula para não concentrar tudo no mesmo dia.
     if (applyToFuture === true && effectiveEnrollmentId) {
       const futureLessons = await prisma.lesson.findMany({
         where: {
           enrollmentId: effectiveEnrollmentId,
           startAt: { gt: effectiveStartAt },
         },
-        select: { id: true },
+        select: { id: true, startAt: true },
       })
 
+      const editedHour = effectiveStartAt.getHours()
+      const editedMinute = effectiveStartAt.getMinutes()
+
       for (const fl of futureLessons) {
-        await updateSingleLesson(fl.id)
+        const existingStart = new Date(fl.startAt)
+        const newStartAt = new Date(existingStart)
+        newStartAt.setHours(editedHour, editedMinute, 0, 0)
+
+        await prisma.lesson.update({
+          where: { id: fl.id },
+          data: {
+            teacherId: effectiveTeacherId,
+            durationMinutes: updateData.durationMinutes ?? undefined,
+            startAt: newStartAt,
+          },
+        })
       }
     }
 
