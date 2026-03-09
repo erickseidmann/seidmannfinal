@@ -1,17 +1,17 @@
 /**
  * Financeiro – Administração
- * Usuários do ADM (valor/função por mês) e despesas administrativas (avulsas ou recorrentes).
+ * Usuários do ADM (funcionários): valor/função por mês e status de pagamento.
  */
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Users, Wallet, Receipt, Plus, Trash2, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown } from 'lucide-react'
+import { Users, Wallet, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown, Paperclip, Loader2 } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -36,17 +36,6 @@ interface AdminUserRow {
   valorRepetido: number | null
 }
 
-interface ExpenseRow {
-  id: string
-  name: string
-  description: string | null
-  valor: number
-  year: number
-  month: number
-  paymentStatus: string | null
-  isFixed?: boolean
-}
-
 function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
 }
@@ -58,7 +47,6 @@ export default function FinanceiroAdministracaoPage() {
   const [selectedMes, setSelectedMes] = useState<number>(mesAtual)
 
   const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([])
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [currentUserIsSuperAdmin, setCurrentUserIsSuperAdmin] = useState(false)
@@ -74,21 +62,13 @@ export default function FinanceiroAdministracaoPage() {
   const [notifyFile, setNotifyFile] = useState<File | null>(null)
   const [sendingNotify, setSendingNotify] = useState(false)
 
-  // Modal Adicionar despesa
-  const [modalDespesa, setModalDespesa] = useState(false)
-  const [despesaNome, setDespesaNome] = useState('')
-  const [despesaDescricao, setDespesaDescricao] = useState('')
-  const [despesaValor, setDespesaValor] = useState('')
-  const [despesaRepeteMensal, setDespesaRepeteMensal] = useState(false)
-  const [despesaMeses, setDespesaMeses] = useState('1')
-  const [savingDespesa, setSavingDespesa] = useState(false)
-
   const [showPeriodo, setShowPeriodo] = useState(true)
   const [itemsPerPageAdmin, setItemsPerPageAdmin] = useState(10)
-  const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(10)
-  const [itemsPerPageFixed, setItemsPerPageFixed] = useState(10)
   const [coraGastos, setCoraGastos] = useState<number>(0)
   const [coraLoading, setCoraLoading] = useState(false)
+  const [uploadingReceiptUserId, setUploadingReceiptUserId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingReceiptRowRef = useRef<AdminUserRow | null>(null)
 
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -97,15 +77,12 @@ export default function FinanceiroAdministracaoPage() {
       const json = await res.json()
       if (!res.ok || !json.ok) {
         setAdminUsers([])
-        setExpenses([])
         return
       }
       setAdminUsers(json.data?.adminUsers ?? [])
-      setExpenses(json.data?.expenses ?? [])
       setCurrentUserIsSuperAdmin(!!json.data?.currentUserIsSuperAdmin)
     } catch {
       setAdminUsers([])
-      setExpenses([])
     } finally {
       setLoading(false)
     }
@@ -133,23 +110,13 @@ export default function FinanceiroAdministracaoPage() {
     fetchCoraUsage(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData, fetchCoraUsage])
 
-  const fixedExpenses = expenses.filter((e) => e.isFixed === true)
-  const otherExpenses = expenses.filter((e) => e.isFixed !== true)
-  const totalDespesasFixas = fixedExpenses.reduce((s, e) => s + e.valor, 0)
   const displayedAdminUsers = adminUsers.slice(0, itemsPerPageAdmin)
-  const displayedFixedExpenses = fixedExpenses.slice(0, itemsPerPageFixed)
-  const displayedOtherExpenses = otherExpenses.slice(0, itemsPerPageExpenses)
 
   const valorExibido = (u: AdminUserRow) => u.valor ?? u.valorRepetido ?? 0
   const totalAdminValor = adminUsers.reduce((s, u) => s + valorExibido(u), 0)
-  const totalDespesas = expenses.reduce((s, e) => s + e.valor, 0)
-  const totalGeral = totalAdminValor + totalDespesas
   const totalPagoAdmin = adminUsers
     .filter((u) => u.paymentStatus === 'PAGO')
     .reduce((s, u) => s + valorExibido(u), 0)
-  const totalPagoDespesas = expenses
-    .filter((e) => e.paymentStatus === 'PAGO')
-    .reduce((s, e) => s + e.valor, 0)
 
   const updateUserValor = async (userId: string, valor: number | null) => {
     try {
@@ -307,88 +274,39 @@ Equipe Seidmann Institute`
     }
   }
 
-  const openModalDespesa = (asFixed = false) => {
-    setDespesaNome('')
-    setDespesaDescricao('')
-    setDespesaValor('')
-    setDespesaRepeteMensal(asFixed)
-    setDespesaMeses(asFixed ? '12' : '1')
-    setModalDespesa(true)
+  const triggerReceiptUpload = (row: AdminUserRow) => {
+    pendingReceiptRowRef.current = row
+    fileInputRef.current?.click()
   }
 
-  const submitDespesa = async () => {
-    const nome = despesaNome.trim()
-    if (!nome) {
-      setToast({ message: 'Nome da despesa é obrigatório.', type: 'error' })
-      return
-    }
-    const valorNum = Number(despesaValor.replace(',', '.'))
-    if (Number.isNaN(valorNum) || valorNum < 0) {
-      setToast({ message: 'Valor inválido.', type: 'error' })
-      return
-    }
-    const meses = despesaRepeteMensal ? Math.min(120, Math.max(1, parseInt(despesaMeses, 10) || 1)) : 1
-    setSavingDespesa(true)
+  const onReceiptFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const row = pendingReceiptRowRef.current
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    pendingReceiptRowRef.current = null
+    if (!row || !file) return
+    setUploadingReceiptUserId(row.id)
     setToast(null)
     try {
-      const res = await fetch('/api/admin/financeiro/administracao/expenses', {
+      const formData = new FormData()
+      formData.set('file', file)
+      formData.set('nome', row.nome)
+      formData.set('year', String(selectedAno))
+      formData.set('month', String(selectedMes))
+      const res = await fetch('/api/admin/financeiro/administracao/upload-receipt', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: nome,
-          description: despesaDescricao.trim() || undefined,
-          valor: valorNum,
-          repeatMonthly: despesaRepeteMensal,
-          repeatMonths: meses,
-          startYear: selectedAno,
-          startMonth: selectedMes,
-        }),
+        body: formData,
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao criar despesa.', type: 'error' })
+        setToast({ message: json.message || 'Erro ao enviar arquivo.', type: 'error' })
         return
       }
-      setToast({ message: json.message || 'Despesa(s) criada(s).', type: 'success' })
-      await fetchData(selectedAno, selectedMes)
-      setModalDespesa(false)
+      setToast({ message: json.message || 'Arquivo enviado para o Drive.', type: 'success' })
     } catch {
-      setToast({ message: 'Erro ao criar despesa.', type: 'error' })
+      setToast({ message: 'Erro ao enviar arquivo.', type: 'error' })
     } finally {
-      setSavingDespesa(false)
-    }
-  }
-
-  const updateExpensePaymentStatus = async (expenseId: string, paymentStatus: 'PAGO' | 'EM_ABERTO') => {
-    try {
-      const res = await fetch(`/api/admin/financeiro/administracao/expenses/${expenseId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentStatus }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) return
-      await fetchData(selectedAno, selectedMes)
-    } catch {
-      // silencioso
-    }
-  }
-
-  const deleteExpense = async (expenseId: string) => {
-    if (!confirm('Remover esta despesa?')) return
-    try {
-      const res = await fetch(`/api/admin/financeiro/administracao/expenses/${expenseId}`, {
-        method: 'DELETE',
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao remover.', type: 'error' })
-        return
-      }
-      setToast({ message: 'Despesa removida.', type: 'success' })
-      await fetchData(selectedAno, selectedMes)
-    } catch {
-      setToast({ message: 'Erro ao remover.', type: 'error' })
+      setUploadingReceiptUserId(null)
     }
   }
 
@@ -458,6 +376,26 @@ Equipe Seidmann Institute`
       ),
     },
     {
+      key: 'anexarNf',
+      label: 'Anexar NF ou recibo',
+      render: (row) => (
+        <button
+          type="button"
+          onClick={() => triggerReceiptUpload(row)}
+          disabled={uploadingReceiptUserId === row.id}
+          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+          title="Selecionar arquivo para enviar à pasta do Drive (notas fiscais prestadores)"
+        >
+          {uploadingReceiptUserId === row.id ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Paperclip className="w-4 h-4" />
+          )}
+          {uploadingReceiptUserId === row.id ? 'Enviando...' : 'Anexar'}
+        </button>
+      ),
+    },
+    {
       key: 'acoes',
       label: '',
       render: (row) => (
@@ -469,43 +407,6 @@ Equipe Seidmann Institute`
         >
           <Bell className="w-4 h-4" />
           Notificar pagamento
-        </button>
-      ),
-    },
-  ]
-
-  const expenseColumns: Column<ExpenseRow>[] = [
-    { key: 'name', label: 'Nome', render: (row) => row.name },
-    { key: 'description', label: 'Descrição', render: (row) => row.description ?? '—' },
-    { key: 'valor', label: 'Valor', render: (row) => formatMoney(row.valor) },
-    {
-      key: 'paymentStatus',
-      label: 'Pagamento',
-      render: (row) => (
-        <select
-          value={row.paymentStatus ?? 'EM_ABERTO'}
-          onChange={(e) =>
-            updateExpensePaymentStatus(row.id, e.target.value === 'PAGO' ? 'PAGO' : 'EM_ABERTO')
-          }
-          className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-        >
-          <option value="EM_ABERTO">Em aberto</option>
-          <option value="PAGO">Pago</option>
-        </select>
-      ),
-    },
-    {
-      key: 'acoes',
-      label: '',
-      render: (row) => (
-        <button
-          type="button"
-          onClick={() => deleteExpense(row.id)}
-          className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50"
-          title="Remover despesa"
-        >
-          <Trash2 className="w-4 h-4" />
-          Remover
         </button>
       ),
     },
@@ -528,7 +429,7 @@ Equipe Seidmann Institute`
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Administração</h1>
           <p className="text-gray-600 mt-1 text-sm md:text-base">
-            Custos e despesas de administração (usuários do ADM, despesas fixas e outras despesas).
+            Valores mensais dos usuários do ADM (funcionários) e status de pagamento.
           </p>
         </div>
 
@@ -593,22 +494,14 @@ Equipe Seidmann Institute`
         {/* Resumo do mês (cubos) - mesmo estilo alunos */}
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total ADM</p>
               <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(totalAdminValor)}</p>
             </div>
-            <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Total despesas</p>
-              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(totalDespesas)}</p>
-            </div>
-            <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-violet-800 uppercase tracking-wide">Total geral</p>
-              <p className="mt-1 text-xl font-bold text-violet-900">{loading ? '—' : formatMoney(totalGeral)}</p>
-            </div>
             <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Já pago</p>
-              <p className="mt-1 text-xl font-bold text-emerald-900">{loading ? '—' : formatMoney(totalPagoAdmin + totalPagoDespesas)}</p>
+              <p className="mt-1 text-xl font-bold text-emerald-900">{loading ? '—' : formatMoney(totalPagoAdmin)}</p>
             </div>
             <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Gastos Cora</p>
@@ -637,8 +530,16 @@ Equipe Seidmann Institute`
             </Button>
           </div>
           <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
-            Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui.
+            Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui. Use &quot;Anexar NF ou recibo&quot; para enviar o arquivo à pasta do Drive (notas fiscais prestadores).
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+            className="hidden"
+            onChange={onReceiptFileChange}
+            aria-hidden
+          />
           <Table<AdminUserRow>
             columns={adminColumns}
             data={displayedAdminUsers}
@@ -652,168 +553,8 @@ Equipe Seidmann Institute`
           )}
         </section>
 
-        {/* Despesas fixas */}
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-gray-800">Despesas fixas</h2>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Itens por página</label>
-              <select value={itemsPerPageFixed} onChange={(e) => setItemsPerPageFixed(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
-                <option value={3}>3</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={100}>100</option>
-              </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses as any[], ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r: any) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
-                <FileDown className="w-4 h-4 mr-2" />
-                Exportar
-              </Button>
-              <Button variant="primary" size="sm" onClick={() => openModalDespesa(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar despesa
-              </Button>
-            </div>
-          </div>
-          <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
-            Despesas recorrentes (internet, aluguel etc.). Marque &quot;Repete mensalmente&quot; ao adicionar para cadastrar como fixa.
-          </div>
-          <Table<ExpenseRow>
-            columns={expenseColumns}
-            data={displayedFixedExpenses}
-            loading={loading}
-            emptyMessage="Nenhuma despesa fixa neste mês."
-          />
-          {fixedExpenses.length > itemsPerPageFixed && (
-            <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
-              Mostrando {displayedFixedExpenses.length} de {fixedExpenses.length} despesas fixas
-            </div>
-          )}
-        </section>
-
-        {/* Outras despesas */}
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-gray-800">Outras despesas</h2>
-              <p className="text-sm text-gray-600 mt-0.5">Despesas avulsas para este mês/ano.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Itens por página</label>
-              <select value={itemsPerPageExpenses} onChange={(e) => setItemsPerPageExpenses(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
-                <option value={3}>3</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={100}>100</option>
-              </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses as any[], ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r: any) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
-                <FileDown className="w-4 h-4 mr-2" />
-                Exportar
-              </Button>
-              <Button variant="primary" size="sm" onClick={() => openModalDespesa(false)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar despesa
-              </Button>
-            </div>
-          </div>
-          <Table<ExpenseRow>
-            columns={expenseColumns}
-            data={displayedOtherExpenses}
-            loading={loading}
-            emptyMessage="Nenhuma despesa avulsa neste mês."
-          />
-          {otherExpenses.length > itemsPerPageExpenses && (
-            <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
-              Mostrando {displayedOtherExpenses.length} de {otherExpenses.length} despesas
-            </div>
-          )}
-        </section>
-
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </div>
-
-      <Modal
-        isOpen={modalDespesa}
-        onClose={() => setModalDespesa(false)}
-        title="Adicionar despesa"
-        size="md"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setModalDespesa(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={submitDespesa} disabled={savingDespesa}>
-              {savingDespesa ? 'Salvando...' : 'Adicionar'}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            A despesa será registrada a partir de {MESES_LABELS[selectedMes]} de {selectedAno}.
-            {despesaRepeteMensal && ' Se repetir mensalmente, serão criadas várias entradas (uma por mês).'}
-          </p>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nome da despesa *</label>
-            <input
-              type="text"
-              placeholder="Ex.: Aluguel, Internet, Material"
-              value={despesaNome}
-              onChange={(e) => setDespesaNome(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Descrição (opcional)</label>
-            <textarea
-              rows={2}
-              placeholder="Detalhes da despesa"
-              value={despesaDescricao}
-              onChange={(e) => setDespesaDescricao(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$) *</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="0,00"
-              value={despesaValor}
-              onChange={(e) => {
-                const v = e.target.value.replace(',', '.')
-                if (v === '' || /^\d*\.?\d*$/.test(v)) setDespesaValor(e.target.value)
-              }}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="repete-mensal"
-              checked={despesaRepeteMensal}
-              onChange={(e) => setDespesaRepeteMensal(e.target.checked)}
-              className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-            />
-            <label htmlFor="repete-mensal" className="text-sm font-medium text-gray-700">
-              Repete mensalmente
-            </label>
-          </div>
-          {despesaRepeteMensal && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de meses que se repete</label>
-              <input
-                type="number"
-                min={1}
-                max={120}
-                value={despesaMeses}
-                onChange={(e) => setDespesaMeses(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-              />
-              <p className="text-xs text-gray-500 mt-0.5">Serão criadas várias despesas (uma por mês), até o número informado.</p>
-            </div>
-          )}
-        </div>
-      </Modal>
 
       <Modal
         isOpen={!!editValorUser}

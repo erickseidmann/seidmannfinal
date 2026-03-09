@@ -31,6 +31,7 @@ const ADMIN_PAGES = [
   { key: 'financeiro-alunos', label: 'Financeiro – Alunos' },
   { key: 'financeiro-professores', label: 'Financeiro – Professores' },
   { key: 'financeiro-administracao', label: 'Financeiro – Administração' },
+  { key: 'financeiro-saidas', label: 'Financeiro – Saídas' },
   { key: 'financeiro-relatorios', label: 'Financeiro – Relatórios' },
   { key: 'financeiro-cupons', label: 'Financeiro – Cupons' },
 ] as const
