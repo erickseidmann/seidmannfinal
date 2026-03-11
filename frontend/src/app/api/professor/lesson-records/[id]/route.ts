@@ -121,30 +121,28 @@ export async function PATCH(
       )
     }
 
-    // Período já pago: bloquear só se a aula cair DENTRO de um período marcado como pago (pelas datas reais do período)
+    // Período já pago: bloquear só se a aula cair DENTRO de um período marcado como pago,
+    // e o período for definido explicitamente por datas (periodoInicio/periodoTermino).
+    // Não usamos mais o fallback de "mês inteiro" — o fechamento é sempre por dias.
     const lessonStart = new Date(existing.lesson.startAt)
-    const lessonYear = lessonStart.getUTCFullYear()
     const paymentMonths = await prisma.teacherPaymentMonth.findMany({
-      where: { teacherId: teacher.id, year: { gte: lessonYear - 1, lte: lessonYear + 1 } },
-      select: { year: true, month: true, periodoInicio: true, periodoTermino: true, paymentStatus: true },
+      where: {
+        teacherId: teacher.id,
+        paymentStatus: 'PAGO',
+        periodoInicio: { not: null },
+        periodoTermino: { not: null },
+      },
+      select: { periodoInicio: true, periodoTermino: true },
     })
     const lessonTime = lessonStart.getTime()
     const isInPaidPeriod = paymentMonths.some((pm) => {
-      let start: number
-      let end: number
-      if (pm.periodoInicio && pm.periodoTermino) {
-        const s = new Date(pm.periodoInicio)
-        s.setUTCHours(0, 0, 0, 0)
-        const e = new Date(pm.periodoTermino)
-        e.setUTCHours(23, 59, 59, 999)
-        start = s.getTime()
-        end = e.getTime()
-      } else {
-        start = new Date(Date.UTC(pm.year, pm.month - 1, 1)).getTime()
-        end = new Date(Date.UTC(pm.year, pm.month, 0, 23, 59, 59, 999)).getTime()
-      }
-      const inside = lessonTime >= start && lessonTime <= end
-      return inside && pm.paymentStatus === 'PAGO'
+      const s = new Date(pm.periodoInicio as Date)
+      s.setUTCHours(0, 0, 0, 0)
+      const e = new Date(pm.periodoTermino as Date)
+      e.setUTCHours(23, 59, 59, 999)
+      const start = s.getTime()
+      const end = e.getTime()
+      return lessonTime >= start && lessonTime <= end
     })
     if (isInPaidPeriod) {
       return NextResponse.json(

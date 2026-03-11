@@ -496,10 +496,6 @@ export default function AdminAlunosPage() {
         credentials: 'include',
       })
       if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          router.push('/login?tab=admin')
-          return
-        }
         throw new Error('Erro ao carregar alunos')
       }
       const json = await response.json()
@@ -1097,10 +1093,6 @@ export default function AdminAlunosPage() {
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
-          if (res.status === 401 || res.status === 403) {
-            router.push('/login?tab=admin')
-            return
-          }
           throw new Error(json.message || 'Erro ao atualizar aluno')
         }
         setIsModalOpen(false)
@@ -1116,10 +1108,6 @@ export default function AdminAlunosPage() {
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
-          if (res.status === 401 || res.status === 403) {
-            router.push('/login?tab=admin')
-            return
-          }
           throw new Error(json.message || 'Erro ao adicionar aluno')
         }
         setIsModalOpen(false)

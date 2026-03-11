@@ -108,7 +108,6 @@ interface Metrics {
   }
   studentsWithoutLesson: number
   novosMatriculadosCount: number
-  alunosParaRedirecionarCount: number
   teachersWithProblems: number
   studentsWith3ConsecutiveAbsences: number
   absences: {
@@ -122,7 +121,6 @@ interface Metrics {
 type ListType =
   | 'activeStudents'
   | 'novosMatriculados'
-  | 'alunosParaRedirecionar'
   | 'studentsWithoutLesson'
   | 'inactiveStudents'
   | 'totalUsers'
@@ -173,7 +171,6 @@ interface ListItemTotalUser extends ListItemBase {
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
   novosMatriculados: 'Novos alunos matriculados',
-  alunosParaRedirecionar: 'Alunos para redirecionar',
   studentsWithoutLesson: 'Alunos sem aula designada',
   inactiveStudents: 'Alunos Inativos',
   totalUsers: 'Total de Usuários',
@@ -663,22 +660,6 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('alunosParaRedirecionar')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('alunosParaRedirecionar')}
-            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.alunosParaRedirecionarCount ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
-          >
-            <StatCard
-              variant="finance"
-              title="Alunos para redirecionar"
-              value={metrics?.alunosParaRedirecionarCount ?? 0}
-              icon={<ArrowRightLeft className="w-5 h-5" />}
-              color="red"
-              subtitle="Alunos com aulas fora da disponibilidade do professor (serão redirecionados ao salvar horários)"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
             onClick={() => setShowAlunosSemAulaModal(true)}
             onKeyDown={(e) => e.key === 'Enter' && setShowAlunosSemAulaModal(true)}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
@@ -945,46 +926,6 @@ export default function AdminDashboardPage() {
                                 </p>
                               )}
                             </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : modalType === 'alunosParaRedirecionar' ? (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">
-                Alunos que têm aulas futuras em horários fora da disponibilidade atual do professor. Quando o professor salvar a alteração de horários, esses alunos serão redirecionados para outros professores.
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Professor (horário alterado)</th>
-                      <th className="py-2 font-semibold text-gray-700">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {listData.map((item) => {
-                      const row = item as ListItemAlunosParaRedirecionar
-                      return (
-                        <tr key={row.id} className="border-b border-gray-100">
-                          <td className="py-2 pr-4">{row.nome}</td>
-                          <td className="py-2 pr-4">{row.professorNome ?? '—'}</td>
-                          <td className="py-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDesignarAulaFromModalType('alunosParaRedirecionar')
-                                setDesignarAulaEnrollment(row)
-                              }}
-                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
-                            >
-                              Agendar aula
-                            </button>
                           </td>
                         </tr>
                       )

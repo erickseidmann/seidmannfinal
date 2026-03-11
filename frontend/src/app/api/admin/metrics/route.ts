@@ -175,6 +175,21 @@ export async function GET(request: NextRequest) {
           }
         }
       }
+
+      if (enrollmentIdsToRedirect.size > 0) {
+        const handled = await prisma.adminRedirectHandled.findMany({
+          where: {
+            enrollmentId: {
+              in: Array.from(enrollmentIdsToRedirect),
+            },
+          },
+          select: { enrollmentId: true },
+        })
+        for (const h of handled) {
+          enrollmentIdsToRedirect.delete(h.enrollmentId)
+        }
+      }
+
       alunosParaRedirecionarCount = enrollmentIdsToRedirect.size
     } catch (err) {
       console.warn('[api/admin/metrics] Erro ao contar alunos para redirecionar:', err)

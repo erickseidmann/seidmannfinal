@@ -344,16 +344,14 @@ export default function AdminCalendarioPage() {
   >({})
   const [listModal, setListModal] = useState<{
     title: string
-    type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados' | 'alunosParaRedirecionar'
+    type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados'
   } | null>(null)
-  const [alunosParaRedirecionarCount, setAlunosParaRedirecionarCount] = useState(0)
-  const [alunosParaRedirecionarList, setAlunosParaRedirecionarList] = useState<Array<{ id: string; nome: string; professorNome?: string; frequenciaSemanal?: number | null; tempoAulaMinutos?: number | null }>>([])
-  const [alunosParaRedirecionarListLoading, setAlunosParaRedirecionarListLoading] = useState(false)
   const [novosMatriculadosCount, setNovosMatriculadosCount] = useState(0)
   const [novosMatriculadosList, setNovosMatriculadosList] = useState<{ id: string; nome: string; dataMatricula?: string; linkPagamentoEnviadoAt?: string | null }[]>([])
   const [novosMatriculadosListLoading, setNovosMatriculadosListLoading] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
+  const [marcandoRedirectId, setMarcandoRedirectId] = useState<string | null>(null)
   const [holidays, setHolidays] = useState<Set<string>>(new Set())
   const [holidayLoading, setHolidayLoading] = useState<string | null>(null)
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
@@ -421,6 +419,38 @@ export default function AdminCalendarioPage() {
     frequenciaSemanal?: number | null
     tempoAulaMinutos?: number | null
   } | null>(null)
+
+  const handleAlunoParaRedirecionarJaFeito = (id: string) => {
+    setAlunosParaRedirecionarList((prev) => prev.filter((item) => item.id !== id))
+    setAlunosParaRedirecionarCount((prev) => (prev > 0 ? prev - 1 : 0))
+  }
+  const marcarAlunoParaRedirecionarJaFeito = async (id: string) => {
+    setMarcandoRedirectId(id)
+    try {
+      const res = await fetch('/api/admin/redirect-handled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ enrollmentId: id }),
+      })
+      const text = await res.text()
+      let json: { ok?: boolean; message?: string }
+      try {
+        json = text ? JSON.parse(text) : {}
+      } catch {
+        json = {}
+      }
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao marcar como já feito.', type: 'error' })
+        return
+      }
+      handleAlunoParaRedirecionarJaFeito(id)
+    } catch {
+      setToast({ message: 'Erro ao marcar como já feito.', type: 'error' })
+    } finally {
+      setMarcandoRedirectId(null)
+    }
+  }
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
     existingLessons?: { startAt: string; teacherName?: string }[]
@@ -690,9 +720,8 @@ export default function AdminCalendarioPage() {
       const res = await fetch('/api/admin/metrics', { credentials: 'include' })
       if (!res.ok) return
       const json = await res.json()
-      if (json.ok && json.data) {
-        if (json.data.novosMatriculadosCount != null) setNovosMatriculadosCount(json.data.novosMatriculadosCount)
-        if (json.data.alunosParaRedirecionarCount != null) setAlunosParaRedirecionarCount(json.data.alunosParaRedirecionarCount)
+      if (json.ok && json.data && json.data.novosMatriculadosCount != null) {
+        setNovosMatriculadosCount(json.data.novosMatriculadosCount)
       }
     } catch (e) {
       console.error(e)
@@ -1074,20 +1103,7 @@ export default function AdminCalendarioPage() {
       .finally(() => setNovosMatriculadosListLoading(false))
   }, [listModal?.type])
 
-  useEffect(() => {
-    if (listModal?.type !== 'alunosParaRedirecionar') return
-    setAlunosParaRedirecionarListLoading(true)
-    setAlunosParaRedirecionarList([])
-    fetch(`/api/admin/dashboard-lists?type=alunosParaRedirecionar`, { credentials: 'include' })
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.ok && Array.isArray(j.data)) {
-          setAlunosParaRedirecionarList(j.data)
-        }
-      })
-      .catch(() => setAlunosParaRedirecionarList([]))
-      .finally(() => setAlunosParaRedirecionarListLoading(false))
-  }, [listModal?.type])
+  // já não carregamos mais a lista de alunos para redirecionar
 
   // Ouvir evento de atualização de aulas (quando solicitação é aprovada)
   useEffect(() => {
@@ -1936,22 +1952,6 @@ export default function AdminCalendarioPage() {
               icon={<UserPlus className="w-5 h-5" />}
               color="blue"
               subtitle="Clique para ver, marcar «enviei link pag» e «já adicionei aulas»"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setListModal({ title: 'Alunos para redirecionar', type: 'alunosParaRedirecionar' })}
-            onKeyDown={(e) => e.key === 'Enter' && setListModal({ title: 'Alunos para redirecionar', type: 'alunosParaRedirecionar' })}
-            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${alunosParaRedirecionarCount > 0 ? 'animate-blink-alert' : ''}`}
-          >
-            <StatCard
-              variant="finance"
-              title="Alunos para redirecionar"
-              value={alunosParaRedirecionarCount}
-              icon={<ArrowRightLeft className="w-5 h-5" />}
-              color="red"
-              subtitle="Alunos com aulas fora da disponibilidade do professor (serão redirecionados ao salvar horários)"
             />
           </div>
           <div
@@ -3039,7 +3039,7 @@ export default function AdminCalendarioPage() {
           isOpen={!!listModal}
           onClose={() => setListModal(null)}
           title={listModal?.title ?? ''}
-          size={listModal?.type === 'novosMatriculados' || listModal?.type === 'alunosParaRedirecionar' ? 'lg' : 'md'}
+          size={listModal?.type === 'novosMatriculados' ? 'lg' : 'md'}
           footer={<Button variant="primary" onClick={() => setListModal(null)}>Fechar</Button>}
         >
           {listModal?.type === 'novosMatriculados' ? (
@@ -3123,25 +3123,38 @@ export default function AdminCalendarioPage() {
                       <tr className="border-b border-gray-200">
                         <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
                         <th className="py-2 pr-4 font-semibold text-gray-700">Professor (horário alterado)</th>
-                        <th className="py-2 font-semibold text-gray-700">Ação</th>
+                        <th className="py-2 font-semibold text-gray-700">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {alunosParaRedirecionarList.map((row) => (
-                        <tr key={row.id} className="border-b border-gray-100">
-                          <td className="py-2 pr-4">{row.nome}</td>
-                          <td className="py-2 pr-4">{row.professorNome ?? '—'}</td>
-                          <td className="py-2">
-                            <button
-                              type="button"
-                              onClick={() => setDesignarAulaEnrollment(row)}
-                              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
-                            >
-                              Agendar aula
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {alunosParaRedirecionarList.map((row) => {
+                        const isLoadingRedirect = marcandoRedirectId === row.id
+                        return (
+                          <tr key={row.id} className="border-b border-gray-100">
+                            <td className="py-2 pr-4">{row.nome}</td>
+                            <td className="py-2 pr-4">{row.professorNome ?? '—'}</td>
+                            <td className="py-2">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setDesignarAulaEnrollment(row)}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:opacity-90"
+                                >
+                                  Agendar aula
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => marcarAlunoParaRedirecionarJaFeito(row.id)}
+                                  disabled={isLoadingRedirect}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isLoadingRedirect ? 'Salvando...' : 'Já feito'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

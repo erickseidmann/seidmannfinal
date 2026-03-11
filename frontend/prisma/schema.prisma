@@ -335,6 +335,7 @@ model Enrollment {
   lessons             Lesson[]
   lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
+  adminRedirectHandled AdminRedirectHandled[]
 
   @@index([email])
   @@index([whatsapp])
@@ -523,6 +524,18 @@ model TeacherAvailabilityLog {
   @@index([teacherId])
   @@index([criadoEm])
   @@map("teacher_availability_logs")
+}
+
+// Admin marcou que já tratou o caso de redirecionamento de um aluno (para não aparecer mais em "Alunos para redirecionar")
+model AdminRedirectHandled {
+  id           String   @id @default(cuid())
+  enrollmentId String   @map("enrollment_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrollmentId])
+  @@map("admin_redirect_handled")
 }
 
 // Status e valores por m├¬s/ano (independentes por m├¬s), como EnrollmentPaymentMonth para alunos

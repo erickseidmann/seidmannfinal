@@ -232,13 +232,25 @@ export async function GET(request: NextRequest) {
           }
         }
       }
-      const list = Array.from(byEnrollment.entries()).map(([id, data]) => ({
-        id,
-        nome: data.nome,
-        professorNome: data.professores.join(', '),
-        frequenciaSemanal: data.frequenciaSemanal,
-        tempoAulaMinutos: data.tempoAulaMinutos,
-      }))
+      const handled = await prisma.adminRedirectHandled.findMany({
+        where: {
+          enrollmentId: {
+            in: Array.from(byEnrollment.keys()),
+          },
+        },
+        select: { enrollmentId: true },
+      })
+      const handledIds = new Set(handled.map((h) => h.enrollmentId))
+
+      const list = Array.from(byEnrollment.entries())
+        .filter(([id]) => !handledIds.has(id))
+        .map(([id, data]) => ({
+          id,
+          nome: data.nome,
+          professorNome: data.professores.join(', '),
+          frequenciaSemanal: data.frequenciaSemanal,
+          tempoAulaMinutos: data.tempoAulaMinutos,
+        }))
       list.sort((a, b) => a.nome.localeCompare(b.nome))
       return NextResponse.json({ ok: true, data: list })
     }
