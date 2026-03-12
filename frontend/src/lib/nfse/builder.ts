@@ -4,6 +4,17 @@
 
 import { NfsePayload } from './types'
 
+/** Data de hoje no fuso de Brasília (YYYY-MM-DD). A prefeitura rejeita se a data for superior a hoje. */
+function getDataEmissaoHojeBrasilia(): string {
+  const now = new Date()
+  const brasiliaOffsetMs = -3 * 60 * 60 * 1000 // Brasília = UTC-3, então instante UTC + 3h = “relógio” Brasília para obter o dia civil
+  const brasiliaComoUtc = new Date(now.getTime() + brasiliaOffsetMs)
+  const y = brasiliaComoUtc.getUTCFullYear()
+  const m = String(brasiliaComoUtc.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(brasiliaComoUtc.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 // Dados fixos do Seidmann (prestador)
 const PRESTADOR = {
   cnpj: '32707269000107',
@@ -126,7 +137,7 @@ export function buildNfsePayload(params: BuildNfseParams): NfsePayload {
   }
 
   return {
-    data_emissao: new Date().toISOString().split('T')[0], // Data atual no formato YYYY-MM-DD (obrigatório pela Focus NFe)
+    data_emissao: getDataEmissaoHojeBrasilia(),
     natureza_operacao: '1', // Tributação no município
     regime_especial_tributacao: '6', // ME ou EPP do Simples Nacional (ABRASF; outros municípios exigem)
     optante_simples_nacional: true,

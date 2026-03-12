@@ -168,6 +168,11 @@ export async function emitirNfseParaAluno(params: EmitirNfseParams): Promise<Nfs
 export async function atualizarStatusNfse(focusRef: string): Promise<NfseRecord> {
   const response = await consultarNfse(focusRef)
 
+  const mensagem = response.mensagem ?? (response as { erros?: Array<{ mensagem?: string }> }).erros?.[0]?.mensagem ?? null
+  const errorMessageValue =
+    response.status === 'autorizado' || response.status === 'cancelado'
+      ? null
+      : mensagem || undefined
   const atualizado = await prisma.nfseInvoice.update({
     where: { focusRef },
     data: {
@@ -176,7 +181,7 @@ export async function atualizarStatusNfse(focusRef: string): Promise<NfseRecord>
       codigoVerificacao: response.codigo_verificacao || null,
       pdfUrl: response.url || null,
       xmlUrl: response.caminho_xml_nota_fiscal || null,
-      errorMessage: response.mensagem || null,
+      ...(errorMessageValue !== undefined && { errorMessage: errorMessageValue }),
     },
   })
 

@@ -197,8 +197,15 @@ export async function sendPaymentOverdueReminder(
   return sent ? { sent: true } : { sent: false, error: 'Falha no envio SMTP' }
 }
 
+/** Dados opcionais da NF para o e-mail de confirmação */
+export type NfInfoForConfirmation = {
+  numero?: string
+  pdfUrl?: string
+  disponivel?: boolean
+}
+
 /**
- * Envia confirmação de pagamento.
+ * Envia confirmação de pagamento (e informação da NF quando disponível).
  */
 export async function sendPaymentConfirmation(
   enrollment: EnrollmentWithPayment,
@@ -206,7 +213,8 @@ export async function sendPaymentConfirmation(
   paymentDate: Date,
   year: number,
   month: number,
-  nfseSerahEnviada?: boolean
+  nfseSerahEnviada?: boolean,
+  nfInfo?: NfInfoForConfirmation
 ): Promise<{ sent: boolean; error?: string }> {
   const finance = getEnrollmentFinanceData(enrollment)
   const email = finance.email?.trim()
@@ -219,7 +227,8 @@ export async function sendPaymentConfirmation(
     { nome: finance.nome },
     amount,
     paymentDate,
-    nfseSerahEnviada
+    nfseSerahEnviada,
+    nfInfo
   )
 
   const sent = await sendEmail({ to: email, subject, text, html })
@@ -265,4 +274,30 @@ export async function sendEnrollmentDeactivated(
   })
 
   return sent ? { sent: true } : { sent: false, error: 'Falha no envio SMTP' }
+}
+
+/**
+ * Envia e-mail de NF agendada (conteúdo customizável + link do PDF).
+ * Usado pelo cron que processa NfseSchedule no dia/hora definido.
+ */
+export async function sendScheduledNfEmail(params: {
+  to: string
+  body: string
+  pdfUrl?: string | null
+  numero?: string | null
+}): Promise<boolean> {
+  const { to, body, pdfUrl, numero } = params
+  const subject = 'Nota Fiscal – Seidmann Institute'
+  const linkBlock = pdfUrl
+    ? `\n\nAcesse a Nota Fiscal em: ${pdfUrl}`
+    : numero
+      ? `\n\nNota Fiscal nº ${numero} foi gerada. Acesse pelo painel do aluno (área Financeiro).`
+      : '\n\nA Nota Fiscal foi gerada e está disponível no painel do aluno (área Financeiro).'
+  const text = (body.trim() || 'Segue a Nota Fiscal em anexo.') + linkBlock + '\n\nAtenciosamente,\nEquipe Seidmann Institute'
+  const bodyHtml = (body.trim() || 'Segue a Nota Fiscal.').replace(/\n/g, '</p><p>')
+  const html =
+    `<p>${bodyHtml}</p>` +
+    (pdfUrl ? `<p><a href="${pdfUrl}" style="color:#2563eb;">Abrir PDF da Nota Fiscal</a></p>` : '') +
+    '<p>Atenciosamente,<br>Equipe Seidmann Institute</p>'
+  return sendEmail({ to, subject, text, html })
 }

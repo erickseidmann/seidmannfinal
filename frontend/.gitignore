@@ -1,4 +1,6 @@
 # Certificados Cora (não versionar)
 certs/
+certs-stage/*
+!certs-stage/.gitkeep
 *.pem
 *.key

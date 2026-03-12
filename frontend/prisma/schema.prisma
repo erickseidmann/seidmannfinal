@@ -329,6 +329,7 @@ model Enrollment {
   paymentMonths       EnrollmentPaymentMonth[]
   financeObservations FinanceObservation[]
   nfseInvoices           NfseInvoice[]
+  nfseSchedules          NfseSchedule[]
   alerts                 StudentAlert[]
   paymentNotifications   PaymentNotification[]
   coraInvoices          CoraInvoice[]
@@ -378,14 +379,15 @@ model PaymentInfo {
 
 // Status e NF por m├¬s/ano (independentes por m├¬s; ├║nico global ├® paidAt em PaymentInfo)
 model EnrollmentPaymentMonth {
-  id                   String   @id @default(cuid())
-  enrollmentId         String   @map("enrollment_id")
+  id                   String    @id @default(cuid())
+  enrollmentId         String    @map("enrollment_id")
   year                 Int
-  month                Int      // 1-12
-  paymentStatus        String?  @map("payment_status") // PAGO, ATRASADO, PENDING
-  notaFiscalEmitida    Boolean? @map("nota_fiscal_emitida")
-  criadoEm             DateTime @default(now()) @map("created_at")
-  atualizadoEm         DateTime @updatedAt @map("updated_at")
+  month                Int       // 1-12
+  paymentStatus        String?   @map("payment_status") // PAGO, ATRASADO, PENDING
+  paidAt               DateTime? @map("paid_at")       // data do pagamento neste mês (independente por mês)
+  notaFiscalEmitida    Boolean?  @map("nota_fiscal_emitida")
+  criadoEm             DateTime  @default(now()) @map("created_at")
+  atualizadoEm         DateTime  @updatedAt @map("updated_at")
 
   enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
 
@@ -430,6 +432,31 @@ model NfseInvoice {
   @@index([year, month])
   @@index([criadoEm])
   @@map("nfse_invoices")
+}
+
+// Agendamento de emissão de NFSe (data, e-mail, faturar para, repetir todo mês)
+model NfseSchedule {
+  id            String   @id @default(cuid())
+  enrollmentId  String   @map("enrollment_id")
+  year          Int      // ano da NF
+  month         Int      // mês da NF (1-12)
+  email         String   @db.VarChar(255) // e-mail para envio da NF
+  faturamentoTipo String @map("faturamento_tipo") @db.VarChar(20) // ALUNO ou EMPRESA
+  empresaRazaoSocial   String?  @map("empresa_razao_social") @db.VarChar(255)
+  empresaCnpj          String?  @map("empresa_cnpj") @db.VarChar(20)
+  empresaEnderecoFiscal String?  @map("empresa_endereco_fiscal") @db.Text
+  empresaDescricaoNfse String?  @map("empresa_descricao_nfse") @db.Text // template {aluno}, {frequencia}, {curso}, {mes}, {ano}
+  emailBody            String?  @map("email_body") @db.Text
+  scheduledFor         DateTime @map("scheduled_for") // data/hora em que deve ser emitida e enviada
+  repeatMonthly        Boolean  @default(false) @map("repeat_monthly")
+  criadoEm      DateTime @default(now()) @map("created_at")
+  atualizadoEm DateTime @updatedAt @map("updated_at")
+
+  enrollment    Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, year, month])
+  @@index([scheduledFor])
+  @@map("nfse_schedules")
 }
 
 // Observa├º├Áes financeiras (aluno ou professor) ÔÇô lista, adicionar, apagar

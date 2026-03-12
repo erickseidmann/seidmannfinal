@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { getEnrollmentFinanceData } from '@/lib/finance'
+import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
 import { emitirNfseParaAluno, listarNfseDoMes } from '@/lib/nfse/service'
 import { NfseRecord } from '@/lib/nfse/types'
 
@@ -233,6 +234,37 @@ export async function POST(request: NextRequest) {
           customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
         })
 
+        // Se já está PAGO neste mês, enviar e-mail de confirmação com a NF
+        const paymentMonth = await prisma.enrollmentPaymentMonth.findUnique({
+          where: {
+            enrollmentId_year_month: { enrollmentId, year, month },
+          },
+        })
+        if (paymentMonth?.paymentStatus === 'PAGO' && nota.status === 'autorizado' && (nota.numero || nota.pdfUrl)) {
+          const nfInfo = {
+            numero: nota.numero,
+            pdfUrl: nota.pdfUrl,
+            disponivel: true,
+          }
+          const paymentDate = enrollment.paymentInfo?.paidAt
+            ? new Date(enrollment.paymentInfo.paidAt)
+            : new Date(year, month - 1, 1)
+          try {
+            await sendPaymentConfirmation(
+              enrollment as Parameters<typeof sendPaymentConfirmation>[0],
+              valorMensalidade ?? 0,
+              paymentDate,
+              year,
+              month,
+              false,
+              nfInfo
+            )
+            console.log('[api/admin/nfse POST] E-mail com NF enviado (aluno já estava PAGO)', { enrollmentId, year, month })
+          } catch (emailErr) {
+            console.error('[api/admin/nfse POST] Erro ao enviar e-mail com NF:', emailErr)
+          }
+        }
+
         console.log('[api/admin/nfse POST] NFSe emitida (individual)', { enrollmentId, year, month, manual: !!manual })
         return NextResponse.json({
           ok: true,
@@ -345,6 +377,24 @@ export async function POST(request: NextRequest) {
           aluno: enrollment.nome,
           status: nota.status,
         })
+        // Lote é só para quem está PAGO: enviar e-mail com a NF
+        if (nota.status === 'autorizado' && (nota.numero || nota.pdfUrl)) {
+          const nfInfo = { numero: nota.numero, pdfUrl: nota.pdfUrl, disponivel: true }
+          const paymentDate = new Date(year, month - 1, 1)
+          try {
+            await sendPaymentConfirmation(
+              enrollment as Parameters<typeof sendPaymentConfirmation>[0],
+              valorMensalidade ?? 0,
+              paymentDate,
+              year,
+              month,
+              false,
+              nfInfo
+            )
+          } catch (emailErr) {
+            console.error('[api/admin/nfse POST] Erro ao enviar e-mail com NF (lote):', enrollment.id, emailErr)
+          }
+        }
       } catch (error) {
         erros++
         const errorMessage = error instanceof Error ? error.message : String(error)

@@ -19,6 +19,7 @@ import {
   runNfseRetry,
   runPaymentNotifications,
   runNfseStatus,
+  runNfseScheduled,
 } from './jobs'
 
 const log = (job: string, msg: string, data?: unknown) => {
@@ -41,16 +42,9 @@ export function initScheduler() {
     }
   })
 
-  // Gerar boletos — 7h BRT (10h UTC) diariamente
-  cron.schedule('0 10 * * *', async () => {
-    try {
-      log('generate-invoices', 'Iniciando')
-      const result = await runGenerateInvoices()
-      log('generate-invoices', 'Concluído', result)
-    } catch (err) {
-      console.error('[cron/generate-invoices] Erro:', err)
-    }
-  })
+  // Gerar boletos automaticamente desativado.
+  // A geração de boletos agora é feita apenas manualmente,
+  // pelo botão "Gerar boletos do mês" na tela de Cobranças.
 
   // NFSe retry — 10h UTC diariamente
   cron.schedule('0 10 * * *', async () => {
@@ -83,6 +77,22 @@ export function initScheduler() {
       }
     } catch (err) {
       console.error('[cron/nfse-status] Erro:', err)
+    }
+  })
+
+  // Agendamentos de NF — a cada minuto: emitir NF e enviar e-mail no dia/hora definido
+  cron.schedule('* * * * *', async () => {
+    try {
+      const result = await runNfseScheduled()
+      if (result.processed > 0 || result.errors > 0) {
+        log('nfse-scheduled', 'Executado', result)
+      }
+      // Em desenvolvimento, logar a cada execução quando há agendamentos (para debug)
+      if (process.env.NODE_ENV === 'development' && (result.processed > 0 || result.errors > 0)) {
+        console.log('[cron/nfse-scheduled]', result.processed, 'processado(s),', result.errors, 'erro(s)')
+      }
+    } catch (err) {
+      console.error('[cron/nfse-scheduled] Erro:', err)
     }
   })
 

@@ -148,32 +148,49 @@ export default function RegistrarAulasPage() {
       const finJson = await finRes.json()
       let start: string
       let end: string
+      let isPaid = false
+
       if (finRes.ok && finJson.ok && finJson.data?.dataInicio && finJson.data?.dataTermino) {
         start = finJson.data.dataInicio
         end = finJson.data.dataTermino
+        isPaid = finJson.data.statusPagamento === 'PAGO'
         setPeriodStart(start)
         setPeriodEnd(end)
-        setPeriodPaid(finJson.data.statusPagamento === 'PAGO')
+        setPeriodPaid(isPaid)
         setStats({
           totalAulasRegistradas: Array.isArray(finJson.data.registrosDetalhados) ? finJson.data.registrosDetalhados.length : 0,
           totalHorasRegistradas: typeof finJson.data.totalHorasRegistradas === 'number' ? finJson.data.totalHorasRegistradas : 0,
           valorAPagar: typeof finJson.data.valorAPagar === 'number' ? finJson.data.valorAPagar : 0,
         })
       } else {
-        setPeriodPaid(false)
         const y = selectedYear
         const m = selectedMonth
         start = `${y}-${String(m).padStart(2, '0')}-01`
         const lastDay = new Date(y, m, 0).getDate()
         end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+        isPaid = false
+        setPeriodPaid(false)
         setPeriodStart(start)
         setPeriodEnd(end)
         setStats({ totalAulasRegistradas: 0, totalHorasRegistradas: 0, valorAPagar: 0 })
       }
-      const startDate = new Date(start + 'T00:00:00.000Z')
-      const endDate = new Date(end + 'T23:59:59.999Z')
+
+      const periodStartDate = new Date(start + 'T00:00:00.000Z')
+      const periodEndDate = new Date(end + 'T23:59:59.999Z')
+
+      // Para permitir que o professor registre aulas DEPOIS do fim do período já pago,
+      // buscamos aulas até o fim do mês de calendário selecionado quando o período está pago.
+      let lessonsStartDate = periodStartDate
+      let lessonsEndDate = periodEndDate
+      if (isPaid) {
+        const y = selectedYear
+        const m = selectedMonth
+        const lastDay = new Date(y, m, 0).getDate()
+        lessonsEndDate = new Date(`${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59.999Z`)
+      }
+
       const lessonsRes = await fetch(
-        `/api/professor/lessons?start=${startDate.toISOString()}&end=${endDate.toISOString()}`,
+        `/api/professor/lessons?start=${lessonsStartDate.toISOString()}&end=${lessonsEndDate.toISOString()}`,
         { credentials: 'include' }
       )
       const lessonsJson = await lessonsRes.json()
@@ -237,17 +254,29 @@ export default function RegistrarAulasPage() {
   }
 
   const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1
+  const paidPeriodRange = useMemo(() => {
+    if (!periodPaid || !periodStart || !periodEnd) return null
+    const start = new Date(periodStart + 'T00:00:00.000Z').getTime()
+    const end = new Date(periodEnd + 'T23:59:59.999Z').getTime()
+    return { start, end }
+  }, [periodPaid, periodStart, periodEnd])
+
   const pendingLessons = useMemo(() => {
     const nowMs = Date.now()
     return lessons.filter((l) => {
       if (l.status === 'CANCELLED') return false
       const isHoliday = holidays.has(toDateKeyInTZ(l.startAt))
       if (isHoliday) return false
-      const isFuture = new Date(l.startAt).getTime() > nowMs
+      const startAtMs = new Date(l.startAt).getTime()
+      const isFuture = startAtMs > nowMs
       if (isFuture) return false
+      // Se o período está pago, não contar pendências DENTRO do período pago (essas ficam fechadas)
+      if (paidPeriodRange && startAtMs >= paidPeriodRange.start && startAtMs <= paidPeriodRange.end) {
+        return false
+      }
       return !l.record?.id
     })
-  }, [lessons, holidays])
+  }, [lessons, holidays, paidPeriodRange])
   const registrosEmAberto = periodPaid ? 0 : pendingLessons.length
   const valorFormatado = useMemo(
     () => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.valorAPagar),
@@ -625,8 +654,14 @@ export default function RegistrarAulasPage() {
                   const hasRecord = !!lesson.record?.id
                   const isCancelled = lesson.status === 'CANCELLED'
                   const isHoliday = holidays.has(toDateKeyInTZ(lesson.startAt))
-                  const isFuture = new Date(lesson.startAt).getTime() > Date.now()
-                  const clickable = !hasRecord && !isCancelled && !isHoliday && !isFuture && !periodPaid
+                  const lessonStartMs = new Date(lesson.startAt).getTime()
+                  const isFuture = lessonStartMs > Date.now()
+                  const isInPaidPeriod =
+                    !!paidPeriodRange &&
+                    lessonStartMs >= paidPeriodRange.start &&
+                    lessonStartMs <= paidPeriodRange.end
+                  const clickable =
+                    !hasRecord && !isCancelled && !isHoliday && !isFuture && (!periodPaid || !isInPaidPeriod)
                   return (
                     <tr
                       key={lesson.id}
@@ -663,7 +698,7 @@ export default function RegistrarAulasPage() {
                                 {t('professor.registerClasses.edited')}
                               </span>
                             )}
-                            {!periodPaid && (
+                            {!periodPaid || !isInPaidPeriod ? (
                             <button
                               type="button"
                               onClick={(e) => handleEditClick(e, lesson)}
@@ -672,7 +707,7 @@ export default function RegistrarAulasPage() {
                               <Pencil className="w-3 h-3" />
                               {t('professor.registerClasses.edit')}
                             </button>
-                            )}
+                            ) : null}
                           </span>
                         ) : isCancelled ? (
                           <span className="text-gray-400 text-sm">—</span>
@@ -686,7 +721,7 @@ export default function RegistrarAulasPage() {
                             <Clock className="w-4 h-4 shrink-0" />
                             {t('professor.registerClasses.notYetAvailable')}
                           </span>
-                        ) : periodPaid ? (
+                        ) : periodPaid && isInPaidPeriod ? (
                           <span className="text-gray-400 text-sm">—</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-amber-700 text-sm">

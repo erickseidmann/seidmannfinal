@@ -7,8 +7,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { logFinanceAction, updateStudentPaymentSchema } from '@/lib/finance'
+import { logFinanceAction, updateStudentPaymentSchema, getEnrollmentFinanceData } from '@/lib/finance'
 import { cancelInvoice } from '@/lib/cora/client'
+import { emitirNfseParaAluno } from '@/lib/nfse/service'
+import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
+
+const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
 
 export async function PATCH(
   request: NextRequest,
@@ -89,13 +93,16 @@ export async function PATCH(
 
     const paymentData: Record<string, unknown> = {}
     if (quemPaga !== undefined) paymentData.quemPaga = typeof quemPaga === 'string' ? quemPaga.trim() || null : null
-    const newPaymentStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
+    const newPaymentStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING', 'REMOVIDO'].includes(paymentStatus) ? paymentStatus : null
     if (!hasMonthContext && paymentStatus !== undefined) paymentData.paymentStatus = newPaymentStatus
     if (banco !== undefined) paymentData.banco = typeof banco === 'string' ? banco.trim() || null : null
     if (periodoPagamento !== undefined) paymentData.periodoPagamento = periodoPagamento != null && ['MENSAL', 'ANUAL', 'SEMESTRAL', 'TRIMESTRAL'].includes(periodoPagamento) ? periodoPagamento : null
     if (valorHora !== undefined) paymentData.valorHora = valorHora ?? null
     if (dataUltimoPagamento !== undefined) paymentData.paidAt = dataUltimoPagamento ? new Date(dataUltimoPagamento) : null
-    if (dataProximoPagamento !== undefined) paymentData.dueDate = dataProximoPagamento ? new Date(dataProximoPagamento) : null
+    // Ao desmarcar como pago (PENDING), limpar sempre a data de pagamento se não foi enviada explicitamente
+    if (paymentStatus === 'PENDING' && dataUltimoPagamento === undefined) paymentData.paidAt = null
+    // Não alterar dueDate quando a edição é só do status do mês (cada mês independente; vencimento é fixo pelo dia)
+    if (dataProximoPagamento !== undefined && !hasMonthContext) paymentData.dueDate = dataProximoPagamento ? new Date(dataProximoPagamento) : null
     if (dataUltimaCobranca !== undefined) paymentData.ultimaCobrancaManualAt = dataUltimaCobranca ? new Date(dataUltimaCobranca) : null
     if (dueDay !== undefined && dueDay !== null && dueDay >= 1 && dueDay <= 31) paymentData.dueDay = dueDay
     // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
@@ -124,7 +131,13 @@ export async function PATCH(
         where: { enrollmentId_year_month: { enrollmentId, year, month } },
         select: { paymentStatus: true },
       })
-      const newMonthStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING'].includes(paymentStatus) ? paymentStatus : null
+      const newMonthStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING', 'REMOVIDO'].includes(paymentStatus) ? paymentStatus : null
+      const monthPaidAt =
+        newMonthStatus === 'PAGO'
+          ? dataUltimoPagamento
+            ? new Date(dataUltimoPagamento)
+            : new Date()
+          : null
       await prisma.enrollmentPaymentMonth.upsert({
         where: {
           enrollmentId_year_month: { enrollmentId, year, month },
@@ -134,14 +147,14 @@ export async function PATCH(
           year,
           month,
           paymentStatus: newMonthStatus,
-          // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
+          paidAt: monthPaidAt,
         },
         update: {
           ...(paymentStatus !== undefined && { paymentStatus: newMonthStatus }),
-          // notaFiscalEmitida removido: agora é calculado automaticamente da tabela nfse_invoices (read-only)
+          paidAt: monthPaidAt,
         },
       })
-      // Se marcou como PAGO, cancelar boleto aberto na Cora automaticamente
+      // Se marcou como PAGO: cancelar boleto Cora, emitir NF (se habilitado) e enviar confirmação + NF ao aluno
       if (newMonthStatus === 'PAGO') {
         try {
           const coraInvoice = await prisma.coraInvoice.findUnique({
@@ -163,10 +176,79 @@ export async function PATCH(
             )
           }
         } catch (cancelError) {
-          // Não bloquear a operação se o cancelamento falhar
           console.error(
             `[financeiro/alunos/${enrollmentId}] Erro ao cancelar boleto Cora:`,
             cancelError
+          )
+        }
+
+        // Emitir NFSe (se habilitado) e enviar e-mail de confirmação de pagamento + NF ao aluno
+        let nfInfo: { numero?: string; pdfUrl?: string; disponivel: boolean } | undefined
+        try {
+          const enrollmentFull = await prisma.enrollment.findUnique({
+            where: { id: enrollmentId },
+            include: {
+              user: { select: { email: true } },
+              paymentInfo: true,
+            },
+          })
+          if (!enrollmentFull) throw new Error('Enrollment não encontrado')
+
+          const finance = getEnrollmentFinanceData(enrollmentFull)
+          const valorMensal =
+            enrollmentFull.valorMensalidade != null
+              ? Number(enrollmentFull.valorMensalidade)
+              : enrollmentFull.paymentInfo?.valorMensal != null
+                ? Number(enrollmentFull.paymentInfo.valorMensal)
+                : null
+          const amount = valorMensal ?? 0
+          const paymentDate = dataUltimoPagamento ? new Date(dataUltimoPagamento) : new Date()
+
+          if (NFSE_ENABLED && (finance.cpf || finance.cnpj) && amount > 0) {
+            try {
+              const nota = await emitirNfseParaAluno({
+                enrollmentId,
+                studentName: finance.nome,
+                cpf: finance.cpf || undefined,
+                cnpj: finance.cnpj || undefined,
+                email: finance.email || undefined,
+                amount,
+                year,
+                month,
+                alunoNome: enrollmentFull.nome,
+                frequenciaSemanal: enrollmentFull.frequenciaSemanal ?? undefined,
+                curso: enrollmentFull.curso ?? undefined,
+                customDescricaoEmpresa: enrollmentFull.faturamentoDescricaoNfse ?? undefined,
+              })
+              if (nota.status === 'autorizado' && nota.numero) {
+                nfInfo = {
+                  numero: nota.numero,
+                  pdfUrl: nota.pdfUrl,
+                  disponivel: true,
+                }
+              }
+            } catch (nfErr) {
+              console.error(
+                `[financeiro/alunos/${enrollmentId}] Erro ao emitir NFSe ao marcar como PAGO:`,
+                nfErr
+              )
+            }
+          }
+
+          const nfseSerahEnviada = NFSE_ENABLED && !nfInfo?.disponivel
+          await sendPaymentConfirmation(
+            enrollmentFull,
+            amount,
+            paymentDate,
+            year,
+            month,
+            nfseSerahEnviada,
+            nfInfo
+          )
+        } catch (emailErr) {
+          console.error(
+            `[financeiro/alunos/${enrollmentId}] Erro ao enviar confirmação de pagamento:`,
+            emailErr
           )
         }
       }

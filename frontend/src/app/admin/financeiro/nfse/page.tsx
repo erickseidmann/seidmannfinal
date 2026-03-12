@@ -567,6 +567,19 @@ export default function FinanceiroNfsePage() {
           </div>
         </div>
 
+        {stats.erros > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col gap-2">
+            <p className="text-sm font-semibold text-amber-900">Por que a emissão pode dar erro?</p>
+            <ul className="text-sm text-amber-800 list-disc list-inside space-y-0.5">
+              <li><strong>CPF/CNPJ</strong> com dígitos verificadores inválidos ou irregular na Receita Federal</li>
+              <li><strong>Nome/Razão social</strong> do tomador diferente do que consta na base da Receita</li>
+              <li>Aluno com <strong>CNPJ</strong> (empresa) deve ter o documento cadastrado corretamente; emissão para pessoa jurídica usa campos específicos</li>
+              <li>Restrições do <strong>município</strong> ou ambiente (homologação vs. produção)</li>
+            </ul>
+            <p className="text-xs text-amber-700">Veja o motivo exato em <strong>Motivo do erro</strong> na linha de cada nota com status Erro. Corrija os dados do aluno (ou da empresa) e use <strong>Reemitir</strong> (ícone de atualizar).</p>
+          </div>
+        )}
+
         {/* Tabela de Notas */}
         {loading ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center">
@@ -606,15 +619,28 @@ export default function FinanceiroNfsePage() {
                         <td className="px-4 py-3 text-sm text-gray-700">{formatMoney(nota.amount)}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{nota.numero || '—'}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusBadge.className}`}>
-                              <StatusIcon className="w-3.5 h-3.5" />
-                              {statusBadge.label}
-                            </span>
-                            {nota.errorMessage && (
-                              <span className="text-xs text-red-600" title={nota.errorMessage}>
-                                {nota.errorMessage.length > 50 ? `${nota.errorMessage.slice(0, 50)}...` : nota.errorMessage}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusBadge.className}`}>
+                                <StatusIcon className="w-3.5 h-3.5" />
+                                {statusBadge.label}
                               </span>
+                            </div>
+                            {(nota.status === 'erro_autorizacao' || nota.status === 'erro') && (
+                              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 mt-1 max-w-md">
+                                {nota.errorMessage ? (
+                                  <>
+                                    <span className="font-medium">Motivo do erro:</span>{' '}
+                                    <span title={nota.errorMessage}>
+                                      {nota.errorMessage.length > 200 ? `${nota.errorMessage.slice(0, 200)}...` : nota.errorMessage}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="italic">
+                                    Motivo não registrado. Clique em <strong>Atualizar status</strong> (ícone azul) para buscar o motivo na prefeitura.
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </td>

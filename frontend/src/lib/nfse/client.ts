@@ -46,10 +46,22 @@ export async function emitirNfse(ref: string, payload: NfsePayload): Promise<Nfs
 
   if (!response.ok) {
     const errorBody = await response.text()
-    throw new Error(`Focus NFe erro ${response.status}: ${errorBody}`)
+    let mensagem = `Focus NFe erro ${response.status}`
+    try {
+      const parsed = JSON.parse(errorBody) as { mensagem?: string; erros?: Array<{ mensagem?: string }> }
+      if (parsed.mensagem) mensagem = parsed.mensagem
+      else if (parsed.erros?.[0]?.mensagem) mensagem = parsed.erros[0].mensagem
+      else if (errorBody.length < 300) mensagem = errorBody
+    } catch {
+      if (errorBody.length < 300) mensagem = errorBody
+    }
+    throw new Error(mensagem)
   }
 
   const data = await response.json()
+  if ((data.status === 'erro_autorizacao' || data.status === 'erro') && !data.mensagem && data.erros?.[0]?.mensagem) {
+    data.mensagem = data.erros[0].mensagem
+  }
   return { ref, ...data }
 }
 

@@ -9,9 +9,10 @@ import {
   sendPaymentOverdueReminder,
 } from '@/lib/email/payment-notifications'
 import { generateMonthlyBilling } from '@/lib/cora/billing'
-import { atualizarStatusNfse } from '@/lib/nfse/service'
+import { atualizarStatusNfse, emitirNfseParaAluno } from '@/lib/nfse/service'
 import { emitirNfse, generateNfseRef } from '@/lib/nfse/client'
 import { buildNfsePayload } from '@/lib/nfse/builder'
+import { sendScheduledNfEmail } from '@/lib/email/payment-notifications'
 
 const TOLERANCE_DAYS = 3
 const BATCH_SIZE = 50
@@ -457,5 +458,177 @@ export async function runGenerateInvoices(): Promise<{
     generated,
     errors: errors.length,
     errorDetails: errors.slice(0, 10),
+  }
+}
+
+/**
+ * Processa agendamentos de NF (NfseSchedule): no dia/hora definido apenas envia o e-mail com a NF.
+ * A NF já foi emitida no momento do agendamento. Se "repetir todo mês", emite a NF do mês seguinte
+ * e cria o agendamento para envio no mesmo dia/hora.
+ */
+export async function runNfseScheduled(): Promise<{
+  ok: boolean
+  processed: number
+  errors: number
+  errorDetails: Array<{ enrollmentId: string; year: number; month: number; error: string }>
+}> {
+  const now = new Date()
+  // Quantos dias antes do envio a NF deve ser gerada (ex.: 3 → gera dia 12 e envia dia 15)
+  const leadDays = Number(process.env.NFSE_SCHEDULE_LEAD_DAYS ?? 3)
+  const leadDaysSafe = Number.isFinite(leadDays) && leadDays >= 0 ? Math.floor(leadDays) : 3
+  const leadMs = leadDaysSafe * 24 * 60 * 60 * 1000
+
+  // Buscamos todos os agendamentos (o filtro de "gerar antes" é calculado em memória)
+  const schedules = await prisma.nfseSchedule.findMany({
+    orderBy: { scheduledFor: 'asc' },
+    include: { enrollment: { include: { paymentInfo: true, user: { select: { email: true } } } } },
+  })
+
+  if (process.env.NODE_ENV === 'development' && schedules.length > 0) {
+    console.log('[cron/nfse-scheduled] Agendamentos a processar:', schedules.length, `(leadDays=${leadDaysSafe})`)
+  }
+
+  let processed = 0
+  const errorDetails: Array<{ enrollmentId: string; year: number; month: number; error: string }> = []
+
+  for (const s of schedules) {
+    try {
+      const sendAt = s.scheduledFor
+      const generateAt = new Date(sendAt.getTime() - leadMs)
+
+      let invoice = await prisma.nfseInvoice.findUnique({
+        where: {
+          enrollmentId_year_month: { enrollmentId: s.enrollmentId, year: s.year, month: s.month },
+        },
+      })
+
+      // 1) Gerar a NF alguns dias antes do envio (se ainda não existe)
+      if (!invoice) {
+        if (now >= generateAt) {
+          const enrollment = s.enrollment
+          const valor = Number(enrollment.valorMensalidade ?? enrollment.paymentInfo?.valorMensal ?? 0) || 0
+          const finance = getEnrollmentFinanceData(enrollment)
+          const isEmpresa = s.faturamentoTipo === 'EMPRESA'
+          const studentName = isEmpresa ? (s.empresaRazaoSocial ?? enrollment.nome) : enrollment.nome
+          const cnpj = isEmpresa && s.empresaCnpj ? s.empresaCnpj.replace(/\D/g, '') : undefined
+          const cpf = !isEmpresa && finance.cpf ? finance.cpf.replace(/\D/g, '') : undefined
+          if (valor > 0 && (cnpj?.length === 14 || cpf)) {
+            try {
+              await emitirNfseParaAluno({
+                enrollmentId: s.enrollmentId,
+                studentName,
+                cpf: cpf || undefined,
+                cnpj: cnpj?.length === 14 ? cnpj : undefined,
+                email: s.email,
+                amount: valor,
+                year: s.year,
+                month: s.month,
+                alunoNome: enrollment.nome,
+                frequenciaSemanal: enrollment.frequenciaSemanal ?? null,
+                curso: enrollment.curso ?? null,
+                customDescricaoEmpresa: isEmpresa ? (s.empresaDescricaoNfse ?? null) : null,
+              })
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err)
+              errorDetails.push({ enrollmentId: s.enrollmentId, year: s.year, month: s.month, error: `Erro ao gerar NF antes do envio: ${msg}` })
+              continue
+            }
+          } else {
+            errorDetails.push({ enrollmentId: s.enrollmentId, year: s.year, month: s.month, error: 'Não foi possível gerar NF: valor/documento inválidos' })
+            continue
+          }
+          invoice = await prisma.nfseInvoice.findUnique({
+            where: {
+              enrollmentId_year_month: { enrollmentId: s.enrollmentId, year: s.year, month: s.month },
+            },
+          })
+        } else {
+          // Ainda não é hora de gerar
+          continue
+        }
+      }
+
+      if (!invoice) continue
+
+      // 2) Só enviar e-mail na data/hora agendadas
+      if (now < sendAt) {
+        continue
+      }
+
+      if (invoice.cancelledAt) {
+        errorDetails.push({
+          enrollmentId: s.enrollmentId,
+          year: s.year,
+          month: s.month,
+          error: 'NF foi cancelada',
+        })
+        continue
+      }
+      if (invoice.status === 'processando_autorizacao') {
+        try {
+          await atualizarStatusNfse(invoice.focusRef)
+          invoice = await prisma.nfseInvoice.findUnique({
+            where: { id: invoice.id },
+          }) ?? invoice
+        } catch {
+          // mantém invoice como estava
+        }
+      }
+      if (invoice.status !== 'autorizado') {
+        errorDetails.push({
+          enrollmentId: s.enrollmentId,
+          year: s.year,
+          month: s.month,
+          error: `NF ainda não autorizada (status: ${invoice.status}). Tente novamente em instantes.`,
+        })
+        continue
+      }
+
+      await sendScheduledNfEmail({
+        to: s.email,
+        body: s.emailBody ?? `Segue NF referente ao mês de ${s.month}/${s.year}.`,
+        pdfUrl: invoice.pdfUrl ?? null,
+        numero: invoice.numero ?? null,
+      })
+
+      if (s.repeatMonthly) {
+        const nextMonth = s.month === 12 ? 1 : s.month + 1
+        const nextYear = s.month === 12 ? s.year + 1 : s.year
+        const d = s.scheduledFor
+        const nextScheduled = new Date(nextYear, nextMonth - 1, d.getDate(), d.getHours(), d.getMinutes(), 0, 0)
+        await prisma.nfseSchedule.create({
+          data: {
+            enrollmentId: s.enrollmentId,
+            year: nextYear,
+            month: nextMonth,
+            email: s.email,
+            faturamentoTipo: s.faturamentoTipo,
+            empresaRazaoSocial: s.empresaRazaoSocial,
+            empresaCnpj: s.empresaCnpj,
+            empresaEnderecoFiscal: s.empresaEnderecoFiscal,
+            empresaDescricaoNfse: s.empresaDescricaoNfse,
+            emailBody: s.emailBody,
+            scheduledFor: nextScheduled,
+            repeatMonthly: true,
+          },
+        })
+      }
+
+      await prisma.nfseSchedule.delete({
+        where: { id: s.id },
+      })
+      processed++
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[cron/nfse-scheduled] Erro ao processar agendamento', s.id, s.enrollmentId, msg)
+      errorDetails.push({ enrollmentId: s.enrollmentId, year: s.year, month: s.month, error: msg })
+    }
+  }
+
+  return {
+    ok: true,
+    processed,
+    errors: errorDetails.length,
+    errorDetails: errorDetails.slice(0, 20),
   }
 }

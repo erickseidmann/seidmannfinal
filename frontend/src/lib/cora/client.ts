@@ -8,11 +8,13 @@ import https from 'https'
 import { randomUUID } from 'crypto'
 import { createCoraHttpsAgent, getCoraToken, clearCoraTokenCache } from './auth'
 
+const CORA_ENV = process.env.CORA_ENVIRONMENT
+const IS_PRODUCTION = CORA_ENV === 'production'
+
 function getBaseUrl(): string {
   const url = process.env.CORA_API_URL
   if (url) return url.replace(/\/$/, '')
-  const env = process.env.CORA_ENVIRONMENT
-  return env === 'production'
+  return IS_PRODUCTION
     ? 'https://matls-clients.api.cora.com.br'
     : 'https://matls-clients.api.stage.cora.com.br'
 }
@@ -240,7 +242,10 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<CoraIn
   const payload: Record<string, unknown> = {
     code: params.code,
     customer,
-    payment_forms: ['BANK_SLIP', 'PIX'],
+    // Em produção: boleto + PIX. Em ambiente de testes (stage/dev),
+    // muitos erros da Cora vêm de problemas na CIP para boletos,
+    // então usamos apenas PIX para evitar falhas desnecessárias.
+    payment_forms: IS_PRODUCTION ? ['BANK_SLIP', 'PIX'] : ['PIX'],
     services: [
       { name: params.serviceName, amount: params.amountCents },
     ],

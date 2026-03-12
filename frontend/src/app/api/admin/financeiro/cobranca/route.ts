@@ -46,7 +46,11 @@ export async function POST(request: NextRequest) {
     const hasKey = !!(process.env.CORA_KEY_PATH || process.env.CORA_PRIVATE_KEY_PATH)
     if (!process.env.CORA_CLIENT_ID || !hasCert || !hasKey) {
       return NextResponse.json(
-        { ok: false, message: 'Cora não configurada. Configure CORA_CLIENT_ID, CORA_CERTIFICATE_PATH e CORA_PRIVATE_KEY_PATH no servidor.' },
+        {
+          ok: false,
+          message:
+            'Cora não configurada. Configure CORA_CLIENT_ID e os caminhos do certificado (CORA_CERT_PATH e CORA_KEY_PATH no .env.local para teste, ou no servidor para produção).',
+        },
         { status: 503 }
       )
     }

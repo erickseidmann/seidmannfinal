@@ -8,13 +8,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
-const MONTHS_BY_PERIODO: Record<string, number> = {
-  MENSAL: 1,
-  TRIMESTRAL: 3,
-  SEMESTRAL: 6,
-  ANUAL: 12,
-}
-
 /** Retorna a próxima data de vencimento dado o dia do mês (1-31), após uma data. Só avança para o mês seguinte se afterDate já passou do dia. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate: Date): Date {
   const year = afterDate.getFullYear()
@@ -26,36 +19,19 @@ function nextDueDateFromDay(dayOfMonth: number, afterDate: Date): Date {
   return new Date(year, month + 1, nextSafe)
 }
 
-/** Adiciona N meses à data (respeitando fim do mês). */
-function addMonths(date: Date, months: number): Date {
-  const d = new Date(date.getFullYear(), date.getMonth() + months, date.getDate())
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
-  if (d.getDate() > lastDay) d.setDate(lastDay)
-  return d
-}
-
-/** Próxima data de pagamento quando já pagou: último pagamento + período (1, 3, 6 ou 12 meses), com dia = diaPagamento. */
-function nextDueDateFromPaidAt(paidAt: Date, diaPagamento: number, periodoPagamento: string | null): Date {
-  const n = MONTHS_BY_PERIODO[periodoPagamento ?? ''] ?? 1
-  const next = addMonths(paidAt, n)
-  const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
-  next.setDate(Math.min(diaPagamento, lastDay))
-  return next
-}
-
-/** Verifica se (year, month) está dentro do período já pago (do mês do paidAt até paidAt + N meses - 1). */
-function isMonthWithinPaidPeriod(paidAt: Date, year: number, month: number, periodoPagamento: string | null): boolean {
-  const n = MONTHS_BY_PERIODO[periodoPagamento ?? ''] ?? 1
-  const paidYear = paidAt.getFullYear()
-  const paidMonth = paidAt.getMonth() + 1
-  const viewMonthIndex = (year - paidYear) * 12 + (month - paidMonth)
-  return viewMonthIndex >= 0 && viewMonthIndex < n
-}
-
-/** Retorna a data de vencimento no mês/ano dados (dia 1-31). Usado quando o aluno ainda não pagou: mostra o vencimento do período atual, não do próximo. */
+/** Retorna a data de vencimento no mês/ano dados (dia 1-31). */
 function dueDateInMonth(dayOfMonth: number, year: number, month: number): Date {
   const safeDay = Math.min(dayOfMonth, new Date(year, month, 0).getDate())
   return new Date(year, month - 1, safeDay)
+}
+
+/**
+ * Regra: cada mês é independente; a data de vencimento é fixa (ex.: dia 10).
+ * O "próximo pagamento" é sempre a próxima ocorrência desse dia no calendário a partir de hoje,
+ * e NÃO depende de quando o aluno pagou o mês anterior (evita mudar ao quitar fevereiro em março).
+ */
+function nextDueDateFixed(dayOfMonth: number, refDate: Date): Date {
+  return nextDueDateFromDay(dayOfMonth, refDate)
 }
 
 export async function GET(request: NextRequest) {
@@ -106,7 +82,7 @@ export async function GET(request: NextRequest) {
               // Mesmo sendo INACTIVE ainda visível, verificar se foi removido manualmente do mês
               const pmArr = (e as any).paymentMonths as { paymentStatus: string | null }[] | undefined
               const pm = Array.isArray(pmArr) && pmArr.length > 0 ? pmArr[0] : null
-              if (pm && pm.paymentStatus === 'PENDING') {
+              if (pm && pm.paymentStatus === 'REMOVIDO') {
                 removedThisMonthIds.add(e.id)
                 return false
               }
@@ -120,10 +96,10 @@ export async function GET(request: NextRequest) {
               const mesInicio = di.getMonth() + 1
               if (year < anoInicio || (year === anoInicio && month < mesInicio)) return false
             }
-            // Remover explicitamente alunos marcados como "PENDING" para este mês em EnrollmentPaymentMonth
+            // Esconder só quem foi explicitamente "Removido deste mês". PENDING = no mês, aguardando pagamento (ex.: boleto gerado).
             const pmArr = (e as any).paymentMonths as { paymentStatus: string | null }[] | undefined
             const pm = Array.isArray(pmArr) && pmArr.length > 0 ? pmArr[0] : null
-            if (pm && pm.paymentStatus === 'PENDING') {
+            if (pm && pm.paymentStatus === 'REMOVIDO') {
               removedThisMonthIds.add(e.id)
               return false
             }
@@ -207,13 +183,34 @@ export async function GET(request: NextRequest) {
       nfseMap.set(key, true)
     }
 
+    // NFSe por enrollment (ref + status + errorMessage) para a coluna Status NF e Ações NF
+    const nfsePorEnrollment = await prisma.nfseInvoice.findMany({
+      where: {
+        enrollmentId: { in: filteredEnrollments.map((e) => e.id) },
+        ...(hasMonthFilter && year != null && month != null ? { year, month } : {}),
+      },
+      select: { enrollmentId: true, focusRef: true, status: true, errorMessage: true, year: true, month: true },
+    })
+    const nfseInfoMap = new Map<string, { focusRef: string; status: string; errorMessage: string | null }>()
+    for (const nf of nfsePorEnrollment) {
+      const key = `${nf.enrollmentId}:${nf.year}:${nf.month}`
+      nfseInfoMap.set(key, { focusRef: nf.focusRef, status: nf.status, errorMessage: nf.errorMessage ?? null })
+    }
+
+    // Agendamentos de NF (para exibir "Agendada" no Status NF)
+    const nfseSchedules = await prisma.nfseSchedule.findMany({
+      where: { enrollmentId: { in: enrollmentIds } },
+      select: { enrollmentId: true, year: true, month: true },
+    })
+    const nfAgendadaSet = new Set(nfseSchedules.map((s) => `${s.enrollmentId}:${s.year}:${s.month}`))
+
     // Valor por hora = valor mensal ÷ total de horas do mês.
     // Total de horas do mês = (frequência semanal × duração da aula em min) × 4 semanas ÷ 60.
     const WEEKS_PER_MONTH = 4
 
     const rows = filteredEnrollments.map((e) => {
       const pi = e.paymentInfo
-      const pm = hasMonthFilter && e.paymentMonths && 'length' in e.paymentMonths ? (e.paymentMonths as { paymentStatus: string | null; notaFiscalEmitida: boolean | null }[])[0] : null
+      const pm = hasMonthFilter && e.paymentMonths && 'length' in e.paymentMonths ? (e.paymentMonths as { paymentStatus: string | null; paidAt: Date | null; notaFiscalEmitida: boolean | null }[])[0] : null
       const valorMensal = e.valorMensalidade != null ? Number(e.valorMensalidade) : null
       const valorMensalPi = pi?.valorMensal != null ? Number(pi.valorMensal) : null
       const freq = e.frequenciaSemanal ?? 0
@@ -224,27 +221,13 @@ export async function GET(request: NextRequest) {
         (valorMensal ?? valorMensalPi) != null && totalHorasMes > 0
           ? (valorMensal ?? valorMensalPi)! / totalHorasMes
           : null
-      const dueDate = pi?.dueDate
       const diaPagamento = e.diaPagamento ?? pi?.dueDay ?? null
+      // Cada mês independente; vencimento fixo pelo dia (ex.: sempre dia 10). Não usa data do último pagamento.
       let dataProximoPagamento: string | null = null
-
-      // Prioridade:
-      // 1) Se já tem paidAt + diaPagamento → sempre calcular próximo vencimento baseado no pagamento.
-      // 2) Senão, se existe dueDate em aberto → usar dueDate.
-      // 3) Senão, se só tem diaPagamento → calcular vencimento do período atual (sem avançar mês).
-      if (pi?.paidAt && diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
-        const paidDate = new Date(pi.paidAt)
-        dataProximoPagamento = nextDueDateFromPaidAt(
-          paidDate,
-          diaPagamento,
-          pi?.periodoPagamento ?? null
-        ).toISOString()
-      } else if (dueDate) {
-        dataProximoPagamento = dueDate.toISOString()
-      } else if (diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
-        const refYear = hasMonthFilter && year != null && month != null ? year : today.getFullYear()
-        const refMonth = hasMonthFilter && year != null && month != null ? month : today.getMonth() + 1
-        dataProximoPagamento = dueDateInMonth(diaPagamento, refYear, refMonth).toISOString()
+      if (diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
+        dataProximoPagamento = nextDueDateFixed(diaPagamento, today).toISOString()
+      } else if (pi?.dueDate) {
+        dataProximoPagamento = pi.dueDate.toISOString()
       }
 
       // Determinar mês/ano de referência para NFSe:
@@ -268,17 +251,14 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      // Status no mês: se tem filtro de mês e o mês está dentro do período já pago (ex.: trimestral = 3 meses), mostrar Pago
-      let status: string | null = hasMonthFilter && pm ? pm.paymentStatus ?? null : pi?.paymentStatus ?? null
-      if (hasMonthFilter && year != null && month != null && pi?.paidAt && pi?.periodoPagamento) {
-        if (isMonthWithinPaidPeriod(new Date(pi.paidAt), year, month, pi.periodoPagamento)) {
-          status = 'PAGO'
-        }
-      }
+      // Status no mês: cada mês é independente; vem de EnrollmentPaymentMonth quando há filtro, senão do PaymentInfo global
+      const status: string | null = hasMonthFilter && pm ? pm.paymentStatus ?? null : pi?.paymentStatus ?? null
 
       // Verificar se existe NFSe autorizada para este enrollment no mês/ano de referência
       const nfseKey = `${e.id}:${refYear}:${refMonth}`
       const nfEmitida = nfseMap.has(nfseKey)
+      const nfseInfo = nfseInfoMap.get(nfseKey)
+      const nfAgendada = nfAgendadaSet.has(nfseKey)
       
       const enr = e as { moraNoExterior?: boolean; enderecoExterior?: string | null; rua?: string | null; numero?: string | null; complemento?: string | null; cidade?: string | null; estado?: string | null; cep?: string | null }
       const enderecoCompleto =
@@ -313,7 +293,16 @@ export async function GET(request: NextRequest) {
         quemPaga: pi?.quemPaga ?? null,
         valorMensal: valorMensal ?? valorMensalPi ?? null,
         valorHora: valorHora,
-        dataPagamento: pi?.dataPagamento?.toISOString() ?? null,
+        // Cada mês independente: data de pagamento só do mês selecionado (EnrollmentPaymentMonth.paidAt), não do último mês
+        dataPagamento: (() => {
+          if (!hasMonthFilter) return pi?.dataPagamento?.toISOString() ?? null
+          if (pm?.paymentStatus !== 'PAGO') return null
+          if (pm.paidAt) return pm.paidAt.toISOString()
+          // Registros antigos PAGO sem paidAt: usar PaymentInfo.dataPagamento só se cair no mês selecionado
+          const dp = pi?.dataPagamento
+          if (dp && refYear === dp.getFullYear() && refMonth === dp.getMonth() + 1) return dp.toISOString()
+          return null
+        })(),
         status,
         enrollmentStatus: e.status,
         inactiveAt: e.inactiveAt?.toISOString() ?? null,
@@ -325,6 +314,10 @@ export async function GET(request: NextRequest) {
         dataUltimaCobranca: lastChargeAt ? lastChargeAt.toISOString() : null,
         diaPagamento: diaPagamento ?? null,
         notaFiscalEmitida: nfEmitida, // Calculado automaticamente da tabela nfse_invoices
+        nfseFocusRef: nfseInfo?.focusRef ?? null,
+        nfseStatus: nfseInfo?.status ?? null,
+        nfseErrorMessage: nfseInfo?.errorMessage ?? null,
+        nfAgendada,
         email: e.email,
         escolaMatricula: (e as { escolaMatricula?: string | null }).escolaMatricula ?? null,
         paymentInfoId: pi?.id ?? null,

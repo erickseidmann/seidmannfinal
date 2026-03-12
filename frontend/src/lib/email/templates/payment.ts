@@ -150,44 +150,71 @@ Equipe Seidmann Institute`
   return { subject, text, html: baseLayout(content) }
 }
 
-/** Confirmação de pagamento */
+/** Dados opcionais da NF para incluir na confirmação de pagamento */
+export interface NfInfoConfirmation {
+  /** Número da nota (ex.: "12345") */
+  numero?: string
+  /** URL do PDF da NF (se disponível) */
+  pdfUrl?: string
+  /** true = NF foi gerada e está disponível no painel / em anexo */
+  disponivel?: boolean
+}
+
+/** Confirmação de pagamento com mensagem bonita e informação da NF */
 export function buildPaymentConfirmationEmail(
   enrollment: { nome: string },
   amount: number,
   paymentDate: Date | string,
-  nfseSerahEnviada?: boolean
+  nfseSerahEnviada?: boolean,
+  nfInfo?: NfInfoConfirmation
 ): { subject: string; text: string; html: string } {
   const subject = 'Seidmann Institute - Pagamento confirmado ✓'
   const valorStr = formatCurrency(amount)
   const dataStr = formatDate(paymentDate)
   const nome = escapeHtml(enrollment.nome)
 
-  const nfseTexto = nfseSerahEnviada
-    ? ' A nota fiscal será enviada por e-mail em breve.'
-    : ''
+  let nfseTexto = ''
+  let nfseHtml = ''
+  if (nfInfo?.disponivel && nfInfo?.numero) {
+    nfseTexto = `\n\nSua Nota Fiscal nº ${nfInfo.numero} foi gerada e está disponível no seu painel do aluno (área Financeiro). Você também pode acessá-la pelo link que enviamos anteriormente.`
+    nfseHtml = `
+    <div style="margin:20px 0;padding:20px;background:#eff6ff;border-radius:8px;border-left:4px solid #2563eb;">
+      <p style="margin:0 0 8px;font-size:15px;color:#1e40af;"><strong>📄 Nota Fiscal</strong></p>
+      <p style="margin:0;">Sua Nota Fiscal nº <strong>${escapeHtml(nfInfo.numero)}</strong> foi gerada com sucesso e está disponível no seu <strong>painel do aluno</strong> (área Financeiro). Guarde-a para seus registros.</p>
+      ${nfInfo.pdfUrl ? `<p style="margin:12px 0 0;"><a href="${escapeHtml(nfInfo.pdfUrl)}" style="color:#2563eb;text-decoration:underline;">Abrir PDF da Nota Fiscal</a></p>` : ''}
+    </div>`
+  } else if (nfseSerahEnviada) {
+    nfseTexto = '\n\nSua Nota Fiscal está sendo gerada e em breve estará disponível no seu painel do aluno (área Financeiro). Você receberá um aviso quando estiver pronta.'
+    nfseHtml = `
+    <p style="margin:16px 0;padding:16px;background:#fefce8;border-radius:8px;border-left:4px solid #eab308;">
+      <strong>📄 Nota Fiscal:</strong> Sua nota está sendo gerada e em breve estará disponível no seu <strong>painel do aluno</strong> (área Financeiro). Você receberá um aviso quando estiver pronta.
+    </p>`
+  }
 
   const text = `Olá, ${enrollment.nome},
 
-Seu pagamento foi confirmado com sucesso! ✓
+Recebemos e confirmamos seu pagamento com sucesso! 🎉
 
 Valor: ${valorStr}
-Data: ${dataStr}
-${nfseSerahEnviada ? '\nA nota fiscal será enviada por e-mail em breve.' : ''}
+Data do pagamento: ${dataStr}
+${nfseTexto}
 
-Obrigado por manter sua matrícula em dia.
+Agradecemos sua confiança e por manter sua matrícula em dia. Qualquer dúvida, estamos à disposição.
 
-Atenciosamente,
+Com carinho,
 Equipe Seidmann Institute`
 
   const content = `
     <p style="margin:0 0 16px;">Olá, <strong>${nome}</strong>,</p>
-    <p style="margin:0;font-size:18px;color:#059669;">✓ Pagamento confirmado com sucesso!</p>
-    <div style="margin:24px 0;padding:20px;background:#ecfdf5;border-radius:8px;border-left:4px solid #059669;">
+    <p style="margin:0 0 20px;font-size:18px;color:#059669;"><strong>✓ Pagamento confirmado com sucesso!</strong></p>
+    <p style="margin:0 0 16px;">Recebemos e confirmamos seu pagamento. Obrigado por manter tudo em dia!</p>
+    <div style="margin:24px 0;padding:20px;background:linear-gradient(135deg,#ecfdf5,#d1fae5);border-radius:8px;border-left:4px solid #059669;">
       <p style="margin:0 0 8px;"><strong>Valor:</strong> <span style="font-size:18px;color:#047857;">${escapeHtml(valorStr)}</span></p>
-      <p style="margin:0;"><strong>Data:</strong> ${escapeHtml(dataStr)}</p>
+      <p style="margin:0;"><strong>Data do pagamento:</strong> ${escapeHtml(dataStr)}</p>
     </div>
-    ${nfseSerahEnviada ? '<p style="margin:0;">A nota fiscal será enviada por e-mail em breve.</p>' : ''}
-    <p style="margin:20px 0 0;">Obrigado por manter sua matrícula em dia.</p>`
+    ${nfseHtml}
+    <p style="margin:24px 0 0;">Agradecemos sua confiança. Qualquer dúvida, estamos à disposição.</p>
+    <p style="margin:12px 0 0;color:#6b7280;">Com carinho,<br><strong>Equipe Seidmann Institute</strong></p>`
 
   return { subject, text, html: baseLayout(content) }
 }

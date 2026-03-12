@@ -205,7 +205,7 @@ export default function FinanceiroCobrancasPage() {
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Cobranças</h1>
             <p className="text-gray-600 mt-1">
-              Boletos e PIX gerados na Cora. O cron gera boletos automaticamente 15 dias antes do vencimento.
+              Boletos e PIX gerados na Cora. Os boletos só são gerados quando você clicar em &quot;Gerar boletos do mês&quot;.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

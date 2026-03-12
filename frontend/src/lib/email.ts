@@ -774,6 +774,97 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
+/** Dados para montar o e-mail de lembrete de pagamento (com opcional boleto/PIX) */
+export interface LembretePagamentoData {
+  nome: string
+  valorStr: string
+  vencimentoStr: string
+  boletoUrl?: string | null
+  boletoDigitableLine?: string | null
+  pixEmv?: string | null
+  pixQrCodeUrl?: string | null
+  /** Quando true, deixa claro que é um lembrete (boleto já enviado antes). */
+  isReminder?: boolean
+}
+
+/** Monta assunto, texto e HTML do e-mail de cobrança/vencimento (com link do boleto e PIX quando fornecidos). */
+export function lembretePagamentoContent(data: LembretePagamentoData): { subject: string; text: string; html: string } {
+  const isReminder = data.isReminder === true
+  const subject = isReminder
+    ? 'Lembrete de pagamento – Seidmann Institute'
+    : 'Informações de pagamento – Seidmann Institute'
+  const nome = data.nome?.trim() || 'Aluno(a)'
+
+  let blocoPagamento = ''
+  if (data.boletoUrl || data.pixEmv) {
+    blocoPagamento = '\n\n💰 Dados para Pagamento\n\n'
+    if (data.pixEmv) {
+      blocoPagamento += '🟢 PIX Copia e Cola:\n' + data.pixEmv + '\n\n'
+    }
+    if (data.boletoUrl) {
+      blocoPagamento += '📄 Link do Boleto:\n' + data.boletoUrl + '\n'
+      if (data.boletoDigitableLine) {
+        blocoPagamento += 'Linha digitável: ' + data.boletoDigitableLine + '\n'
+      }
+      blocoPagamento += '\n'
+    }
+  }
+
+  const intro = isReminder
+    ? 'Estamos passando para lembrar do pagamento da sua mensalidade com a Seidmann Institute.'
+    : 'Segue e-mail com as informações de pagamento da sua mensalidade com a Seidmann Institute.'
+
+  const text = `Olá, ${nome},
+
+${intro}
+
+Valor: ${data.valorStr}
+Vencimento: ${data.vencimentoStr}
+${blocoPagamento}Caso já tenha realizado o pagamento, por favor desconsidere este e-mail.
+
+Em caso de dúvidas, entre em contato conosco.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+
+  const htmlBlocoPagamento =
+    data.boletoUrl || data.pixEmv
+      ? `
+  <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+    <p style="font-weight: bold; font-size: 16px; margin-bottom: 12px;">💰 Dados para Pagamento</p>
+    ${data.pixEmv ? `
+      <p style="margin-bottom: 8px;"><strong>🟢 PIX Copia e Cola:</strong></p>
+      <p style="background: white; padding: 10px; border-radius: 4px; font-size: 12px; word-break: break-all; border: 1px solid #e5e7eb;">${escapeHtml(data.pixEmv)}</p>
+      ${data.pixQrCodeUrl ? `<p style="text-align: center; margin: 12px 0;"><img src="${escapeHtml(data.pixQrCodeUrl)}" alt="QR Code PIX" width="200" height="200" style="border-radius: 8px;"></p>` : ''}
+    ` : ''}
+    ${data.boletoUrl ? `
+      <p style="margin-top: 12px;"><strong>📄 Boleto Bancário:</strong></p>
+      ${data.boletoDigitableLine ? `<p style="font-size: 12px; font-family: monospace; background: white; padding: 8px; border-radius: 4px; border: 1px solid #e5e7eb;">${escapeHtml(data.boletoDigitableLine)}</p>` : ''}
+      <p><a href="${escapeHtml(data.boletoUrl)}" style="display: inline-block; background: #2563eb; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; margin-top: 8px;">Visualizar Boleto</a></p>
+    ` : ''}
+  </div>
+  `
+      : ''
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${isReminder ? 'Lembrete de pagamento' : 'Informações de pagamento'}</title></head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <p>Olá, ${escapeHtml(nome)},</p>
+  <p>${escapeHtml(intro)}</p>
+  <p><strong>Valor:</strong> ${escapeHtml(data.valorStr)}<br>
+  <strong>Vencimento:</strong> ${escapeHtml(data.vencimentoStr)}</p>
+  ${htmlBlocoPagamento}
+  <p>Caso já tenha realizado o pagamento, por favor desconsidere este e-mail.</p>
+  <p>Em caso de dúvidas, entre em contato conosco.</p>
+  <p>Atenciosamente,<br>Equipe Seidmann Institute</p>
+</body>
+</html>`
+
+  return { subject, text, html }
+}
+
 /** Envia e-mail de comprovante de matrícula para o aluno */
 export async function sendComprovanteMatricula(data: ComprovanteMatriculaData): Promise<boolean> {
   const { subject, text, html } = comprovanteMatriculaContent(data)

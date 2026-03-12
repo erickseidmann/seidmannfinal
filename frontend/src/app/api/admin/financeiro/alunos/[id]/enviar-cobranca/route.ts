@@ -47,10 +47,10 @@ function buildTemplate(enrollment: TemplateEnrollment) {
   const valorStr = valorMensal != null ? `R$ ${Number(valorMensal).toFixed(2).replace('.', ',')}` : 'conforme combinado'
   const pi = enrollment.paymentInfo
   const diaPagamento = enrollment.diaPagamento ?? pi?.dueDay ?? null
+  // Vencimento fixo pelo dia: próxima ocorrência do dia no calendário a partir de hoje (cada mês independente)
   let dataProximo: Date | null = pi?.dueDate ? new Date(pi.dueDate) : null
   if (!dataProximo && diaPagamento != null && diaPagamento >= 1 && diaPagamento <= 31) {
-    const ref = pi?.paidAt ?? new Date()
-    dataProximo = nextDueDateFromDay(diaPagamento, ref)
+    dataProximo = nextDueDateFromDay(diaPagamento, new Date())
   }
   const vencimento = dataProximo ? dataProximo.toLocaleDateString('pt-BR') : 'verificar com a secretaria'
 

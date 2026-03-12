@@ -13,7 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -44,6 +44,10 @@ interface AlunoFinanceiro {
   dataUltimaCobranca: string | null
   diaPagamento: number | null
   notaFiscalEmitida: boolean | null
+  nfseFocusRef?: string | null
+  nfseStatus?: string | null
+  nfseErrorMessage?: string | null
+  nfAgendada?: boolean
   email: string
   escolaMatricula: string | null
   paymentInfoId: string | null
@@ -56,11 +60,25 @@ interface AlunoRemovidoMes {
   motivo: string | null
 }
 
-/** Status efetivo: se não está PAGO e a data de próximo pagamento já passou → ATRASADO. */
-function getEffectiveStatus(a: AlunoFinanceiro): 'PAGO' | 'ATRASADO' | 'PENDING' {
+/** Status efetivo: se não está PAGO e o dia de vencimento já passou (em relação a "hoje") → ATRASADO.
+ * Quando year/month são informados (mês da lista), o vencimento é calculado nesse mês; assim em abril
+ * ninguém aparece Atrasado antes de abril começar. */
+function getEffectiveStatus(
+  a: AlunoFinanceiro,
+  today: Date = new Date(),
+  year?: number,
+  month?: number
+): 'PAGO' | 'ATRASADO' | 'PENDING' {
   if (a.status === 'PAGO') return 'PAGO'
-  const prox = a.dataProximoPagamento ? new Date(a.dataProximoPagamento) : null
-  if (prox && prox < new Date()) return 'ATRASADO'
+  const dia = a.diaPagamento
+  if (dia == null || dia < 1 || dia > 31) return (a.status as 'PENDING') || 'PENDING'
+  const y = year ?? today.getFullYear()
+  const m = month ?? today.getMonth() + 1
+  const lastDay = new Date(y, m, 0).getDate()
+  const dueDay = Math.min(dia, lastDay)
+  const dueDate = new Date(y, m - 1, dueDay)
+  dueDate.setHours(23, 59, 59, 999)
+  if (today > dueDate) return 'ATRASADO'
   return (a.status as 'PENDING') || 'PENDING'
 }
 
@@ -84,6 +102,27 @@ const PERIODO_SHORT: Record<string, string> = {
   TRIMESTRAL: 'Tri.',
   SEMESTRAL: 'Sem.',
   ANUAL: 'An.',
+}
+
+const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+
+/** Template padrão da descrição da NF para empresa (variáveis: {aluno}, {frequencia}, {curso}, {mes}, {ano}). */
+const DEFAULT_DESCRICAO_NF_EMPRESA =
+  'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'
+
+function templateConteudoEmailNf(mes: number, ano: number): string {
+  return `Segue NF referente ao mês de ${MESES_NOME[mes - 1]}/${ano}.`
+}
+
+/** Converte ISO (UTC) para string "yyyy-MM-ddTHH:mm" no fuso local (para input datetime-local). */
+function isoToDateTimeLocal(iso: string): string {
+  const d = new Date(iso)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day}T${h}:${min}`
 }
 
 function formatDate(iso: string | null): string {
@@ -234,6 +273,7 @@ export default function FinanceiroAlunosPage() {
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [confirmUnpay, setConfirmUnpay] = useState<AlunoFinanceiro | null>(null)
+  const [confirmMarkPaid, setConfirmMarkPaid] = useState<AlunoFinanceiro | null>(null)
   const [confirmBulkUnpay, setConfirmBulkUnpay] = useState(false)
   const [bulkReasons, setBulkReasons] = useState<Record<string, string>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -273,6 +313,32 @@ export default function FinanceiroAlunosPage() {
     problemas: string[]
   } | null>(null)
   const [editAlunoSaving, setEditAlunoSaving] = useState(false)
+  const [agendarNfModal, setAgendarNfModal] = useState<AlunoFinanceiro | null>(null)
+  const [agendarNfForm, setAgendarNfForm] = useState<{
+    email: string
+    scheduledFor: string
+    faturamentoTipo: 'ALUNO' | 'EMPRESA'
+    empresaNome: string
+    empresaCnpj: string
+    empresaEnderecoFiscal: string
+    empresaDescricaoNfse: string
+    emailBody: string
+    repeatMonthly: boolean
+  }>({
+    email: '',
+    scheduledFor: '',
+    faturamentoTipo: 'ALUNO',
+    empresaNome: '',
+    empresaCnpj: '',
+    empresaEnderecoFiscal: '',
+    empresaDescricaoNfse: '',
+    emailBody: '',
+    repeatMonthly: false,
+  })
+  const [agendarNfLoading, setAgendarNfLoading] = useState(false)
+  const [agendarNfSaving, setAgendarNfSaving] = useState(false)
+  const [agendarNfFromRepeat, setAgendarNfFromRepeat] = useState(false)
+  const [nfErrorModal, setNfErrorModal] = useState<{ nome: string; message: string } | null>(null)
   const [form, setForm] = useState({
     quemPaga: '',
     paymentStatus: '',
@@ -282,7 +348,7 @@ export default function FinanceiroAlunosPage() {
     valorMensal: '' as string | number,
     valorHora: '' as string | number,
     dataUltimoPagamento: '',
-    dataProximoPagamento: '',
+    diaPagamento: '',
     faturamentoTipo: 'ALUNO' as 'ALUNO' | 'EMPRESA',
     faturamentoRazaoSocial: '',
     faturamentoCnpj: '',
@@ -448,6 +514,132 @@ export default function FinanceiroAlunosPage() {
     fetchCobrancas(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchCobrancas])
 
+  // Ao abrir o modal de agendar NF, preencher formulário e opcionalmente carregar agendamento existente
+  useEffect(() => {
+    if (!agendarNfModal) return
+    const a = agendarNfModal
+    const defaultDate = `${selectedAno}-${String(selectedMes).padStart(2, '0')}-01`
+    const defaultDateTime = `${defaultDate}T09:00`
+    const tipo = (a.faturamentoTipo as 'ALUNO' | 'EMPRESA') || 'ALUNO'
+    const templateBody = templateConteudoEmailNf(selectedMes, selectedAno)
+    const descricaoDoAluno = (a as { faturamentoDescricaoNfse?: string | null }).faturamentoDescricaoNfse?.trim()
+    setAgendarNfForm({
+      email: (tipo === 'EMPRESA' ? a.faturamentoEmail : a.email) || '',
+      scheduledFor: defaultDateTime,
+      faturamentoTipo: tipo,
+      empresaNome: a.faturamentoRazaoSocial || '',
+      empresaCnpj: (a as { faturamentoCnpj?: string | null }).faturamentoCnpj?.replace(/\D/g, '') ?? '',
+      empresaEnderecoFiscal: (a as { faturamentoEndereco?: string | null }).faturamentoEndereco ?? '',
+      empresaDescricaoNfse: tipo === 'EMPRESA' ? (descricaoDoAluno || DEFAULT_DESCRICAO_NF_EMPRESA) : '',
+      emailBody: tipo === 'EMPRESA' ? templateBody : '',
+      repeatMonthly: false,
+    })
+    setAgendarNfFromRepeat(false)
+    setAgendarNfLoading(true)
+    const url = `/api/admin/financeiro/nfse-agendamento?enrollmentId=${encodeURIComponent(a.id)}&year=${selectedAno}&month=${selectedMes}`
+    fetch(url, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json?.ok && json?.data) {
+          const d = json.data
+          const bodyTipo = (d.faturamentoTipo as 'ALUNO' | 'EMPRESA') || 'ALUNO'
+          const bodyDefault = templateConteudoEmailNf(selectedMes, selectedAno)
+          const rawScheduled = d.scheduledFor || defaultDateTime
+          const scheduledForValue =
+            rawScheduled.length > 10 ? isoToDateTimeLocal(rawScheduled) : `${rawScheduled.slice(0, 10)}T09:00`
+          // Se veio de um agendamento "repetir todo mês", usar o texto do mês atual no e-mail
+          const emailBodyVal =
+            json.fromRepeat && bodyTipo === 'EMPRESA'
+              ? bodyDefault
+              : (d.emailBody && d.emailBody.trim())
+                ? d.emailBody
+                : bodyTipo === 'EMPRESA'
+                  ? bodyDefault
+                  : ''
+          const descricaoVal = (d.empresaDescricaoNfse && d.empresaDescricaoNfse.trim()) ? d.empresaDescricaoNfse : (bodyTipo === 'EMPRESA' ? DEFAULT_DESCRICAO_NF_EMPRESA : '')
+          setAgendarNfForm({
+            email: d.email || '',
+            scheduledFor: scheduledForValue,
+            faturamentoTipo: bodyTipo,
+            empresaNome: d.empresaRazaoSocial ?? '',
+            empresaCnpj: d.empresaCnpj ?? '',
+            empresaEnderecoFiscal: d.empresaEnderecoFiscal ?? '',
+            empresaDescricaoNfse: descricaoVal,
+            emailBody: emailBodyVal,
+            repeatMonthly: !!d.repeatMonthly,
+          })
+          setAgendarNfFromRepeat(!!json.fromRepeat)
+        }
+      })
+      .finally(() => setAgendarNfLoading(false))
+  }, [agendarNfModal, selectedAno, selectedMes])
+
+  const openAgendarNfModal = (a: AlunoFinanceiro) => setAgendarNfModal(a)
+
+  const handleAgendarNfSubmit = async () => {
+    if (!agendarNfModal) return
+    const {
+      email,
+      scheduledFor,
+      faturamentoTipo,
+      empresaNome,
+      empresaCnpj,
+      empresaEnderecoFiscal,
+      empresaDescricaoNfse,
+      emailBody,
+      repeatMonthly,
+    } = agendarNfForm
+    if (!email.trim()) {
+      setToast({ message: 'Informe o e-mail para envio da NF', type: 'error' })
+      return
+    }
+    if (faturamentoTipo === 'EMPRESA') {
+      if (!empresaNome.trim()) {
+        setToast({ message: 'Informe a Razão Social da empresa', type: 'error' })
+        return
+      }
+      const cnpjDigits = empresaCnpj.replace(/\D/g, '')
+      if (cnpjDigits.length !== 14) {
+        setToast({ message: 'Informe o CNPJ da empresa (14 dígitos)', type: 'error' })
+        return
+      }
+    }
+    setAgendarNfSaving(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/nfse-agendamento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          enrollmentId: agendarNfModal.id,
+          year: selectedAno,
+          month: selectedMes,
+          email: email.trim(),
+          faturamentoTipo,
+          empresaRazaoSocial: faturamentoTipo === 'EMPRESA' ? empresaNome.trim() || undefined : undefined,
+          empresaCnpj: faturamentoTipo === 'EMPRESA' ? empresaCnpj.replace(/\D/g, '').slice(0, 14) || undefined : undefined,
+          empresaEnderecoFiscal: faturamentoTipo === 'EMPRESA' ? empresaEnderecoFiscal.trim() || undefined : undefined,
+          empresaDescricaoNfse: faturamentoTipo === 'EMPRESA' ? empresaDescricaoNfse.trim() || undefined : undefined,
+          emailBody: faturamentoTipo === 'EMPRESA' ? emailBody.trim() || undefined : undefined,
+          scheduledFor: new Date(scheduledFor).toISOString(),
+          repeatMonthly,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao salvar agendamento', type: 'error' })
+        return
+      }
+      setToast({ message: 'Agendamento salvo', type: 'success' })
+      setAgendarNfModal(null)
+      setAgendarNfFromRepeat(false)
+    } catch {
+      setToast({ message: 'Erro ao salvar agendamento', type: 'error' })
+    } finally {
+      setAgendarNfSaving(false)
+    }
+  }
+
   const hoje = useMemo(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
@@ -464,11 +656,10 @@ export default function FinanceiroAlunosPage() {
     return ano < anoInativo || (ano === anoInativo && mes < mesInativo)
   }, [])
 
-  /** Verdadeiro se o vencimento (dataProximoPagamento) do aluno cai no ano/mês informado. */
-  const isVencimentoNoMes = useCallback((a: AlunoFinanceiro, ano: number, mes: number) => {
-    if (!a.dataProximoPagamento) return false
-    const d = new Date(a.dataProximoPagamento)
-    return d.getFullYear() === ano && d.getMonth() + 1 === mes
+  /** Verdadeiro se o aluno tem dia de vencimento definido (cada mês tem o mesmo dia de vencimento). */
+  const isVencimentoNoMes = useCallback((a: AlunoFinanceiro, _ano: number, _mes: number) => {
+    const dia = a.diaPagamento
+    return dia != null && dia >= 1 && dia <= 31
   }, [])
 
   const alunosNoMes = useMemo(
@@ -487,8 +678,9 @@ export default function FinanceiroAlunosPage() {
     const aReceberList: AlunoFinanceiro[] = []
     const nfEmAbertoList: AlunoFinanceiro[] = []
     const nfEmitidaList: AlunoFinanceiro[] = []
+    const today = new Date()
     alunosNoMes.forEach((a) => {
-      const status = getEffectiveStatus(a)
+      const status = getEffectiveStatus(a, today, selectedAno, selectedMes)
       const valor = a.valorMensal ?? 0
       const vencimentoNoMes = isVencimentoNoMes(a, selectedAno, selectedMes)
       if (status === 'ATRASADO') {
@@ -548,6 +740,7 @@ export default function FinanceiroAlunosPage() {
   const cobrancaPopoverRef = useRef<HTMLDivElement>(null)
 
   const FINANCE_COLUMNS = [
+    { key: 'diaVenc', label: 'Dia venc.', fixed: true },
     { key: 'aluno', label: 'Aluno', fixed: true },
     { key: 'cpf', label: 'CPF', fixed: false },
     { key: 'endereco', label: 'Endereço', fixed: false },
@@ -561,15 +754,15 @@ export default function FinanceiroAlunosPage() {
     { key: 'metodoPagamento', label: 'Método pag.', fixed: false },
     { key: 'banco', label: 'Banco', fixed: false },
     { key: 'periodo', label: 'Período', fixed: false },
-    { key: 'ultimoPag', label: 'Último pag.', fixed: false },
-    { key: 'proxPag', label: 'Próx. pag.', fixed: false },
-    { key: 'ultimaCobranca', label: 'Data da última cobrança', fixed: false },
-    { key: 'nfEmitida', label: 'NF emitida?', fixed: false },
+    { key: 'ultimoPag', label: 'Data Pag.', fixed: false },
+    { key: 'ultimaCobranca', label: 'Ultima cobran.', fixed: false },
+    { key: 'nfEmitida', label: 'Status NF', fixed: false },
+    { key: 'acoesNf', label: 'Ações NF', fixed: false },
     { key: 'acoes', label: 'Ações', fixed: true },
   ] as const
-  /** Por padrão ocultamos: endereço, CPF, tipo aula, nome grupo (só aparecem se marcar em Colunas). */
+  /** Por padrão ocultamos: endereço, CPF, tipo aula, nome grupo, responsável, quem paga, valor hora, banco (só aparecem se marcar em Colunas). */
   const defaultVisibleKeys = FINANCE_COLUMNS.filter(
-    (c) => !['endereco', 'cpf', 'tipoAula', 'nomeGrupo'].includes(c.key)
+    (c) => !['endereco', 'cpf', 'tipoAula', 'nomeGrupo', 'responsavel', 'quemPaga', 'valorHora', 'banco'].includes(c.key)
   ).map((c) => c.key)
   const [visibleFinanceKeys, setVisibleFinanceKeys] = useState<string[]>(() => defaultVisibleKeys)
   const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
@@ -640,13 +833,24 @@ export default function FinanceiroAlunosPage() {
   const [gerarCobrancasModalOpen, setGerarCobrancasModalOpen] = useState(false)
   const [gerarCobrancasLoading, setGerarCobrancasLoading] = useState(false)
   const [gerarCobrancaIndividualLoading, setGerarCobrancaIndividualLoading] = useState<string | null>(null)
-  const [sortKey, setSortKey] = useState<'default' | 'nome' | 'proxPag'>('default')
+  const [emitirNfLoading, setEmitirNfLoading] = useState<string | null>(null)
+  const [emitirNfTodosLoading, setEmitirNfTodosLoading] = useState(false)
+  const [boletosLembretesLoading, setBoletosLembretesLoading] = useState(false)
+  const [processarAgendamentosLoading, setProcessarAgendamentosLoading] = useState(false)
+  const [cancelarNfLoading, setCancelarNfLoading] = useState<string | null>(null)
+  const [cancelarNfModal, setCancelarNfModal] = useState<AlunoFinanceiro | null>(null)
+  const [cancelarNfJustificativa, setCancelarNfJustificativa] = useState('')
+  const [cancelarAgendamentoLoading, setCancelarAgendamentoLoading] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<'default' | 'nome' | 'diaVenc'>('default')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
+  // Usar sempre "hoje" para decidir Atrasado: só mostra Atrasado se o vencimento já passou de fato.
+  // Assim, em abril (mês futuro) ninguém aparece como Atrasado antes do mês começar.
+  const refDateForStatus = new Date()
+
   const filteredAlunos = useMemo(() => {
-    // Só mostrar alunos cujo vencimento (próx. pag.) cai no mês OU que estão PAGO neste mês (próximo pag. pode ser em outro mês)
     let list = alunosNoMes.filter(
-      (a) => isVencimentoNoMes(a, selectedAno, selectedMes) || getEffectiveStatus(a) === 'PAGO'
+      (a) => isVencimentoNoMes(a, selectedAno, selectedMes) || getEffectiveStatus(a, refDateForStatus, selectedAno, selectedMes) === 'PAGO'
     )
     const busca = filterBusca.trim().toLowerCase()
     if (busca) {
@@ -659,15 +863,15 @@ export default function FinanceiroAlunosPage() {
       )
     }
     if (filterStatus) {
-      list = list.filter((a) => getEffectiveStatus(a) === filterStatus)
+      list = list.filter((a) => getEffectiveStatus(a, refDateForStatus, selectedAno, selectedMes) === filterStatus)
     }
     if (filterPeriodo) {
       list = list.filter((a) => (a.periodoPagamento ?? '') === filterPeriodo)
     }
     if (filterInfoPagamento === 'comUltimoPag') {
-      list = list.filter((a) => !!a.dataUltimoPagamento)
+      list = list.filter((a) => !!a.dataPagamento)
     } else if (filterInfoPagamento === 'semUltimoPag') {
-      list = list.filter((a) => !a.dataUltimoPagamento)
+      list = list.filter((a) => !a.dataPagamento)
     } else if (filterInfoPagamento === 'semValorMensal') {
       list = list.filter((a) => a.valorMensal == null)
     }
@@ -688,29 +892,24 @@ export default function FinanceiroAlunosPage() {
       const statusOrder = (s: 'PAGO' | 'ATRASADO' | 'PENDING') =>
         s === 'ATRASADO' ? 0 : s === 'PENDING' ? 1 : 2
       if (sortKey === 'default') {
-        // Padrão: atrasados primeiro, depois pendentes, depois pagos.
-        // Dentro de cada grupo, ordenar por data de vencimento (dataProximoPagamento), depois por nome.
-        const sa = getEffectiveStatus(a)
-        const sb = getEffectiveStatus(b)
+        const sa = getEffectiveStatus(a, refDateForStatus, selectedAno, selectedMes)
+        const sb = getEffectiveStatus(b, refDateForStatus, selectedAno, selectedMes)
         const pa = statusOrder(sa)
         const pb = statusOrder(sb)
         if (pa !== pb) return pa - pb
-        const da = a.dataProximoPagamento ? new Date(a.dataProximoPagamento).getTime() : Number.POSITIVE_INFINITY
-        const db = b.dataProximoPagamento ? new Date(b.dataProximoPagamento).getTime() : Number.POSITIVE_INFINITY
+        const da = a.diaPagamento ?? 32
+        const db = b.diaPagamento ?? 32
         if (da !== db) return da - db
         return (a.nome ?? '').localeCompare(b.nome ?? '')
       }
-      // Ordenações customizadas escolhidas pelo usuário
       let va: string | number = ''
       let vb: string | number = ''
       if (sortKey === 'nome') {
         va = a.nome ?? ''
         vb = b.nome ?? ''
-      } else if (sortKey === 'proxPag') {
-        const da = a.dataProximoPagamento ? new Date(a.dataProximoPagamento).getTime() : 0
-        const db = b.dataProximoPagamento ? new Date(b.dataProximoPagamento).getTime() : 0
-        va = da
-        vb = db
+      } else if (sortKey === 'diaVenc') {
+        va = a.diaPagamento ?? 0
+        vb = b.diaPagamento ?? 0
       }
       const cmp =
         typeof va === 'number' && typeof vb === 'number'
@@ -719,7 +918,7 @@ export default function FinanceiroAlunosPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
+  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes, refDateForStatus, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
@@ -754,7 +953,7 @@ export default function FinanceiroAlunosPage() {
     })
   }
 
-  const handleSort = (key: 'default' | 'nome' | 'proxPag') => {
+  const handleSort = (key: 'default' | 'nome' | 'diaVenc') => {
     setSortKey((prev) => {
       if (prev === key && key !== 'default') {
         setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -851,7 +1050,7 @@ export default function FinanceiroAlunosPage() {
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
-            paymentStatus: 'PENDING',
+            paymentStatus: 'REMOVIDO',
             year: selectedAno,
             month: selectedMes,
           }),
@@ -890,7 +1089,7 @@ export default function FinanceiroAlunosPage() {
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({
-              paymentStatus: 'PENDING',
+              paymentStatus: 'REMOVIDO',
               year: selectedAno,
               month: selectedMes,
             }),
@@ -1013,7 +1212,7 @@ export default function FinanceiroAlunosPage() {
       else if (field === 'banco') body.banco = value
       else if (field === 'periodoPagamento') body.periodoPagamento = value
       else if (field === 'dataUltimoPagamento') body.dataUltimoPagamento = value || null
-      else if (field === 'dataProximoPagamento') body.dataProximoPagamento = value || null
+      else if (field === 'diaPagamento') body.dueDay = value != null && value !== '' ? Math.min(31, Math.max(1, Number(value))) : null
       else if (field === 'dataUltimaCobranca') body.dataUltimaCobranca = value || null
       // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
       body.year = selectedAno
@@ -1074,13 +1273,9 @@ export default function FinanceiroAlunosPage() {
         setConfirmUnpay(a)
         return
       }
-      const confirmed = window.confirm(
-        'Ao marcar como PAGO, o boleto em aberto na Cora (se existir) será cancelado automaticamente. Confirmar?'
-      )
-      if (!confirmed) return
-      void applyPagoStatus(a, true)
+      setConfirmMarkPaid(a)
     },
-    [applyPagoStatus]
+    []
   )
 
   // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
@@ -1089,7 +1284,9 @@ export default function FinanceiroAlunosPage() {
     // notaFiscalEmitida não é editável (calculado automaticamente)
     if (field === 'notaFiscalEmitida') return
     setEditingCell({ id: a.id, field })
-    const v = (a as unknown as Record<string, unknown>)[field === 'paymentStatus' ? 'status' : field]
+    // Data Pag. exibe data do mês (dataPagamento); ao editar usamos ela como valor inicial
+    const rawField = field === 'paymentStatus' ? 'status' : field
+    const v = rawField === 'dataUltimoPagamento' ? (a.dataPagamento || a.dataUltimoPagamento) : (a as unknown as Record<string, unknown>)[rawField]
     setCellValue((v ?? '') as string | number)
   }
 
@@ -1129,8 +1326,8 @@ export default function FinanceiroAlunosPage() {
       periodoPagamento: a.periodoPagamento ?? '',
       valorMensal: a.valorMensal ?? '',
       valorHora: '', // somente leitura (calculado na API)
-      dataUltimoPagamento: a.dataUltimoPagamento ? a.dataUltimoPagamento.slice(0, 10) : '',
-      dataProximoPagamento: a.dataProximoPagamento ? a.dataProximoPagamento.slice(0, 10) : '',
+      dataUltimoPagamento: (a.dataPagamento || a.dataUltimoPagamento) ? (a.dataPagamento || a.dataUltimoPagamento)!.slice(0, 10) : '',
+      diaPagamento: a.diaPagamento != null ? String(a.diaPagamento) : '',
       faturamentoTipo: (a.faturamentoTipo === 'EMPRESA' ? 'EMPRESA' : 'ALUNO') as 'ALUNO' | 'EMPRESA',
       faturamentoRazaoSocial: a.faturamentoRazaoSocial ?? '',
       faturamentoCnpj: a.faturamentoCnpj ? formatCNPJ(a.faturamentoCnpj) : '',
@@ -1157,7 +1354,7 @@ export default function FinanceiroAlunosPage() {
           periodoPagamento: form.periodoPagamento || null,
           valorMensal: form.valorMensal !== '' ? Number(form.valorMensal) : null,
           dataUltimoPagamento: form.dataUltimoPagamento || null,
-          dataProximoPagamento: form.dataProximoPagamento || null,
+          dueDay: form.diaPagamento ? Math.min(31, Math.max(1, parseInt(form.diaPagamento, 10))) : null,
           faturamentoTipo: form.faturamentoTipo,
           faturamentoRazaoSocial: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoRazaoSocial.trim() || null : null,
           faturamentoCnpj: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoCnpj.replace(/\D/g, '') || null : null,
@@ -1230,8 +1427,8 @@ export default function FinanceiroAlunosPage() {
   }, [cobrancaModal, cobrancaSubject, cobrancaText])
 
   const atrasadosComEmail = useMemo(
-    () => alunos.filter((a) => getEffectiveStatus(a) === 'ATRASADO' && a.email?.trim()),
-    [alunos]
+    () => alunos.filter((a) => getEffectiveStatus(a, new Date(), selectedAno, selectedMes) === 'ATRASADO' && a.email?.trim()),
+    [alunos, selectedAno, selectedMes]
   )
 
   const openCobrancaTodosModal = useCallback(() => {
@@ -1345,6 +1542,218 @@ export default function FinanceiroAlunosPage() {
     },
     [selectedAno, selectedMes, fetchAlunos, fetchCobrancas]
   )
+
+  const handleEmitirNf = useCallback(
+    async (a: AlunoFinanceiro) => {
+      setEmitirNfLoading(a.id)
+      try {
+        const res = await fetch('/api/admin/nfse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ enrollmentId: a.id, year: selectedAno, month: selectedMes }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || json.error || 'Erro ao emitir NF', type: 'error' })
+          return
+        }
+        setToast({ message: 'Nota fiscal emitida com sucesso', type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+      } catch {
+        setToast({ message: 'Erro ao emitir NF', type: 'error' })
+      } finally {
+        setEmitirNfLoading(null)
+      }
+    },
+    [selectedAno, selectedMes, fetchAlunos]
+  )
+
+  const handleCancelarAgendamento = useCallback(
+    async (a: AlunoFinanceiro) => {
+      if (!a.nfAgendada) return
+      setCancelarAgendamentoLoading(a.id)
+      try {
+        const url = `/api/admin/financeiro/nfse-agendamento?enrollmentId=${encodeURIComponent(a.id)}&year=${selectedAno}&month=${selectedMes}`
+        const res = await fetch(url, { method: 'DELETE', credentials: 'include' })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao cancelar agendamento', type: 'error' })
+          return
+        }
+        setToast({ message: 'Agendamento cancelado. O e-mail não será enviado na data combinada.', type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+      } catch {
+        setToast({ message: 'Erro ao cancelar agendamento', type: 'error' })
+      } finally {
+        setCancelarAgendamentoLoading(null)
+      }
+    },
+    [selectedAno, selectedMes, fetchAlunos]
+  )
+
+  const openCancelarNfModal = useCallback((a: AlunoFinanceiro) => {
+    if (a.nfseFocusRef && a.nfseStatus === 'autorizado') {
+      setCancelarNfModal(a)
+      setCancelarNfJustificativa('')
+    }
+  }, [])
+
+  const handleConfirmCancelarNf = useCallback(async () => {
+    const a = cancelarNfModal
+    const ref = a?.nfseFocusRef
+    if (!ref || !a) return
+    const justificativa = cancelarNfJustificativa.trim()
+    if (justificativa.length < 15) {
+      setToast({ message: 'Justificativa deve ter no mínimo 15 caracteres (exigência da prefeitura).', type: 'error' })
+      return
+    }
+    setCancelarNfLoading(a.id)
+    try {
+      const res = await fetch(`/api/admin/nfse/${encodeURIComponent(ref)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ justificativa }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || json.error || 'Erro ao cancelar NF', type: 'error' })
+        return
+      }
+      setToast({ message: 'Nota fiscal cancelada', type: 'success' })
+      setCancelarNfModal(null)
+      setCancelarNfJustificativa('')
+      fetchAlunos(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao cancelar NF', type: 'error' })
+    } finally {
+      setCancelarNfLoading(null)
+    }
+  }, [cancelarNfModal, cancelarNfJustificativa, fetchAlunos, selectedAno, selectedMes])
+
+  const handleCancelarNf = useCallback((a: AlunoFinanceiro) => openCancelarNfModal(a), [openCancelarNfModal])
+
+  const handleEmitirNfTodos = useCallback(async () => {
+    setEmitirNfTodosLoading(true)
+    try {
+      const res = await fetch('/api/admin/nfse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || json.error || 'Erro ao emitir notas fiscais', type: 'error' })
+        return
+      }
+      const emitidas = json.emitidas ?? 0
+      const erros = json.erros ?? 0
+      if (emitidas > 0 || erros > 0) {
+        setToast({
+          message: emitidas > 0
+            ? `${emitidas} nota(s) emitida(s).${erros > 0 ? ` ${erros} erro(s).` : ''}`
+            : `${erros} erro(s) ao emitir.`,
+          type: erros > 0 && emitidas === 0 ? 'error' : 'success',
+        })
+      } else {
+        setToast({ message: 'Nenhum aluno pago sem NF no mês selecionado.', type: 'success' })
+      }
+      fetchAlunos(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao emitir notas fiscais', type: 'error' })
+    } finally {
+      setEmitirNfTodosLoading(false)
+    }
+  }, [selectedAno, selectedMes, fetchAlunos])
+
+  const countPagosSemNf = useMemo(() => {
+    return alunos.filter(
+      (a) => a.status === 'PAGO' && !a.notaFiscalEmitida && a.nfseStatus !== 'processando_autorizacao'
+    ).length
+  }, [alunos])
+
+  const handleBoletosELembretes = useCallback(async () => {
+    setBoletosLembretesLoading(true)
+    try {
+      const res = await fetch('/api/admin/financeiro/boletos-e-lembretes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao enviar boletos e lembretes', type: 'error' })
+        return
+      }
+      const boletos = json.boletosGerados ?? 0
+      const emails = json.emailsEnviados ?? 0
+      const errosB = json.boletosErros ?? 0
+      const errosE = json.emailsErros ?? 0
+      const boletoErrors: { name: string; error: string }[] = Array.isArray(json.errors) ? json.errors : []
+      const emailErrors: { name: string; error: string }[] = Array.isArray(json.emailErrors) ? json.emailErrors : []
+
+      if (boletoErrors.length > 0 || emailErrors.length > 0) {
+        // Logar detalhes completos no console para depuração
+        console.error('[Financeiro/Alunos] Erros ao gerar boletos/lembretes:', {
+          boletoErrors,
+          emailErrors,
+        })
+      }
+
+      const parts: string[] = []
+      if (boletos > 0) parts.push(`${boletos} boleto(s) gerado(s)`)
+      if (emails > 0) parts.push(`${emails} e-mail(s) de lembrete enviado(s)`)
+      if (errosB > 0) parts.push(`${errosB} erro(s) ao gerar boleto`)
+      if (errosE > 0) parts.push(`${errosE} erro(s) ao enviar e-mail`)
+
+      // Adicionar um detalhe do primeiro erro para ajudar a identificar o problema rapidamente
+      const firstError = boletoErrors[0] ?? emailErrors[0]
+      if (firstError) {
+        parts.push(`Exemplo de erro: ${firstError.name} - ${firstError.error}`)
+      }
+
+      setToast({
+        message: parts.length ? parts.join('. ') : 'Concluído (alunos com método cartão foram excluídos).',
+        type: errosB > 0 || errosE > 0 ? 'error' : 'success',
+      })
+      fetchAlunos(selectedAno, selectedMes)
+      fetchCobrancas(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao enviar boletos e lembretes', type: 'error' })
+    } finally {
+      setBoletosLembretesLoading(false)
+    }
+  }, [selectedAno, selectedMes, fetchAlunos, fetchCobrancas])
+
+  const handleProcessarAgendamentosNf = useCallback(async () => {
+    setProcessarAgendamentosLoading(true)
+    try {
+      const res = await fetch('/api/cron/nfse-scheduled', { credentials: 'include' })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao processar agendamentos', type: 'error' })
+        return
+      }
+      const n = json.processed ?? 0
+      const err = json.errors ?? 0
+      if (n > 0) {
+        setToast({ message: `${n} agendamento(s) processado(s): NF emitida e e-mail enviado.`, type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+        fetchCobrancas(selectedAno, selectedMes)
+      } else if (err > 0 && json.errorDetails?.length) {
+        setToast({ message: `Nenhum processado. Erro: ${json.errorDetails[0].error}`, type: 'error' })
+      } else {
+        setToast({ message: 'Nenhum agendamento com data/hora vencida no momento.', type: 'info' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao processar agendamentos de NF', type: 'error' })
+    } finally {
+      setProcessarAgendamentosLoading(false)
+    }
+  }, [selectedAno, selectedMes, fetchAlunos, fetchCobrancas])
 
   return (
     <AdminLayout>
@@ -1590,16 +1999,6 @@ export default function FinanceiroAlunosPage() {
                         className="input w-full"
                       />
                     </div>
-                    <div className="flex flex-wrap items-center gap-6" />
-                    <Button
-                      variant="primary"
-                      onClick={openCobrancaTodosModal}
-                      disabled={atrasadosComEmail.length === 0}
-                      className="shrink-0"
-                    >
-                      <Send className="w-4 h-4 mr-2" />
-                      Enviar cobrança (atrasados)
-                    </Button>
                   </div>
                   <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-gray-100">
                     <div>
@@ -1629,7 +2028,7 @@ export default function FinanceiroAlunosPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">NF emitida?</label>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status NF</label>
                       <select
                         value={filterNfEmitida}
                         onChange={(e) => setFilterNfEmitida(e.target.value)}
@@ -1687,7 +2086,7 @@ export default function FinanceiroAlunosPage() {
               {showDicas && (
                 <div className="px-4 pb-4 pt-0 text-xs text-gray-600 border-t border-gray-200">
                   <p className="pt-3">
-                    As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única que acompanha o aluno é <strong>Último pag.</strong> Os números e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos.
+                    As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única que acompanha o aluno é <strong>Data Pag.</strong> Os números e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos.
                   </p>
                   <p className="mt-2">
                     <strong>Edição rápida:</strong> clique duas vezes em uma célula para editar (Quem paga, Valor mensal, Status, Método pag., Banco, Período, datas, NF).
@@ -1733,47 +2132,63 @@ export default function FinanceiroAlunosPage() {
                     </button>
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFullTableView((v) => !v)}
-                  className="ml-auto"
-                >
-                  {fullTableView ? (
-                    <>
-                      <Minimize2 className="w-4 h-4 mr-2" />
-                      Sair da janela cheia
-                    </>
-                  ) : (
-                    <>
-                      <Maximize2 className="w-4 h-4 mr-2" />
-                      Visualizar em janela cheia
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRefreshCobrancas}
-                  disabled={refreshCobrancasLoading}
-                  title="Atualizar status das cobranças Cora"
-                >
-                  {refreshCobrancasLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                  Atualizar Status
-                </Button>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500">Itens por página</label>
-                  <select
-                    value={itemsPerPage}
-                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                    className="input min-w-[72px] text-sm py-1.5"
+                <div className="h-6 w-px bg-gray-200 shrink-0" aria-hidden />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleBoletosELembretes}
+                    disabled={boletosLembretesLoading}
+                    title="Gerar boleto/PIX na Cora para todos os alunos do mês (exceto método cartão) e enviar e-mail de lembrete. Quem já pagou deve desconsiderar o e-mail."
                   >
-                    <option value={5}>5</option>
-                    <option value={30}>30</option>
-                    <option value={500}>500</option>
-                  </select>
+                    {boletosLembretesLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                    Enviar boletos e emails de lembrete
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleEmitirNfTodos}
+                    disabled={emitirNfTodosLoading || countPagosSemNf === 0}
+                    title="Emitir notas fiscais para todos os alunos pagos neste mês que ainda não têm NF"
+                  >
+                    {emitirNfTodosLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FilePlus className="w-4 h-4 mr-2" />}
+                    Emitir NF para todos pagos sem NF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleProcessarAgendamentosNf}
+                    disabled={processarAgendamentosLoading}
+                    title="Executar agora os agendamentos de NF cuja data/hora já passou (emitir NF e enviar e-mail)"
+                  >
+                    {processarAgendamentosLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
+                    Processar agendamentos de NF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshCobrancas}
+                    disabled={refreshCobrancasLoading}
+                    title="Atualizar status das cobranças Cora"
+                  >
+                    {refreshCobrancasLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                    Atualizar Status
+                  </Button>
                 </div>
-                <div className="relative">
+                <div className="flex flex-wrap items-center gap-2 ml-auto">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">Itens por página</label>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                      className="input min-w-[72px] text-sm py-1.5"
+                    >
+                      <option value={5}>5</option>
+                      <option value={30}>30</option>
+                      <option value={500}>500</option>
+                    </select>
+                  </div>
+                  <div className="relative">
                   <button
                     ref={columnsTriggerRef}
                     type="button"
@@ -1824,10 +2239,11 @@ export default function FinanceiroAlunosPage() {
                         if (col.key === 'metodoPagamento') return (a.metodoPagamento ?? '').replace(/;/g, ',')
                         if (col.key === 'banco') return (a.banco ?? '').replace(/;/g, ',')
                         if (col.key === 'periodo') return PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL'] ?? 'Men.'
-                        if (col.key === 'ultimoPag') return formatDate(a.dataUltimoPagamento)
-                        if (col.key === 'proxPag') return formatDate(a.dataProximoPagamento)
+                        if (col.key === 'ultimoPag') return formatDate(a.dataPagamento)
+                        if (col.key === 'diaVenc') return a.diaPagamento != null ? String(a.diaPagamento) : ''
                         if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
-                        if (col.key === 'nfEmitida') return a.notaFiscalEmitida === true ? 'Emitida' : 'Em aberto'
+                        if (col.key === 'nfEmitida') return a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfAgendada ? 'Agendada' : 'Em aberto'
+                        if (col.key === 'acoesNf') return ''
                         if (col.key === 'acoes') return ''
                         return ''
                       })
@@ -1849,11 +2265,30 @@ export default function FinanceiroAlunosPage() {
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar Excel
               </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFullTableView((v) => !v)}
+                    title={fullTableView ? 'Sair da visualização em tela cheia' : 'Visualizar tabela em tela cheia'}
+                  >
+                    {fullTableView ? (
+                      <>
+                        <Minimize2 className="w-4 h-4 mr-2" />
+                        Sair da janela cheia
+                      </>
+                    ) : (
+                      <>
+                        <Maximize2 className="w-4 h-4 mr-2" />
+                        Visualizar em janela cheia
+                      </>
+                    )}
+                  </Button>
                 {filteredAlunos.length > itemsPerPage && (
                   <span className="text-sm text-gray-500 ml-auto">
                     Mostrando {displayedAlunos.length} de {filteredAlunos.length} alunos
                   </span>
                 )}
+                </div>
               </div>
               <div className={`overflow-x-auto px-5 pb-5 ${fullTableView ? 'flex-1 overflow-y-auto' : ''}`}>
             <table className="w-full min-w-[1400px]">
@@ -1872,18 +2307,18 @@ export default function FinanceiroAlunosPage() {
                             ? 'px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase'
                             : 'px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase'
                     const isSortableNome = col.key === 'aluno'
-                    const isSortableProxPag = col.key === 'proxPag'
+                    const isSortableDiaVenc = col.key === 'diaVenc'
                     const showSort =
                       (isSortableNome && sortKey === 'nome') ||
-                      (isSortableProxPag && sortKey === 'proxPag')
+                      (isSortableDiaVenc && sortKey === 'diaVenc')
                     const arrow =
                       !showSort ? '' : sortDir === 'asc' ? '↑' : '↓'
                     return (
                       <th key={col.key} className={baseClass}>
-                        {isSortableNome || isSortableProxPag ? (
+                        {isSortableNome || isSortableDiaVenc ? (
                           <button
                             type="button"
-                            onClick={() => handleSort(isSortableNome ? 'nome' : 'proxPag')}
+                            onClick={() => handleSort(isSortableNome ? 'nome' : 'diaVenc')}
                             className="inline-flex items-center gap-1"
                           >
                             <span>{col.label}</span>
@@ -1899,20 +2334,49 @@ export default function FinanceiroAlunosPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {displayedAlunos.map((a) => {
-                  const effective = getEffectiveStatus(a)
+                  const effective = getEffectiveStatus(a, refDateForStatus, selectedAno, selectedMes)
                   const isAtrasado = effective === 'ATRASADO'
+                  const hasCpfProblem =
+                    !!validacaoData?.alunos.some(
+                      (aluno) =>
+                        aluno.enrollmentId === a.id &&
+                        aluno.problemas.some((p) => p.includes('CPF'))
+                    )
+                  const isEmpresa = a.faturamentoTipo === 'EMPRESA'
+                  const cobranca = cobrancasMap.get(a.id) ?? null
+                  const display = isAtrasado
+                    ? { type: 'atrasado' as const, label: 'Atrasado', variant: 'danger' as const }
+                    : getCobrancaStatusDisplay(a.status, cobranca)
+                  const isPagoEmpresa =
+                    isEmpresa &&
+                    (display.type === 'pago' ||
+                      display.type === 'pago_pix' ||
+                      display.type === 'pago_boleto')
                   const isEditing = (id: string, field: string) => editingCell?.id === id && editingCell?.field === field
+
+                  const baseTextClass = isAtrasado
+                    ? 'bg-red-50 text-red-900'
+                    : hasCpfProblem || isEmpresa
+                      ? 'bg-violet-50 text-violet-900'
+                      : 'text-gray-900'
+
+                  const rowClass = isAtrasado
+                    ? 'bg-red-50 hover:bg-red-100'
+                    : hasCpfProblem || isEmpresa
+                      ? 'bg-violet-50 hover:bg-violet-100'
+                      : 'hover:bg-gray-50'
+
                   const EdCell = (field: string, children: React.ReactNode, inputNode?: React.ReactNode) => (
                     <td
-                      className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}
+                      className={`px-3 py-1 text-sm ${baseTextClass}`}
                       onDoubleClick={() => !editingCell && startEditCell(a, field)}
                     >
                       {isEditing(a.id, field) && inputNode ? inputNode : children}
                     </td>
                   )
-                  const baseTd = `px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`
+                  const baseTd = `px-3 py-1 text-sm ${baseTextClass}`
                   return (
-                    <tr key={a.id} className={isAtrasado ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}>
+                    <tr key={a.id} className={rowClass}>
                       <td className={baseTd}>
                         <input
                           type="checkbox"
@@ -1921,9 +2385,34 @@ export default function FinanceiroAlunosPage() {
                           className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
                         />
                       </td>
-                      {displayColumns.some((c) => c.key === 'aluno') && <td className={`px-3 py-2 text-sm ${baseTd}`}><CellWithCopy value={a.nome ?? ''} onCopy={handleCopy} /></td>}
-                      {displayColumns.some((c) => c.key === 'cpf') && <td className={`px-3 py-2 text-sm max-w-[140px] ${baseTd}`}><CellWithCopy value={a.cpf ?? ''} onCopy={handleCopy} truncate /></td>}
-                      {displayColumns.some((c) => c.key === 'endereco') && <td className={`px-3 py-2 text-sm max-w-[220px] ${baseTd}`}><CellWithCopy value={a.endereco ?? ''} onCopy={handleCopy} truncate /></td>}
+                      {displayColumns.some((c) => c.key === 'diaVenc') && EdCell('diaPagamento', a.diaPagamento != null ? String(a.diaPagamento) : '—', (
+                        <input
+                          type="number"
+                          min={1}
+                          max={31}
+                          className="input w-full py-1 text-sm"
+                          value={cellValue === '—' ? '' : String(cellValue)}
+                          onChange={(e) => setCellValue(e.target.value)}
+                          onBlur={saveCell}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditingCell(null) }}
+                          autoFocus
+                        />
+                      ))}
+                      {displayColumns.some((c) => c.key === 'aluno') && (
+                        <td className={`px-3 py-2 text-sm ${baseTd}`}>
+                          <CellWithCopy value={a.nome ?? ''} onCopy={handleCopy} />
+                        </td>
+                      )}
+                      {displayColumns.some((c) => c.key === 'cpf') && (
+                        <td className={`px-3 py-2 text-sm max-w-[140px] ${baseTd}`}>
+                          <CellWithCopy value={a.cpf ?? ''} onCopy={handleCopy} truncate />
+                        </td>
+                      )}
+                      {displayColumns.some((c) => c.key === 'endereco') && (
+                        <td className={`px-3 py-2 text-sm max-w-[220px] ${baseTd}`}>
+                          <CellWithCopy value={a.endereco ?? ''} onCopy={handleCopy} truncate />
+                        </td>
+                      )}
                       {displayColumns.some((c) => c.key === 'tipoAula') && <td className="px-3 py-2 text-sm text-gray-600">{a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? '—'}</td>}
                       {displayColumns.some((c) => c.key === 'nomeGrupo') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeGrupo ?? '—'}</td>}
                       {displayColumns.some((c) => c.key === 'responsavel') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeResponsavel ?? '—'}</td>}
@@ -1961,17 +2450,13 @@ export default function FinanceiroAlunosPage() {
                         </td>
                       )}
                       {displayColumns.some((c) => c.key === 'status') && (
-                      <td className={`px-3 py-1 text-sm ${isAtrasado ? 'bg-red-50 text-red-900' : 'text-gray-900'}`}>
+                      <td className={`px-3 py-1 text-sm ${baseTextClass}`}>
                         <div className="flex flex-wrap items-center gap-2">
                           {(() => {
-                            const cobranca = cobrancasMap.get(a.id) ?? null
-                            // Atrasado é automático quando a data de vencimento passou; senão usa status da API/cobrança
-                            const display = isAtrasado
-                              ? { type: 'atrasado' as const, label: 'Atrasado', variant: 'danger' as const }
-                              : getCobrancaStatusDisplay(a.status, cobranca)
                             const badgeClasses = `inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${BADGE_CLASSES[display.variant]}`
                             const hasCobrancaDetails = cobranca?.coraInvoiceId
                             const isPopoverOpen = cobrancaPopoverOpen === a.id
+                            const label = isPagoEmpresa ? 'Pagamento feito pela empresa' : display.label
                             return (
                               <div ref={hasCobrancaDetails && isPopoverOpen ? cobrancaPopoverRef : undefined} className="relative inline-flex">
                                 <button
@@ -1980,14 +2465,14 @@ export default function FinanceiroAlunosPage() {
                                   className={`${badgeClasses} ${hasCobrancaDetails ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
                                   title={hasCobrancaDetails ? 'Clique para ver detalhes da cobrança' : isAtrasado ? 'Atrasado automaticamente (vencimento passou). Marque Pago para registrar.' : undefined}
                                 >
-                                  {display.label}
+                                  {label}
                                   {hasCobrancaDetails && <CircleChevronDown className="w-3.5 h-3.5 opacity-70" />}
                                 </button>
                                 {hasCobrancaDetails && isPopoverOpen && cobranca && (
                                   <div className="absolute left-0 top-full z-30 mt-1 min-w-[260px] rounded-lg border border-gray-200 bg-white p-4 shadow-lg">
                                     <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Detalhes da cobrança Cora</p>
                                     <div className="space-y-2 text-sm">
-                                      <p><span className="text-gray-500">Status:</span> <span className="font-medium">{display.label}</span></p>
+                                      <p><span className="text-gray-500">Status:</span> <span className="font-medium">{label}</span></p>
                                       <p><span className="text-gray-500">Valor:</span> {formatMoney(cobranca.valorMensalidade ?? 0)}</p>
                                       <p><span className="text-gray-500">Vencimento:</span> {cobranca.dueDate ? formatDate(cobranca.dueDate) : '—'}</p>
                                       {cobranca.paidAt && <p><span className="text-gray-500">Pago em:</span> {formatDate(cobranca.paidAt)}</p>}
@@ -2070,18 +2555,7 @@ export default function FinanceiroAlunosPage() {
                         </span>
                       </td>
                       )}
-                      {displayColumns.some((c) => c.key === 'ultimoPag') && EdCell('dataUltimoPagamento', formatDate(a.dataUltimoPagamento), (
-                        <input
-                          type="date"
-                          className="input w-full py-1 text-sm"
-                          value={String(cellValue).slice(0, 10)}
-                          onChange={(e) => setCellValue(e.target.value)}
-                          onBlur={saveCell}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditingCell(null) }}
-                          autoFocus
-                        />
-                      ))}
-                      {displayColumns.some((c) => c.key === 'proxPag') && EdCell('dataProximoPagamento', formatDate(a.dataProximoPagamento), (
+                      {displayColumns.some((c) => c.key === 'ultimoPag') && EdCell('dataUltimoPagamento', formatDate(a.dataPagamento), (
                         <input
                           type="date"
                           className="input w-full py-1 text-sm"
@@ -2105,16 +2579,91 @@ export default function FinanceiroAlunosPage() {
                       ))}
                       {displayColumns.some((c) => c.key === 'nfEmitida') && (
                       <td className={`px-3 py-2 text-sm text-center ${isAtrasado ? 'bg-red-50' : ''}`}>
-                        {a.notaFiscalEmitida === true ? (
+                        {emitirNfLoading === a.id ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Em processamento
+                          </span>
+                        ) : a.nfseStatus === 'processando_autorizacao' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                            <Clock className="w-3.5 h-3.5" />
+                            Em processamento
+                          </span>
+                        ) : a.nfseStatus === 'erro_autorizacao' ? (
+                          <button
+                            type="button"
+                            onClick={() => setNfErrorModal({ nome: a.nome, message: a.nfseErrorMessage || 'Erro na emissão da nota fiscal.' })}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200 cursor-pointer"
+                            title="Clique para ver o motivo do erro"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            Erro
+                          </button>
+                        ) : a.nfseStatus === 'cancelado' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                            <XCircle className="w-3.5 h-3.5" />
+                            Cancelado
+                          </span>
+                        ) : a.notaFiscalEmitida === true ? (
                           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             Emitida
+                          </span>
+                        ) : a.nfAgendada ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            <Calendar className="w-3.5 h-3.5" />
+                            Agendada
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                             Em aberto
                           </span>
                         )}
+                      </td>
+                      )}
+                      {displayColumns.some((c) => c.key === 'acoesNf') && (
+                      <td className="px-3 py-2 text-sm whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleEmitirNf(a)}
+                            disabled={!!emitirNfLoading || emitirNfLoading === a.id}
+                            className={`p-1.5 rounded ${emitirNfLoading === a.id ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-green-600'}`}
+                            title="Emitir NF"
+                          >
+                            {emitirNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
+                          </button>
+                          {a.nfseFocusRef && a.nfseStatus === 'autorizado' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelarNf(a)}
+                              disabled={!!cancelarNfLoading || cancelarNfLoading === a.id}
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded"
+                              title="Cancelar NF"
+                            >
+                              {cancelarNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                            </button>
+                          )}
+                          {a.nfAgendada && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelarAgendamento(a)}
+                              disabled={!!cancelarAgendamentoLoading || cancelarAgendamentoLoading === a.id}
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded inline-flex"
+                              title="Cancelar agendamento (e-mail não será enviado na data)"
+                            >
+                              {cancelarAgendamentoLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarX className="w-4 h-4" />}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openAgendarNfModal(a)}
+                            className="p-1.5 text-gray-500 hover:text-brand-orange rounded inline-flex"
+                            title="Agendar envio de e-mail da NF"
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                       )}
                       {displayColumns.some((c) => c.key === 'acoes') && (
@@ -2193,6 +2742,49 @@ export default function FinanceiroAlunosPage() {
             </section>
           </>
         )}
+
+        {/* Modal: confirmar marcar como pago (gera NF e envia e-mail ao aluno) */}
+        <Modal
+          isOpen={!!confirmMarkPaid}
+          onClose={() => !saving && setConfirmMarkPaid(null)}
+          title="Confirmar pagamento"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmMarkPaid(null)} disabled={!!saving}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (confirmMarkPaid) {
+                    await applyPagoStatus(confirmMarkPaid, true)
+                    setConfirmMarkPaid(null)
+                  }
+                }}
+                disabled={!!saving}
+              >
+                {saving ? 'Salvando...' : 'Sim, confirmar pagamento'}
+              </Button>
+            </>
+          }
+        >
+          {confirmMarkPaid && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">
+                Ao marcar como pago, <strong>será gerada a Nota Fiscal (NF)</strong> e enviada ao aluno a{' '}
+                <strong>confirmação de pagamento e a NF</strong> por e-mail.
+              </p>
+              <p className="text-sm text-gray-700">
+                Tem certeza que deseja confirmar o pagamento de{' '}
+                <span className="font-semibold text-gray-900">{confirmMarkPaid.nome}</span>?
+              </p>
+              <p className="text-xs text-gray-500">
+                O boleto em aberto na Cora (se existir) será cancelado automaticamente.
+              </p>
+            </div>
+          )}
+        </Modal>
 
         <Modal
           isOpen={!!confirmUnpay}
@@ -2343,8 +2935,8 @@ export default function FinanceiroAlunosPage() {
                   <input type="date" value={form.dataUltimoPagamento} onChange={(e) => setForm({ ...form, dataUltimoPagamento: e.target.value })} className="input w-full" />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Data próximo pagamento</label>
-                  <input type="date" value={form.dataProximoPagamento} onChange={(e) => setForm({ ...form, dataProximoPagamento: e.target.value })} className="input w-full" />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Dia de vencimento (1-31)</label>
+                  <input type="number" min={1} max={31} value={form.diaPagamento} onChange={(e) => setForm({ ...form, diaPagamento: e.target.value })} className="input w-full" placeholder="Ex.: 10" />
                 </div>
               </div>
 
@@ -2364,6 +2956,13 @@ export default function FinanceiroAlunosPage() {
                       <option value="EMPRESA">Empresa</option>
                     </select>
                   </div>
+                  {form.faturamentoTipo === 'ALUNO' && (
+                    <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">E-mail para envio da NF</p>
+                      <p className="text-sm text-gray-900">{selected?.email || '—'}</p>
+                      <p className="text-xs text-gray-500 mt-1">A nota fiscal será direcionada a este e-mail (cadastro do aluno).</p>
+                    </div>
+                  )}
                   {form.faturamentoTipo === 'EMPRESA' && (
                     <>
                       <div>
@@ -2486,6 +3085,264 @@ export default function FinanceiroAlunosPage() {
           )}
         </Modal>
 
+        {/* Modal Cancelar NF */}
+        <Modal
+          isOpen={!!cancelarNfModal}
+          onClose={() => {
+            if (!cancelarNfLoading) {
+              setCancelarNfModal(null)
+              setCancelarNfJustificativa('')
+            }
+          }}
+          title={cancelarNfModal ? `Cancelar Nota Fiscal – ${cancelarNfModal.nome}` : 'Cancelar Nota Fiscal'}
+          size="md"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setCancelarNfModal(null)} disabled={!!cancelarNfLoading}>
+                Voltar
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmCancelarNf}
+                disabled={!!cancelarNfLoading || cancelarNfJustificativa.trim().length < 15}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {cancelarNfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Cancelar Nota
+              </Button>
+            </div>
+          }
+        >
+          {cancelarNfModal && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                A nota fiscal será cancelada na prefeitura. Esta ação não pode ser desfeita.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Justificativa (mín. 15 caracteres) *
+                </label>
+                <textarea
+                  value={cancelarNfJustificativa}
+                  onChange={(e) => setCancelarNfJustificativa(e.target.value)}
+                  className="input w-full min-h-[80px]"
+                  placeholder="Ex.: Nota emitida em duplicidade; pagamento estornado..."
+                  rows={3}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {cancelarNfJustificativa.length}/15 caracteres
+                </p>
+              </div>
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Agendar emissão NF */}
+        <Modal
+          isOpen={!!agendarNfModal}
+          onClose={() => setAgendarNfModal(null)}
+          title={agendarNfModal ? `Agendar emissão NF – ${agendarNfModal.nome}` : 'Agendar emissão NF'}
+          size="md"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setAgendarNfModal(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={
+                  agendarNfLoading ||
+                  agendarNfSaving ||
+                  !agendarNfForm.email.trim() ||
+                  (agendarNfForm.faturamentoTipo === 'EMPRESA' &&
+                    (!agendarNfForm.empresaNome.trim() || agendarNfForm.empresaCnpj.replace(/\D/g, '').length !== 14))
+                }
+                onClick={handleAgendarNfSubmit}
+              >
+                {agendarNfSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Agendar
+              </Button>
+            </div>
+          }
+        >
+          {agendarNfLoading ? (
+            <p className="text-gray-500">Carregando...</p>
+          ) : (
+            <div className="space-y-4">
+              {agendarNfFromRepeat && (
+                <p className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  Preenchido automaticamente a partir do agendamento recorrente de outro mês. Confira os dados e clique em Agendar para este mês.
+                </p>
+              )}
+              {agendarNfModal && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail do aluno</label>
+                  <input
+                    type="text"
+                    value={agendarNfModal.email || ''}
+                    readOnly
+                    className="input w-full bg-gray-100 cursor-not-allowed"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Faturar para</label>
+                <select
+                  value={agendarNfForm.faturamentoTipo}
+                  onChange={(e) => {
+                    const v = e.target.value as 'ALUNO' | 'EMPRESA'
+                    setAgendarNfForm((f) => {
+                      const next = { ...f, faturamentoTipo: v }
+                      if (v === 'EMPRESA') {
+                        next.email = agendarNfModal?.faturamentoEmail ?? f.email
+                        next.empresaNome = agendarNfModal?.faturamentoRazaoSocial ?? f.empresaNome
+                        if (!f.empresaCnpj && (agendarNfModal as { faturamentoCnpj?: string | null }).faturamentoCnpj)
+                          next.empresaCnpj = (agendarNfModal as { faturamentoCnpj?: string | null }).faturamentoCnpj?.replace(/\D/g, '') ?? ''
+                        if (!f.empresaEnderecoFiscal && (agendarNfModal as { faturamentoEndereco?: string | null }).faturamentoEndereco)
+                          next.empresaEnderecoFiscal = (agendarNfModal as { faturamentoEndereco?: string | null }).faturamentoEndereco ?? ''
+                        if (!f.empresaDescricaoNfse.trim())
+                          next.empresaDescricaoNfse = (agendarNfModal as { faturamentoDescricaoNfse?: string | null }).faturamentoDescricaoNfse?.trim() || DEFAULT_DESCRICAO_NF_EMPRESA
+                        if (!f.emailBody.trim()) next.emailBody = templateConteudoEmailNf(selectedMes, selectedAno)
+                      } else {
+                        next.email = agendarNfModal?.email ?? f.email
+                      }
+                      return next
+                    })
+                  }}
+                  className="input w-full"
+                >
+                  <option value="ALUNO">Aluno</option>
+                  <option value="EMPRESA">Empresa</option>
+                </select>
+              </div>
+              {agendarNfForm.faturamentoTipo === 'ALUNO' ? (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail para envio da NF (aluno)</label>
+                  <input
+                    type="email"
+                    value={agendarNfForm.email}
+                    onChange={(e) => setAgendarNfForm((f) => ({ ...f, email: e.target.value }))}
+                    className="input w-full"
+                    placeholder="email@exemplo.com"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Razão Social *</label>
+                    <input
+                      type="text"
+                      value={agendarNfForm.empresaNome}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaNome: e.target.value }))}
+                      className="input w-full"
+                      placeholder="Razão social da empresa"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">CNPJ *</label>
+                    <input
+                      type="text"
+                      value={agendarNfForm.empresaCnpj}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaCnpj: e.target.value.replace(/\D/g, '').slice(0, 14) }))}
+                      className="input w-full"
+                      placeholder="00.000.000/0001-00"
+                      maxLength={18}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail para NF *</label>
+                    <input
+                      type="email"
+                      value={agendarNfForm.email}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, email: e.target.value }))}
+                      className="input w-full"
+                      placeholder="email@empresa.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Endereço fiscal (opcional)</label>
+                    <textarea
+                      value={agendarNfForm.empresaEnderecoFiscal}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaEnderecoFiscal: e.target.value }))}
+                      className="input w-full min-h-[60px]"
+                      rows={2}
+                      placeholder="Endereço completo da empresa"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição da NF (opcional)</label>
+                    <textarea
+                      value={agendarNfForm.empresaDescricaoNfse}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaDescricaoNfse: e.target.value }))}
+                      className="input w-full min-h-[80px]"
+                      rows={3}
+                      placeholder={'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Use {'{aluno}'}, {'{frequencia}'}, {'{curso}'}, {'{mes}'}, {'{ano}'} como variáveis. O modelo padrão já está preenchido.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Conteúdo do e-mail</label>
+                    <textarea
+                      value={agendarNfForm.emailBody}
+                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, emailBody: e.target.value }))}
+                      className="input w-full min-h-[80px]"
+                      rows={3}
+                      placeholder={templateConteudoEmailNf(selectedMes, selectedAno)}
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Data e horário para envio</label>
+                <input
+                  type="datetime-local"
+                  value={agendarNfForm.scheduledFor}
+                  onChange={(e) => setAgendarNfForm((f) => ({ ...f, scheduledFor: e.target.value }))}
+                  className="input w-full"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="agendar-repeat-monthly"
+                  checked={agendarNfForm.repeatMonthly}
+                  onChange={(e) => setAgendarNfForm((f) => ({ ...f, repeatMonthly: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <label htmlFor="agendar-repeat-monthly" className="text-sm font-medium text-gray-700">
+                  Repetir todo mês
+                </label>
+              </div>
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal motivo do erro na NF */}
+        <Modal
+          isOpen={!!nfErrorModal}
+          onClose={() => setNfErrorModal(null)}
+          title={nfErrorModal ? `Erro na NF – ${nfErrorModal.nome}` : 'Erro na NF'}
+          size="md"
+        >
+          {nfErrorModal && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">Motivo do erro na emissão da nota fiscal:</p>
+              <p className="text-sm bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 whitespace-pre-wrap">
+                {nfErrorModal.message}
+              </p>
+              <div className="flex justify-end">
+                <Button variant="secondary" size="sm" onClick={() => setNfErrorModal(null)}>
+                  Fechar
+                </Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+
         {/* Modal da lista de nomes ao clicar no cubo */}
         <Modal
           isOpen={cubeModal !== null}
@@ -2533,9 +3390,9 @@ export default function FinanceiroAlunosPage() {
               const showUltimoPag = cubeModal === 'pago'
               const copyText =
                 (showVencimento
-                  ? 'Aluno\tVencimento\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataProximoPagamento)}`).join('\n')
+                  ? 'Aluno\tDia venc.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${a.diaPagamento ?? '—'}`).join('\n')
                   : showUltimoPag
-                    ? 'Aluno\tÚltimo pag.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataUltimoPagamento)}`).join('\n')
+                    ? 'Aluno\tData Pag.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataPagamento)}`).join('\n')
                     : cubeModal === 'removidos'
                       ? 'Aluno\tMotivo\n' + (list as AlunoRemovidoMes[]).map((a) => `${a.nome}\t${a.motivo ?? ''}`).join('\n')
                       : 'Aluno\n' + list.map((a: any) => a.nome).join('\n'))
@@ -2641,10 +3498,10 @@ export default function FinanceiroAlunosPage() {
                         {(showVencimento || showUltimoPag) && (
                           <span className="text-sm text-gray-600">
                             {showVencimento && (
-                              <>Venc.: {formatDate((a as AlunoFinanceiro).dataProximoPagamento)}</>
+                              <>Dia venc.: {(a as AlunoFinanceiro).diaPagamento ?? '—'}</>
                             )}
                             {showUltimoPag && !showVencimento && (
-                              <>Últ. pag.: {formatDate((a as AlunoFinanceiro).dataUltimoPagamento)}</>
+                              <>Data pag.: {formatDate((a as AlunoFinanceiro).dataPagamento)}</>
                             )}
                           </span>
                         )}

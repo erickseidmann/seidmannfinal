@@ -307,6 +307,10 @@ export default function AdminAlunosPage() {
     totalValidationErrors: number
   } | null>(null)
   const [passwordModalStudent, setPasswordModalStudent] = useState<Student | null>(null)
+  const [inactivateStudentModal, setInactivateStudentModal] = useState<{
+    student: Student
+    inactiveFrom: string
+  } | null>(null)
   const [designarAulaStudent, setDesignarAulaStudent] = useState<Student | null>(null)
   const [passwordForm, setPasswordForm] = useState({ novaSenha: '123456', obrigarAlteracao: true })
   const [passwordLoading, setPasswordLoading] = useState(false)
@@ -585,43 +589,18 @@ export default function AdminAlunosPage() {
   }, [])
 
   const handleStatusChange = useCallback(
-    async (s: Student, newStatus: string) => {
-      let inactiveFrom: string | undefined
-      if (newStatus === 'INACTIVE') {
-        const todayIso = new Date().toISOString().slice(0, 10)
-        const answer = window.prompt(
-          'A partir de que data você quer inativar o aluno? (formato AAAA-MM-DD)',
-          todayIso
-        )
-        if (answer === null) {
-          // usuário cancelou
-          return
-        }
-        const trimmed = answer.trim()
-        if (!trimmed) {
-          inactiveFrom = todayIso
-        } else {
-          const d = new Date(trimmed)
-          if (Number.isNaN(d.getTime())) {
-            setToast({
-              message: 'Data inválida. Use o formato AAAA-MM-DD.',
-              type: 'error',
-            })
-            return
-          }
-          inactiveFrom = trimmed
-        }
-      }
+    async (s: Student, newStatus: string, inactiveFrom?: string) => {
       try {
+        const body =
+          newStatus === 'INACTIVE'
+            ? { status: newStatus, inactiveFrom }
+            : { status: newStatus }
+
         const res = await fetch(`/api/admin/enrollments/${s.id}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify(
-            newStatus === 'INACTIVE'
-              ? { status: newStatus, inactiveFrom }
-              : { status: newStatus }
-          ),
+          body: JSON.stringify(body),
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
@@ -1516,17 +1495,10 @@ export default function AdminAlunosPage() {
               return
             }
             if (newStatus === 'INACTIVE' && s.status !== 'INACTIVE') {
-              const hoje = new Date()
-              const dataFormatada = hoje.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-              setConfirmModal({
-                title: 'Confirmar status Inativo',
-                message: `Tem certeza que quer selecionar "Inativo" para ${s.nome}? Essa ação vai cancelar todas as aulas para frente do dia ${dataFormatada}.`,
-                onConfirm: () => {
-                  handleStatusChange(s, newStatus)
-                  setConfirmModal(null)
-                },
-                variant: 'danger',
-                confirmLabel: 'Sim, marcar como Inativo',
+              const todayIso = new Date().toISOString().slice(0, 10)
+              setInactivateStudentModal({
+                student: s,
+                inactiveFrom: todayIso,
               })
             } else {
               handleStatusChange(s, newStatus)
@@ -2127,6 +2099,68 @@ export default function AdminAlunosPage() {
                 />
                 <span className="text-sm font-medium text-gray-700">Obrigar alteração da senha no próximo login</span>
               </label>
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Inativar aluno (data estilizada) */}
+        <Modal
+          isOpen={!!inactivateStudentModal}
+          onClose={() => setInactivateStudentModal(null)}
+          title="Inativar aluno"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setInactivateStudentModal(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (!inactivateStudentModal) return
+                  const trimmed = inactivateStudentModal.inactiveFrom.trim()
+                  const d = new Date(trimmed)
+                  if (Number.isNaN(d.getTime())) {
+                    setToast({
+                      message: 'Data inválida. Use o formato AAAA-MM-DD.',
+                      type: 'error',
+                    })
+                    return
+                  }
+                  await handleStatusChange(inactivateStudentModal.student, 'INACTIVE', trimmed)
+                  setInactivateStudentModal(null)
+                }}
+              >
+                Confirmar inativação
+              </Button>
+            </>
+          }
+        >
+          {inactivateStudentModal && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Você está marcando o aluno{' '}
+                <strong>{inactivateStudentModal.student.nome}</strong> como <strong>Inativo</strong>.
+              </p>
+              <p className="text-sm text-gray-600">
+                As aulas do calendário e registros <strong>antes</strong> da data escolhida serão mantidos.
+                Somente as aulas futuras a partir dessa data poderão ser removidas do calendário.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  A partir de que data você quer inativar o aluno?
+                </label>
+                <input
+                  type="date"
+                  value={inactivateStudentModal.inactiveFrom}
+                  onChange={(e) =>
+                    setInactivateStudentModal((prev) =>
+                      prev ? { ...prev, inactiveFrom: e.target.value } : prev
+                    )
+                  }
+                  className="input w-full"
+                />
+                <p className="text-xs text-gray-500 mt-1">Use o formato AAAA-MM-DD.</p>
+              </div>
             </div>
           )}
         </Modal>

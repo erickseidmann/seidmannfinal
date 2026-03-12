@@ -72,7 +72,7 @@ export async function PATCH(
       )
     }
 
-    // Se status mudou para INACTIVE, excluir todas as aulas a partir da data escolhida
+    // Se status mudou para INACTIVE, excluir apenas aulas FUTURAS a partir da data escolhida
     const oldStatus = enrollment.status
     if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
       let inativarAPartirDe = new Date()
@@ -82,11 +82,19 @@ export async function PATCH(
           inativarAPartirDe = d
         }
       }
+      // Normalizar datas para meia-noite
       inativarAPartirDe.setHours(0, 0, 0, 0)
+      const hoje = new Date()
+      hoje.setHours(0, 0, 0, 0)
+
+      // Nunca apagar aulas passadas: apenas aulas cuja data seja
+      // (a) maior ou igual à data de inativação E
+      // (b) maior ou igual à data de hoje
+      const dataCorte = inativarAPartirDe > hoje ? inativarAPartirDe : hoje
       await prisma.lesson.deleteMany({
         where: {
           enrollmentId: id,
-          startAt: { gte: inativarAPartirDe },
+          startAt: { gte: dataCorte },
         },
       })
     }
