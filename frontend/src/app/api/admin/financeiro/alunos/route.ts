@@ -189,12 +189,28 @@ export async function GET(request: NextRequest) {
         enrollmentId: { in: filteredEnrollments.map((e) => e.id) },
         ...(hasMonthFilter && year != null && month != null ? { year, month } : {}),
       },
-      select: { enrollmentId: true, focusRef: true, status: true, errorMessage: true, year: true, month: true },
+      select: {
+        enrollmentId: true,
+        focusRef: true,
+        status: true,
+        errorMessage: true,
+        pdfUrl: true,
+        year: true,
+        month: true,
+      },
     })
-    const nfseInfoMap = new Map<string, { focusRef: string; status: string; errorMessage: string | null }>()
+    const nfseInfoMap = new Map<
+      string,
+      { focusRef: string; status: string; errorMessage: string | null; pdfUrl: string | null }
+    >()
     for (const nf of nfsePorEnrollment) {
       const key = `${nf.enrollmentId}:${nf.year}:${nf.month}`
-      nfseInfoMap.set(key, { focusRef: nf.focusRef, status: nf.status, errorMessage: nf.errorMessage ?? null })
+      nfseInfoMap.set(key, {
+        focusRef: nf.focusRef,
+        status: nf.status,
+        errorMessage: nf.errorMessage ?? null,
+        pdfUrl: nf.pdfUrl ?? null,
+      })
     }
 
     // Agendamentos de NF (para exibir "Agendada" no Status NF)
@@ -203,6 +219,20 @@ export async function GET(request: NextRequest) {
       select: { enrollmentId: true, year: true, month: true },
     })
     const nfAgendadaSet = new Set(nfseSchedules.map((s) => `${s.enrollmentId}:${s.year}:${s.month}`))
+
+    // E-mails de NF já enviados (agendamento processado) – exibir "E-mail enviado" e bloquear novo envio no mesmo mês
+    const nfseEmailSentList =
+      hasMonthFilter && year != null && month != null
+        ? await prisma.nfseEmailSent.findMany({
+            where: { enrollmentId: { in: enrollmentIds }, year, month },
+            select: { enrollmentId: true },
+          })
+        : []
+    const nfseEmailEnviadoSet = new Set(
+      hasMonthFilter && year != null && month != null
+        ? nfseEmailSentList.map((e) => e.enrollmentId)
+        : []
+    )
 
     // Valor por hora = valor mensal ÷ total de horas do mês.
     // Total de horas do mês = (frequência semanal × duração da aula em min) × 4 semanas ÷ 60.
@@ -259,6 +289,7 @@ export async function GET(request: NextRequest) {
       const nfEmitida = nfseMap.has(nfseKey)
       const nfseInfo = nfseInfoMap.get(nfseKey)
       const nfAgendada = nfAgendadaSet.has(nfseKey)
+      const nfseEmailEnviado = hasMonthFilter && year != null && month != null && refYear === year && refMonth === month ? nfseEmailEnviadoSet.has(e.id) : false
       
       const enr = e as { moraNoExterior?: boolean; enderecoExterior?: string | null; rua?: string | null; numero?: string | null; complemento?: string | null; cidade?: string | null; estado?: string | null; cep?: string | null }
       const enderecoCompleto =
@@ -317,7 +348,9 @@ export async function GET(request: NextRequest) {
         nfseFocusRef: nfseInfo?.focusRef ?? null,
         nfseStatus: nfseInfo?.status ?? null,
         nfseErrorMessage: nfseInfo?.errorMessage ?? null,
+        nfsePdfUrl: nfseInfo?.pdfUrl ?? null,
         nfAgendada,
+        nfseEmailEnviado,
         email: e.email,
         escolaMatricula: (e as { escolaMatricula?: string | null }).escolaMatricula ?? null,
         paymentInfoId: pi?.id ?? null,

@@ -29,6 +29,8 @@ const postSchema = z.object({
   empresaEnderecoFiscal: z.string().optional(),
   empresaDescricaoNfse: z.string().optional(), // template {aluno}, {frequencia}, {curso}, {mes}, {ano}
   emailBody: z.string().optional(),
+  emailSubject: z.string().optional(),
+  nfAttachmentPath: z.string().optional(),
   scheduledFor: z.string(),
   repeatMonthly: z.boolean(),
 })
@@ -75,6 +77,8 @@ export async function GET(request: NextRequest) {
           empresaEnderecoFiscal: schedule.empresaEnderecoFiscal ?? '',
           empresaDescricaoNfse: schedule.empresaDescricaoNfse ?? '',
           emailBody: schedule.emailBody ?? '',
+          emailSubject: (schedule as { emailSubject?: string | null }).emailSubject ?? '',
+          nfAttachmentPath: schedule.nfAttachmentPath ?? '',
           scheduledFor: schedule.scheduledFor.toISOString(),
           repeatMonthly: schedule.repeatMonthly,
         },
@@ -109,6 +113,8 @@ export async function GET(request: NextRequest) {
         empresaEnderecoFiscal: anterior.empresaEnderecoFiscal ?? '',
         empresaDescricaoNfse: anterior.empresaDescricaoNfse ?? '',
         emailBody: anterior.emailBody ?? '',
+        emailSubject: (anterior as { emailSubject?: string | null }).emailSubject ?? '',
+        nfAttachmentPath: anterior.nfAttachmentPath ?? '',
         scheduledFor: scheduledForNew.toISOString(),
         repeatMonthly: true,
       },
@@ -154,25 +160,12 @@ export async function POST(request: NextRequest) {
       empresaEnderecoFiscal,
       empresaDescricaoNfse,
       emailBody,
+      emailSubject,
+      nfAttachmentPath,
       scheduledFor,
       repeatMonthly,
     } = parsed.data
-    if (faturamentoTipo === 'EMPRESA') {
-      const razao = typeof empresaRazaoSocial === 'string' ? empresaRazaoSocial.trim() : ''
-      const cnpj = typeof empresaCnpj === 'string' ? empresaCnpj.replace(/\D/g, '') : ''
-      if (!razao) {
-        return NextResponse.json(
-          { ok: false, message: 'Para faturar para empresa, informe a Razão Social.' },
-          { status: 400 }
-        )
-      }
-      if (cnpj.length !== 14) {
-        return NextResponse.json(
-          { ok: false, message: 'Para faturar para empresa, informe o CNPJ (14 dígitos).' },
-          { status: 400 }
-        )
-      }
-    }
+    // Como a NF não é mais gerada automaticamente por aqui, não exigimos Razão Social/CNPJ no agendamento.
     const scheduledForDate = new Date(scheduledFor)
     if (isNaN(scheduledForDate.getTime())) {
       return NextResponse.json(
@@ -180,37 +173,16 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-
-    // Validar documento mínimo para emissão futura (a NF será gerada alguns dias antes do envio)
-    const enrollment = await prisma.enrollment.findUnique({
-      where: { id: enrollmentId },
-      include: { paymentInfo: true },
-    })
-    if (!enrollment) {
-      return NextResponse.json({ ok: false, message: 'Matrícula não encontrada' }, { status: 404 })
-    }
-    const valor = Number(enrollment.valorMensalidade ?? enrollment.paymentInfo?.valorMensal ?? 0) || 0
-    if (valor <= 0) {
+    const now = new Date()
+    if (scheduledForDate.getTime() <= now.getTime()) {
       return NextResponse.json(
-        { ok: false, message: 'Valor da mensalidade não definido para este aluno' },
+        { ok: false, message: 'A data e horário para envio da NF devem ser no futuro.' },
         { status: 400 }
       )
     }
-    const finance = getEnrollmentFinanceData(enrollment as any)
-    const isEmpresa = faturamentoTipo === 'EMPRESA'
-    const cnpj = isEmpresa && empresaCnpj ? String(empresaCnpj).replace(/\D/g, '') : ''
-    const cpf = !isEmpresa && finance.cpf ? finance.cpf.replace(/\D/g, '') : ''
-    if (isEmpresa) {
-      if (cnpj.length !== 14) {
-        return NextResponse.json({ ok: false, message: 'CNPJ deve ter 14 dígitos.' }, { status: 400 })
-      }
-    } else {
-      if (cpf.length !== 11) {
-        return NextResponse.json({ ok: false, message: 'CPF do aluno não cadastrado.' }, { status: 400 })
-      }
-    }
 
     const emailBodyVal = typeof emailBody === 'string' ? emailBody.trim() || null : null
+    const emailSubjectVal = typeof emailSubject === 'string' ? emailSubject.trim() || null : null
     const empresaRazaoVal = typeof empresaRazaoSocial === 'string' ? empresaRazaoSocial.trim() || null : null
     const empresaCnpjVal = typeof empresaCnpj === 'string' ? empresaCnpj.replace(/\D/g, '').slice(0, 14) || null : null
     const empresaEnderecoVal = typeof empresaEnderecoFiscal === 'string' ? empresaEnderecoFiscal.trim() || null : null
@@ -230,6 +202,8 @@ export async function POST(request: NextRequest) {
         empresaEnderecoFiscal: faturamentoTipo === 'EMPRESA' ? empresaEnderecoVal : null,
         empresaDescricaoNfse: faturamentoTipo === 'EMPRESA' ? empresaDescricaoVal : null,
         emailBody: emailBodyVal,
+        emailSubject: emailSubjectVal,
+        nfAttachmentPath: nfAttachmentPath ?? null,
         scheduledFor: scheduledForDate,
         repeatMonthly,
       },
@@ -241,11 +215,16 @@ export async function POST(request: NextRequest) {
         empresaEnderecoFiscal: faturamentoTipo === 'EMPRESA' ? empresaEnderecoVal : null,
         empresaDescricaoNfse: faturamentoTipo === 'EMPRESA' ? empresaDescricaoVal : null,
         emailBody: emailBodyVal,
+        emailSubject: emailSubjectVal,
+        nfAttachmentPath: nfAttachmentPath ?? null,
         scheduledFor: scheduledForDate,
         repeatMonthly,
       },
     })
-    return NextResponse.json({ ok: true, message: 'Agendamento salvo. A NF será gerada antes e enviada na data/hora escolhidas.' })
+    return NextResponse.json({
+      ok: true,
+      message: 'Agendamento salvo. Um e-mail de lembrete será enviado na data/hora escolhidas para a equipe enviar a NF manualmente.',
+    })
   } catch (error) {
     console.error('[api/admin/financeiro/nfse-agendamento POST]', error)
     return NextResponse.json(

@@ -4,3 +4,5 @@ certs-stage/*
 !certs-stage/.gitkeep
 *.pem
 *.key
+
+public/uploads/

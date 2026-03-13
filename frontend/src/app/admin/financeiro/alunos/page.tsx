@@ -13,7 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -48,6 +48,8 @@ interface AlunoFinanceiro {
   nfseStatus?: string | null
   nfseErrorMessage?: string | null
   nfAgendada?: boolean
+  nfsePdfUrl?: string | null
+  nfseEmailEnviado?: boolean
   email: string
   escolaMatricula: string | null
   paymentInfoId: string | null
@@ -109,6 +111,16 @@ const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 
 /** Template padrão da descrição da NF para empresa (variáveis: {aluno}, {frequencia}, {curso}, {mes}, {ano}). */
 const DEFAULT_DESCRICAO_NF_EMPRESA =
   'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'
+
+function getQuemPagaLabel(a: AlunoFinanceiro): string {
+  if (a.faturamentoTipo === 'EMPRESA') {
+    return 'Empresa'
+  }
+  if (a.nomeResponsavel && a.nomeResponsavel.trim()) {
+    return 'Responsável'
+  }
+  return 'Aluno'
+}
 
 function templateConteudoEmailNf(mes: number, ano: number): string {
   return `Segue NF referente ao mês de ${MESES_NOME[mes - 1]}/${ano}.`
@@ -318,25 +330,24 @@ export default function FinanceiroAlunosPage() {
     email: string
     scheduledFor: string
     faturamentoTipo: 'ALUNO' | 'EMPRESA'
-    empresaNome: string
-    empresaCnpj: string
-    empresaEnderecoFiscal: string
-    empresaDescricaoNfse: string
     emailBody: string
+    assunto?: string
+    nfAttachmentPath?: string
+    nfAttachmentName?: string
     repeatMonthly: boolean
   }>({
     email: '',
     scheduledFor: '',
     faturamentoTipo: 'ALUNO',
-    empresaNome: '',
-    empresaCnpj: '',
-    empresaEnderecoFiscal: '',
-    empresaDescricaoNfse: '',
     emailBody: '',
+    assunto: '',
+    nfAttachmentPath: '',
+    nfAttachmentName: '',
     repeatMonthly: false,
   })
   const [agendarNfLoading, setAgendarNfLoading] = useState(false)
   const [agendarNfSaving, setAgendarNfSaving] = useState(false)
+  const nfFileInputRef = useRef<HTMLInputElement | null>(null)
   const [agendarNfFromRepeat, setAgendarNfFromRepeat] = useState(false)
   const [nfErrorModal, setNfErrorModal] = useState<{ nome: string; message: string } | null>(null)
   const [form, setForm] = useState({
@@ -527,11 +538,10 @@ export default function FinanceiroAlunosPage() {
       email: (tipo === 'EMPRESA' ? a.faturamentoEmail : a.email) || '',
       scheduledFor: defaultDateTime,
       faturamentoTipo: tipo,
-      empresaNome: a.faturamentoRazaoSocial || '',
-      empresaCnpj: (a as { faturamentoCnpj?: string | null }).faturamentoCnpj?.replace(/\D/g, '') ?? '',
-      empresaEnderecoFiscal: (a as { faturamentoEndereco?: string | null }).faturamentoEndereco ?? '',
-      empresaDescricaoNfse: tipo === 'EMPRESA' ? (descricaoDoAluno || DEFAULT_DESCRICAO_NF_EMPRESA) : '',
       emailBody: tipo === 'EMPRESA' ? templateBody : '',
+      assunto: '',
+      nfAttachmentPath: '',
+      nfAttachmentName: '',
       repeatMonthly: false,
     })
     setAgendarNfFromRepeat(false)
@@ -556,16 +566,14 @@ export default function FinanceiroAlunosPage() {
                 : bodyTipo === 'EMPRESA'
                   ? bodyDefault
                   : ''
-          const descricaoVal = (d.empresaDescricaoNfse && d.empresaDescricaoNfse.trim()) ? d.empresaDescricaoNfse : (bodyTipo === 'EMPRESA' ? DEFAULT_DESCRICAO_NF_EMPRESA : '')
           setAgendarNfForm({
             email: d.email || '',
             scheduledFor: scheduledForValue,
             faturamentoTipo: bodyTipo,
-            empresaNome: d.empresaRazaoSocial ?? '',
-            empresaCnpj: d.empresaCnpj ?? '',
-            empresaEnderecoFiscal: d.empresaEnderecoFiscal ?? '',
-            empresaDescricaoNfse: descricaoVal,
             emailBody: emailBodyVal,
+            assunto: d.emailSubject ?? '',
+            nfAttachmentPath: d.nfAttachmentPath ?? '',
+            nfAttachmentName: '',
             repeatMonthly: !!d.repeatMonthly,
           })
           setAgendarNfFromRepeat(!!json.fromRepeat)
@@ -582,27 +590,14 @@ export default function FinanceiroAlunosPage() {
       email,
       scheduledFor,
       faturamentoTipo,
-      empresaNome,
-      empresaCnpj,
-      empresaEnderecoFiscal,
-      empresaDescricaoNfse,
       emailBody,
+      assunto,
+      nfAttachmentPath,
       repeatMonthly,
     } = agendarNfForm
     if (!email.trim()) {
       setToast({ message: 'Informe o e-mail para envio da NF', type: 'error' })
       return
-    }
-    if (faturamentoTipo === 'EMPRESA') {
-      if (!empresaNome.trim()) {
-        setToast({ message: 'Informe a Razão Social da empresa', type: 'error' })
-        return
-      }
-      const cnpjDigits = empresaCnpj.replace(/\D/g, '')
-      if (cnpjDigits.length !== 14) {
-        setToast({ message: 'Informe o CNPJ da empresa (14 dígitos)', type: 'error' })
-        return
-      }
     }
     setAgendarNfSaving(true)
     try {
@@ -616,11 +611,13 @@ export default function FinanceiroAlunosPage() {
           month: selectedMes,
           email: email.trim(),
           faturamentoTipo,
-          empresaRazaoSocial: faturamentoTipo === 'EMPRESA' ? empresaNome.trim() || undefined : undefined,
-          empresaCnpj: faturamentoTipo === 'EMPRESA' ? empresaCnpj.replace(/\D/g, '').slice(0, 14) || undefined : undefined,
-          empresaEnderecoFiscal: faturamentoTipo === 'EMPRESA' ? empresaEnderecoFiscal.trim() || undefined : undefined,
-          empresaDescricaoNfse: faturamentoTipo === 'EMPRESA' ? empresaDescricaoNfse.trim() || undefined : undefined,
-          emailBody: faturamentoTipo === 'EMPRESA' ? emailBody.trim() || undefined : undefined,
+          empresaRazaoSocial: undefined,
+          empresaCnpj: undefined,
+          empresaEnderecoFiscal: undefined,
+          empresaDescricaoNfse: undefined,
+          emailBody: emailBody.trim() || undefined,
+          emailSubject: (assunto ?? '').trim() || undefined,
+          nfAttachmentPath: nfAttachmentPath || undefined,
           scheduledFor: new Date(scheduledFor).toISOString(),
           repeatMonthly,
         }),
@@ -631,6 +628,7 @@ export default function FinanceiroAlunosPage() {
         return
       }
       setToast({ message: 'Agendamento salvo', type: 'success' })
+      await fetchAlunos(selectedAno, selectedMes)
       setAgendarNfModal(null)
       setAgendarNfFromRepeat(false)
     } catch {
@@ -727,6 +725,7 @@ export default function FinanceiroAlunosPage() {
   const [filterPeriodo, setFilterPeriodo] = useState<string>('')
   const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterQuemPaga, setFilterQuemPaga] = useState<string>('')
   const [filterInfoPagamento, setFilterInfoPagamento] = useState<string>('')
   const [filterEscola, setFilterEscola] = useState<string>('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(30)
@@ -747,7 +746,7 @@ export default function FinanceiroAlunosPage() {
     { key: 'tipoAula', label: 'Tipo aula', fixed: false },
     { key: 'nomeGrupo', label: 'Nome grupo', fixed: false },
     { key: 'responsavel', label: 'Responsável', fixed: false },
-    { key: 'quemPaga', label: 'Quem paga', fixed: false },
+    { key: 'quemPaga', label: 'Quem paga', fixed: true },
     { key: 'valorMensal', label: 'Valor mensal', fixed: false },
     { key: 'valorHora', label: 'Valor hora', fixed: false },
     { key: 'status', label: 'Status', fixed: false },
@@ -760,9 +759,9 @@ export default function FinanceiroAlunosPage() {
     { key: 'acoesNf', label: 'Ações NF', fixed: false },
     { key: 'acoes', label: 'Ações', fixed: true },
   ] as const
-  /** Por padrão ocultamos: endereço, CPF, tipo aula, nome grupo, responsável, quem paga, valor hora, banco (só aparecem se marcar em Colunas). */
+  /** Por padrão ocultamos: endereço, CPF, tipo aula, nome grupo, responsável, valor hora, banco (só aparecem se marcar em Colunas). */
   const defaultVisibleKeys = FINANCE_COLUMNS.filter(
-    (c) => !['endereco', 'cpf', 'tipoAula', 'nomeGrupo', 'responsavel', 'quemPaga', 'valorHora', 'banco'].includes(c.key)
+    (c) => !['endereco', 'cpf', 'tipoAula', 'nomeGrupo', 'responsavel', 'valorHora', 'banco'].includes(c.key)
   ).map((c) => c.key)
   const [visibleFinanceKeys, setVisibleFinanceKeys] = useState<string[]>(() => defaultVisibleKeys)
   const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
@@ -841,6 +840,8 @@ export default function FinanceiroAlunosPage() {
   const [cancelarNfModal, setCancelarNfModal] = useState<AlunoFinanceiro | null>(null)
   const [cancelarNfJustificativa, setCancelarNfJustificativa] = useState('')
   const [cancelarAgendamentoLoading, setCancelarAgendamentoLoading] = useState<string | null>(null)
+  const [removeFromMonthAluno, setRemoveFromMonthAluno] = useState<AlunoFinanceiro | null>(null)
+  const [removeFromMonthReason, setRemoveFromMonthReason] = useState('')
   const [sortKey, setSortKey] = useState<'default' | 'nome' | 'diaVenc'>('default')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -867,6 +868,15 @@ export default function FinanceiroAlunosPage() {
     }
     if (filterPeriodo) {
       list = list.filter((a) => (a.periodoPagamento ?? '') === filterPeriodo)
+    }
+    if (filterQuemPaga) {
+      list = list.filter((a) => {
+        const label = getQuemPagaLabel(a).toLowerCase()
+        if (filterQuemPaga === 'ALUNO') return label === 'aluno'
+        if (filterQuemPaga === 'RESPONSAVEL') return label === 'responsável' || label === 'responsavel'
+        if (filterQuemPaga === 'EMPRESA') return label === 'empresa'
+        return true
+      })
     }
     if (filterInfoPagamento === 'comUltimoPag') {
       list = list.filter((a) => !!a.dataPagamento)
@@ -918,7 +928,7 @@ export default function FinanceiroAlunosPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes, refDateForStatus, filterBusca, filterStatus, filterPeriodo, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
+  }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes, refDateForStatus, filterBusca, filterStatus, filterPeriodo, filterQuemPaga, filterInfoPagamento, filterNfEmitida, filterEscola, sortKey, sortDir])
 
   const displayedAlunos = useMemo(
     () => filteredAlunos.slice(0, itemsPerPage),
@@ -1035,14 +1045,17 @@ export default function FinanceiroAlunosPage() {
   )
 
   const removeFromMonth = useCallback(
-    async (a: AlunoFinanceiro) => {
-      if (
-        !window.confirm(
-          `Remover ${a.nome} de ${selectedMes}/${selectedAno}? O aluno não aparecerá neste mês no Financeiro (o status na página Alunos não muda).`
-        )
-      ) {
-        return
-      }
+    (a: AlunoFinanceiro) => {
+      setRemoveFromMonthAluno(a)
+      setRemoveFromMonthReason('')
+    },
+    []
+  )
+
+  const confirmRemoveFromMonth = useCallback(
+    async () => {
+      if (!removeFromMonthAluno) return
+      const a = removeFromMonthAluno
       setRemovingFromMonthId(a.id)
       try {
         const res = await fetch(`/api/admin/financeiro/alunos/${a.id}`, {
@@ -1057,8 +1070,19 @@ export default function FinanceiroAlunosPage() {
         })
         const json = await res.json()
         if (res.ok && json.ok) {
+          const reason = removeFromMonthReason.trim()
+          if (reason) {
+            await fetch('/api/admin/financeiro/observations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ enrollmentId: a.id, message: reason }),
+            })
+          }
           setToast({ message: `${a.nome} removido deste mês.`, type: 'success' })
           await fetchAlunos(selectedAno, selectedMes)
+          setRemoveFromMonthAluno(null)
+          setRemoveFromMonthReason('')
         } else {
           setToast({ message: json.message || 'Erro ao remover.', type: 'error' })
         }
@@ -1068,7 +1092,7 @@ export default function FinanceiroAlunosPage() {
         setRemovingFromMonthId(null)
       }
     },
-    [selectedAno, selectedMes, fetchAlunos]
+    [removeFromMonthAluno, removeFromMonthReason, selectedAno, selectedMes, fetchAlunos]
   )
 
   const bulkMarkPending = async () => {
@@ -1348,12 +1372,12 @@ export default function FinanceiroAlunosPage() {
         credentials: 'include',
         body: JSON.stringify({
           quemPaga: form.quemPaga.trim() || null,
-          paymentStatus: form.paymentStatus || null,
+          // paymentStatus não é mais editado por este modal; é controlado pelos botões da tabela/mês.
           metodoPagamento: form.metodoPagamento.trim() || null,
           banco: form.banco.trim() || null,
           periodoPagamento: form.periodoPagamento || null,
           valorMensal: form.valorMensal !== '' ? Number(form.valorMensal) : null,
-          dataUltimoPagamento: form.dataUltimoPagamento || null,
+          // dataUltimoPagamento também é preenchida automaticamente quando marca como pago; não precisa editar aqui.
           dueDay: form.diaPagamento ? Math.min(31, Math.max(1, parseInt(form.diaPagamento, 10))) : null,
           faturamentoTipo: form.faturamentoTipo,
           faturamentoRazaoSocial: form.faturamentoTipo === 'EMPRESA' ? form.faturamentoRazaoSocial.trim() || null : null,
@@ -1883,7 +1907,7 @@ export default function FinanceiroAlunosPage() {
         {!fullTableView && (
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
             <div
               role="button"
               tabIndex={0}
@@ -2000,13 +2024,13 @@ export default function FinanceiroAlunosPage() {
                       />
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-gray-100">
+                  <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-gray-100">
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
                       <select
                         value={filterStatus}
                         onChange={(e) => setFilterStatus(e.target.value)}
-                        className="input min-w-[140px] text-sm py-2"
+                        className="input w-full sm:min-w-[120px] text-sm py-2"
                       >
                         <option value="">Todos</option>
                         {STATUS_OPCOES.filter((o) => o.value).map((o) => (
@@ -2019,7 +2043,7 @@ export default function FinanceiroAlunosPage() {
                       <select
                         value={filterPeriodo}
                         onChange={(e) => setFilterPeriodo(e.target.value)}
-                        className="input min-w-[140px] text-sm py-2"
+                        className="input w-full sm:min-w-[120px] text-sm py-2"
                       >
                         <option value="">Todos</option>
                         {PERIODO_OPCOES.filter((o) => o.value).map((o) => (
@@ -2028,11 +2052,24 @@ export default function FinanceiroAlunosPage() {
                       </select>
                     </div>
                     <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Quem paga</label>
+                      <select
+                        value={filterQuemPaga}
+                        onChange={(e) => setFilterQuemPaga(e.target.value)}
+                        className="input w-full sm:min-w-[130px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        <option value="ALUNO">Aluno</option>
+                        <option value="RESPONSAVEL">Responsável</option>
+                        <option value="EMPRESA">Empresa</option>
+                      </select>
+                    </div>
+                    <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status NF</label>
                       <select
                         value={filterNfEmitida}
                         onChange={(e) => setFilterNfEmitida(e.target.value)}
-                        className="input min-w-[140px] text-sm py-2"
+                        className="input w-full sm:min-w-[120px] text-sm py-2"
                       >
                         <option value="">Todos</option>
                         <option value="aberto">Em aberto</option>
@@ -2040,24 +2077,24 @@ export default function FinanceiroAlunosPage() {
                       </select>
                     </div>
                     <div>
-                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Info de pagamento</label>
-                    <select
-                      value={filterInfoPagamento}
-                      onChange={(e) => setFilterInfoPagamento(e.target.value)}
-                      className="input min-w-[160px] text-sm py-2"
-                    >
-                      <option value="">Todos</option>
-                      <option value="comUltimoPag">Com data de último pag.</option>
-                      <option value="semUltimoPag">Sem data de último pag.</option>
-                      <option value="semValorMensal">Sem valor mensal</option>
-                    </select>
-                  </div>
-                  <div>
+                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Info de pagamento</label>
+                      <select
+                        value={filterInfoPagamento}
+                        onChange={(e) => setFilterInfoPagamento(e.target.value)}
+                        className="input w-full sm:min-w-[150px] text-sm py-2"
+                      >
+                        <option value="">Todos</option>
+                        <option value="comUltimoPag">Com data de último pag.</option>
+                        <option value="semUltimoPag">Sem data de último pag.</option>
+                        <option value="semValorMensal">Sem valor mensal</option>
+                      </select>
+                    </div>
+                    <div>
                       <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
                       <select
                         value={filterEscola}
                         onChange={(e) => setFilterEscola(e.target.value)}
-                        className="input min-w-[140px] text-sm py-2"
+                        className="input w-full sm:min-w-[120px] text-sm py-2"
                       >
                         <option value="">Todos</option>
                         <option value="SEIDMANN">Seidmann</option>
@@ -2242,7 +2279,7 @@ export default function FinanceiroAlunosPage() {
                         if (col.key === 'ultimoPag') return formatDate(a.dataPagamento)
                         if (col.key === 'diaVenc') return a.diaPagamento != null ? String(a.diaPagamento) : ''
                         if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
-                        if (col.key === 'nfEmitida') return a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfAgendada ? 'Agendada' : 'Em aberto'
+                        if (col.key === 'nfEmitida') return a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfseEmailEnviado ? 'E-mail enviado' : a.nfAgendada ? 'Agendada' : 'Em aberto'
                         if (col.key === 'acoesNf') return ''
                         if (col.key === 'acoes') return ''
                         return ''
@@ -2347,11 +2384,6 @@ export default function FinanceiroAlunosPage() {
                   const display = isAtrasado
                     ? { type: 'atrasado' as const, label: 'Atrasado', variant: 'danger' as const }
                     : getCobrancaStatusDisplay(a.status, cobranca)
-                  const isPagoEmpresa =
-                    isEmpresa &&
-                    (display.type === 'pago' ||
-                      display.type === 'pago_pix' ||
-                      display.type === 'pago_boleto')
                   const isEditing = (id: string, field: string) => editingCell?.id === id && editingCell?.field === field
 
                   const baseTextClass = isAtrasado
@@ -2416,18 +2448,10 @@ export default function FinanceiroAlunosPage() {
                       {displayColumns.some((c) => c.key === 'tipoAula') && <td className="px-3 py-2 text-sm text-gray-600">{a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? '—'}</td>}
                       {displayColumns.some((c) => c.key === 'nomeGrupo') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeGrupo ?? '—'}</td>}
                       {displayColumns.some((c) => c.key === 'responsavel') && <td className="px-3 py-2 text-sm text-gray-600">{a.nomeResponsavel ?? '—'}</td>}
-                      {displayColumns.some((c) => c.key === 'quemPaga') && EdCell(
-                        'quemPaga',
-                        a.quemPaga ?? '—',
-                        <input
-                          type="text"
-                          className="input w-full py-1 text-sm"
-                          value={String(cellValue)}
-                          onChange={(e) => setCellValue(e.target.value)}
-                          onBlur={saveCell}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveCell(); if (e.key === 'Escape') setEditingCell(null) }}
-                          autoFocus
-                        />
+                      {displayColumns.some((c) => c.key === 'quemPaga') && (
+                        <td className={baseTd}>
+                          {getQuemPagaLabel(a)}
+                        </td>
                       )}
                       {displayColumns.some((c) => c.key === 'valorMensal') && EdCell(
                         'valorMensal',
@@ -2456,7 +2480,7 @@ export default function FinanceiroAlunosPage() {
                             const badgeClasses = `inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${BADGE_CLASSES[display.variant]}`
                             const hasCobrancaDetails = cobranca?.coraInvoiceId
                             const isPopoverOpen = cobrancaPopoverOpen === a.id
-                            const label = isPagoEmpresa ? 'Pagamento feito pela empresa' : display.label
+                            const label = display.label
                             return (
                               <div ref={hasCobrancaDetails && isPopoverOpen ? cobrancaPopoverRef : undefined} className="relative inline-flex">
                                 <button
@@ -2609,6 +2633,11 @@ export default function FinanceiroAlunosPage() {
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             Emitida
                           </span>
+                        ) : a.nfseEmailEnviado ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                            <Mail className="w-3.5 h-3.5" />
+                            E-mail enviado
+                          </span>
                         ) : a.nfAgendada ? (
                           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                             <Calendar className="w-3.5 h-3.5" />
@@ -2624,15 +2653,26 @@ export default function FinanceiroAlunosPage() {
                       {displayColumns.some((c) => c.key === 'acoesNf') && (
                       <td className="px-3 py-2 text-sm whitespace-nowrap">
                         <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleEmitirNf(a)}
-                            disabled={!!emitirNfLoading || emitirNfLoading === a.id}
-                            className={`p-1.5 rounded ${emitirNfLoading === a.id ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-green-600'}`}
-                            title="Emitir NF"
-                          >
-                            {emitirNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
-                          </button>
+                          {a.nfseStatus === 'autorizado' && a.nfsePdfUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => window.open(a.nfsePdfUrl || '', '_blank', 'noopener,noreferrer')}
+                              className="p-1.5 rounded text-gray-500 hover:text-indigo-600"
+                              title="Baixar NF (PDF)"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleEmitirNf(a)}
+                              disabled={!!emitirNfLoading || emitirNfLoading === a.id}
+                              className={`p-1.5 rounded ${emitirNfLoading === a.id ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-green-600'}`}
+                              title="Emitir NF"
+                            >
+                              {emitirNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
+                            </button>
+                          )}
                           {a.nfseFocusRef && a.nfseStatus === 'autorizado' && (
                             <button
                               type="button"
@@ -2644,7 +2684,7 @@ export default function FinanceiroAlunosPage() {
                               {cancelarNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
                             </button>
                           )}
-                          {a.nfAgendada && (
+                          {a.nfAgendada && !a.nfseEmailEnviado && (
                             <button
                               type="button"
                               onClick={() => handleCancelarAgendamento(a)}
@@ -2657,11 +2697,24 @@ export default function FinanceiroAlunosPage() {
                           )}
                           <button
                             type="button"
-                            onClick={() => openAgendarNfModal(a)}
-                            className="p-1.5 text-gray-500 hover:text-brand-orange rounded inline-flex"
-                            title="Agendar envio de e-mail da NF"
+                            onClick={() => !a.nfseEmailEnviado && openAgendarNfModal(a)}
+                            disabled={!!a.nfseEmailEnviado}
+                            className={`p-1.5 rounded inline-flex ${
+                              a.nfseEmailEnviado
+                                ? 'text-gray-400 cursor-not-allowed'
+                                : a.nfAgendada
+                                  ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
+                                  : 'text-gray-500 hover:text-brand-orange'
+                            }`}
+                            title={
+                              a.nfseEmailEnviado
+                                ? 'E-mail já enviado neste mês. Não é possível agendar outro envio.'
+                                : a.nfAgendada
+                                  ? 'Envio de NF já agendado (clique para revisar/editar)'
+                                  : 'Agendar envio de e-mail da NF'
+                            }
                           >
-                            <Calendar className="w-4 h-4" />
+                            {a.nfseEmailEnviado ? <Mail className="w-4 h-4" /> : a.nfAgendada ? <CheckCircle2 className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
                           </button>
                         </div>
                       </td>
@@ -2875,6 +2928,57 @@ export default function FinanceiroAlunosPage() {
         </Modal>
 
         <Modal
+          isOpen={!!removeFromMonthAluno}
+          onClose={() => setRemoveFromMonthAluno(null)}
+          title="Remover aluno deste mês"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setRemoveFromMonthAluno(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void confirmRemoveFromMonth()}
+                disabled={!!removingFromMonthId}
+              >
+                {removingFromMonthId ? 'Removendo...' : 'Sim, remover deste mês'}
+              </Button>
+            </>
+          }
+        >
+          {removeFromMonthAluno && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Tem certeza que deseja{' '}
+                <span className="font-semibold text-red-600">remover deste mês</span> o aluno{' '}
+                <span className="font-semibold">{removeFromMonthAluno.nome}</span> de{' '}
+                <span className="font-semibold">
+                  {selectedMes}/{selectedAno}
+                </span>
+                ?
+              </p>
+              <p className="text-xs text-gray-500">
+                Ele não aparecerá neste mês no Financeiro de Alunos. O status na página{' '}
+                <span className="font-semibold">Alunos</span> não será alterado.
+              </p>
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-gray-500 uppercase">Motivo (opcional)</label>
+                <textarea
+                  value={removeFromMonthReason}
+                  onChange={(e) => setRemoveFromMonthReason(e.target.value)}
+                  className="input w-full min-h-[60px] text-sm"
+                  placeholder="Ex.: aluno trancou, bolsa, ajuste de valor, etc."
+                />
+                <p className="text-[11px] text-gray-400">
+                  Quando preenchido, o motivo é salvo em Observações financeiras do aluno.
+                </p>
+              </div>
+            </div>
+          )}
+        </Modal>
+
+        <Modal
           isOpen={!!editId}
           onClose={() => setEditId(null)}
           title={selected ? `Editar financeiro – ${selected.nome}` : 'Editar'}
@@ -2892,17 +2996,15 @@ export default function FinanceiroAlunosPage() {
           {selected && (
             <form onSubmit={handleSave} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Quem paga</label>
-                  <input type="text" value={form.quemPaga} onChange={(e) => setForm({ ...form, quemPaga: e.target.value })} className="input w-full" placeholder="Nome de quem paga" />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-                  <select value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value })} className="input w-full">
-                    {STATUS_OPCOES.map((o) => (
-                      <option key={o.value || 'x'} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    value={form.quemPaga}
+                    onChange={(e) => setForm({ ...form, quemPaga: e.target.value })}
+                    className="input w-full"
+                    placeholder="Nome de quem paga"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Valor mensal (R$)</label>
@@ -2924,15 +3026,17 @@ export default function FinanceiroAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Período de pagamento</label>
-                  <select value={form.periodoPagamento} onChange={(e) => setForm({ ...form, periodoPagamento: e.target.value })} className="input w-full">
+                  <select
+                    value={form.periodoPagamento}
+                    onChange={(e) => setForm({ ...form, periodoPagamento: e.target.value })}
+                    className="input w-full"
+                  >
                     {PERIODO_OPCOES.map((o) => (
-                      <option key={o.value || 'x'} value={o.value}>{o.label}</option>
+                      <option key={o.value || 'x'} value={o.value}>
+                        {o.label}
+                      </option>
                     ))}
                   </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Data último pagamento</label>
-                  <input type="date" value={form.dataUltimoPagamento} onChange={(e) => setForm({ ...form, dataUltimoPagamento: e.target.value })} className="input w-full" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Dia de vencimento (1-31)</label>
@@ -3138,11 +3242,11 @@ export default function FinanceiroAlunosPage() {
           )}
         </Modal>
 
-        {/* Modal Agendar emissão NF */}
+        {/* Modal Agendar lembrete de NF */}
         <Modal
           isOpen={!!agendarNfModal}
           onClose={() => setAgendarNfModal(null)}
-          title={agendarNfModal ? `Agendar emissão NF – ${agendarNfModal.nome}` : 'Agendar emissão NF'}
+          title={agendarNfModal ? `Agendar lembrete de NF – ${agendarNfModal.nome}` : 'Agendar lembrete de NF'}
           size="md"
           footer={
             <div className="flex justify-end gap-2">
@@ -3152,13 +3256,7 @@ export default function FinanceiroAlunosPage() {
               <Button
                 variant="primary"
                 size="sm"
-                disabled={
-                  agendarNfLoading ||
-                  agendarNfSaving ||
-                  !agendarNfForm.email.trim() ||
-                  (agendarNfForm.faturamentoTipo === 'EMPRESA' &&
-                    (!agendarNfForm.empresaNome.trim() || agendarNfForm.empresaCnpj.replace(/\D/g, '').length !== 14))
-                }
+                disabled={agendarNfLoading || agendarNfSaving || !agendarNfForm.email.trim()}
                 onClick={handleAgendarNfSubmit}
               >
                 {agendarNfSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
@@ -3217,85 +3315,136 @@ export default function FinanceiroAlunosPage() {
                   <option value="EMPRESA">Empresa</option>
                 </select>
               </div>
-              {agendarNfForm.faturamentoTipo === 'ALUNO' ? (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail para envio da NF (aluno)</label>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail para envio da NF</label>
+                <input
+                  type="email"
+                  value={agendarNfForm.email}
+                  onChange={(e) => setAgendarNfForm((f) => ({ ...f, email: e.target.value }))}
+                  className="input w-full"
+                  placeholder="email@empresa.com, copie o aluno se quiser"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Anexar NF (PDF)</label>
+                <div className="flex items-center gap-2">
                   <input
-                    type="email"
-                    value={agendarNfForm.email}
-                    onChange={(e) => setAgendarNfForm((f) => ({ ...f, email: e.target.value }))}
-                    className="input w-full"
-                    placeholder="email@exemplo.com"
+                    ref={nfFileInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      if (file.size > 10 * 1024 * 1024) {
+                        setToast({ message: 'Arquivo muito grande (máx. 10MB).', type: 'error' })
+                        return
+                      }
+                      try {
+                        const formData = new FormData()
+                        formData.append('file', file)
+                        const res = await fetch('/api/admin/financeiro/nfse-upload', {
+                          method: 'POST',
+                          body: formData,
+                          credentials: 'include',
+                        })
+                        const json = await res.json()
+                        if (!res.ok || !json.ok) {
+                          setToast({ message: json.message || 'Erro ao enviar arquivo da NF', type: 'error' })
+                          return
+                        }
+                        setAgendarNfForm((f) => ({
+                          ...f,
+                          nfAttachmentPath: json.path as string,
+                          nfAttachmentName: (json.filename as string) || file.name,
+                        }))
+                        setToast({ message: 'NF anexada com sucesso.', type: 'success' })
+                      } catch {
+                        setToast({ message: 'Erro ao anexar NF', type: 'error' })
+                      } finally {
+                        // limpar input para permitir reanexar o mesmo arquivo se quiser
+                        if (nfFileInputRef.current) nfFileInputRef.current.value = ''
+                      }
+                    }}
                   />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => nfFileInputRef.current?.click()}
+                  >
+                    {agendarNfForm.nfAttachmentPath ? 'Trocar arquivo' : 'Selecionar arquivo'}
+                  </Button>
+                  {agendarNfForm.nfAttachmentName && (
+                    <span className="text-xs text-gray-600 truncate max-w-[160px]" title={agendarNfForm.nfAttachmentName}>
+                      {agendarNfForm.nfAttachmentName}
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Razão Social *</label>
-                    <input
-                      type="text"
-                      value={agendarNfForm.empresaNome}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaNome: e.target.value }))}
-                      className="input w-full"
-                      placeholder="Razão social da empresa"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">CNPJ *</label>
-                    <input
-                      type="text"
-                      value={agendarNfForm.empresaCnpj}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaCnpj: e.target.value.replace(/\D/g, '').slice(0, 14) }))}
-                      className="input w-full"
-                      placeholder="00.000.000/0001-00"
-                      maxLength={18}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">E-mail para NF *</label>
-                    <input
-                      type="email"
-                      value={agendarNfForm.email}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, email: e.target.value }))}
-                      className="input w-full"
-                      placeholder="email@empresa.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Endereço fiscal (opcional)</label>
-                    <textarea
-                      value={agendarNfForm.empresaEnderecoFiscal}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaEnderecoFiscal: e.target.value }))}
-                      className="input w-full min-h-[60px]"
-                      rows={2}
-                      placeholder="Endereço completo da empresa"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição da NF (opcional)</label>
-                    <textarea
-                      value={agendarNfForm.empresaDescricaoNfse}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, empresaDescricaoNfse: e.target.value }))}
-                      className="input w-full min-h-[80px]"
-                      rows={3}
-                      placeholder={'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Use {'{aluno}'}, {'{frequencia}'}, {'{curso}'}, {'{mes}'}, {'{ano}'} como variáveis. O modelo padrão já está preenchido.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Conteúdo do e-mail</label>
-                    <textarea
-                      value={agendarNfForm.emailBody}
-                      onChange={(e) => setAgendarNfForm((f) => ({ ...f, emailBody: e.target.value }))}
-                      className="input w-full min-h-[80px]"
-                      rows={3}
-                      placeholder={templateConteudoEmailNf(selectedMes, selectedAno)}
-                    />
-                  </div>
-                </>
-              )}
+                <p className="text-xs text-gray-500 mt-1">
+                  O arquivo será enviado em anexo no e-mail agendado.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Assunto do e-mail</label>
+                <input
+                  type="text"
+                  value={agendarNfForm.assunto ?? ''}
+                  onChange={(e) => setAgendarNfForm((f) => ({ ...f, assunto: e.target.value } as any))}
+                  className="input w-full"
+                  placeholder={`Nota Fiscal – ${agendarNfModal?.nome ?? 'Aluno'} – ${selectedMes}/${selectedAno}`}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Corpo do e-mail</label>
+                <textarea
+                  value={agendarNfForm.emailBody}
+                  onChange={(e) => setAgendarNfForm((f) => ({ ...f, emailBody: e.target.value }))}
+                  className="input w-full min-h-[80px]"
+                  rows={3}
+                  placeholder={templateConteudoEmailNf(selectedMes, selectedAno)}
+                />
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="text-xs text-gray-500">
+                    Use {'{aluno}'}, {'{frequencia}'}, {'{curso}'}, {'{mes}'}, {'{ano}'} como variáveis. O modelo padrão já está
+                    preenchido. Quando o envio acontecer, <strong>anexe a NF e envie para a empresa com o aluno em cópia</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!agendarNfModal) return
+                      const prevMonth = selectedMes === 1 ? 12 : selectedMes - 1
+                      const prevYear = selectedMes === 1 ? selectedAno - 1 : selectedAno
+                      try {
+                        const urlPrev = `/api/admin/financeiro/nfse-agendamento?enrollmentId=${encodeURIComponent(
+                          agendarNfModal.id
+                        )}&year=${prevYear}&month=${prevMonth}`
+                        const resPrev = await fetch(urlPrev, { credentials: 'include' })
+                        const jsonPrev = await resPrev.json()
+                        if (resPrev.ok && jsonPrev.ok && jsonPrev.data?.emailBody) {
+                          setAgendarNfForm((f) => ({ ...f, emailBody: jsonPrev.data.emailBody as string }))
+                          setToast({
+                            message: 'Texto copiado do mês anterior.',
+                            type: 'success',
+                          })
+                        } else {
+                          setToast({
+                            message: 'Nenhum agendamento encontrado no mês anterior para copiar.',
+                            type: 'error',
+                          })
+                        }
+                      } catch {
+                        setToast({
+                          message: 'Erro ao copiar mensagem do mês anterior.',
+                          type: 'error',
+                        })
+                      }
+                    }}
+                    className="shrink-0 inline-flex items-center rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Copiar do mês anterior
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Data e horário para envio</label>
                 <input

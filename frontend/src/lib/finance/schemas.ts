@@ -5,7 +5,8 @@ import { z } from 'zod'
  */
 export const updateStudentPaymentSchema = z.object({
   quemPaga: z.string().max(500).nullish(),
-  paymentStatus: z.enum(['PAGO', 'ATRASADO', 'PENDING', 'EM_ABERTO']).nullish(),
+  // paymentStatus: status global ou por mês. Inclui REMOVIDO para "remover deste mês" na página Financeiro – Alunos.
+  paymentStatus: z.enum(['PAGO', 'ATRASADO', 'PENDING', 'EM_ABERTO', 'REMOVIDO']).nullish(),
   metodoPagamento: z.string().max(200).nullish(),
   banco: z.string().max(200).nullish(),
   periodoPagamento: z.enum(['MENSAL', 'ANUAL', 'SEMESTRAL', 'TRIMESTRAL']).nullish(),

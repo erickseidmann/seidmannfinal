@@ -277,27 +277,20 @@ export async function sendEnrollmentDeactivated(
 }
 
 /**
- * Envia e-mail de NF agendada (conteúdo customizável + link do PDF).
+ * Envia e-mail de NF agendada (assunto e corpo customizáveis + anexo).
  * Usado pelo cron que processa NfseSchedule no dia/hora definido.
  */
 export async function sendScheduledNfEmail(params: {
   to: string
+  subject?: string
   body: string
-  pdfUrl?: string | null
-  numero?: string | null
+  attachments?: import('@/lib/email').EmailAttachment[]
 }): Promise<boolean> {
-  const { to, body, pdfUrl, numero } = params
-  const subject = 'Nota Fiscal – Seidmann Institute'
-  const linkBlock = pdfUrl
-    ? `\n\nAcesse a Nota Fiscal em: ${pdfUrl}`
-    : numero
-      ? `\n\nNota Fiscal nº ${numero} foi gerada. Acesse pelo painel do aluno (área Financeiro).`
-      : '\n\nA Nota Fiscal foi gerada e está disponível no painel do aluno (área Financeiro).'
-  const text = (body.trim() || 'Segue a Nota Fiscal em anexo.') + linkBlock + '\n\nAtenciosamente,\nEquipe Seidmann Institute'
-  const bodyHtml = (body.trim() || 'Segue a Nota Fiscal.').replace(/\n/g, '</p><p>')
-  const html =
-    `<p>${bodyHtml}</p>` +
-    (pdfUrl ? `<p><a href="${pdfUrl}" style="color:#2563eb;">Abrir PDF da Nota Fiscal</a></p>` : '') +
-    '<p>Atenciosamente,<br>Equipe Seidmann Institute</p>'
-  return sendEmail({ to, subject, text, html })
+  const { to, body, attachments } = params
+  const subject = (params.subject?.trim() || 'Nota Fiscal Seidmann Institute').slice(0, 200)
+  const baseBody = body.trim() || 'Segue em anexo a Nota Fiscal referente ao período informado.'
+  const text = `${baseBody}\n\nAtenciosamente,\nEquipe Seidmann Institute`
+  const bodyHtml = baseBody.replace(/\n/g, '</p><p>')
+  const html = `<p>${bodyHtml}</p><p>Atenciosamente,<br>Equipe Seidmann Institute</p>`
+  return sendEmail({ to, subject, text, html, attachments })
 }

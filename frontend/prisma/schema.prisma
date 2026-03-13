@@ -330,6 +330,7 @@ model Enrollment {
   financeObservations FinanceObservation[]
   nfseInvoices           NfseInvoice[]
   nfseSchedules          NfseSchedule[]
+  nfseEmailsSent         NfseEmailSent[]
   alerts                 StudentAlert[]
   paymentNotifications   PaymentNotification[]
   coraInvoices          CoraInvoice[]
@@ -441,12 +442,14 @@ model NfseSchedule {
   year          Int      // ano da NF
   month         Int      // mês da NF (1-12)
   email         String   @db.VarChar(255) // e-mail para envio da NF
+  emailSubject  String?  @map("email_subject") @db.Text // assunto do e-mail a ser enviado
   faturamentoTipo String @map("faturamento_tipo") @db.VarChar(20) // ALUNO ou EMPRESA
   empresaRazaoSocial   String?  @map("empresa_razao_social") @db.VarChar(255)
   empresaCnpj          String?  @map("empresa_cnpj") @db.VarChar(20)
   empresaEnderecoFiscal String?  @map("empresa_endereco_fiscal") @db.Text
   empresaDescricaoNfse String?  @map("empresa_descricao_nfse") @db.Text // template {aluno}, {frequencia}, {curso}, {mes}, {ano}
   emailBody            String?  @map("email_body") @db.Text
+  nfAttachmentPath     String?  @map("nf_attachment_path") @db.Text // caminho do arquivo PDF anexado (NF)
   scheduledFor         DateTime @map("scheduled_for") // data/hora em que deve ser emitida e enviada
   repeatMonthly        Boolean  @default(false) @map("repeat_monthly")
   criadoEm      DateTime @default(now()) @map("created_at")
@@ -457,6 +460,22 @@ model NfseSchedule {
   @@unique([enrollmentId, year, month])
   @@index([scheduledFor])
   @@map("nfse_schedules")
+}
+
+// Registro de e-mail de NF enviado (agendado) por aluno/mês – impede novo envio no mesmo mês
+model NfseEmailSent {
+  id           String   @id @default(cuid())
+  enrollmentId String   @map("enrollment_id")
+  year         Int
+  month        Int      // 1-12
+  sentAt       DateTime @default(now()) @map("sent_at")
+
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, year, month])
+  @@index([enrollmentId])
+  @@index([year, month])
+  @@map("nfse_email_sent")
 }
 
 // Observa├º├Áes financeiras (aluno ou professor) ÔÇô lista, adicionar, apagar
