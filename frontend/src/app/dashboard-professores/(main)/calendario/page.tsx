@@ -177,8 +177,6 @@ export default function CalendarioProfessorPage() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [loadingGroup, setLoadingGroup] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [showDesistirConfirm, setShowDesistirConfirm] = useState(false)
-  const [desistirLoading, setDesistirLoading] = useState(false)
 
   const searchParams = useSearchParams()
   const modalOpen = selectedLesson !== null
@@ -875,17 +873,6 @@ export default function CalendarioProfessorPage() {
                   {t('professor.calendar.registerClass')}
                 </Button>
               )}
-              {selectedLesson && (
-                <Button
-                  variant="outline"
-                  onClick={() => setShowDesistirConfirm(true)}
-                  disabled={desistirLoading}
-                  className="flex-1 border-amber-300 text-amber-800 hover:bg-amber-50"
-                >
-                  {desistirLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <UserMinus className="w-4 h-4 mr-2" />}
-                  Desistir deste aluno
-                </Button>
-              )}
             {selectedLessonIsFuture && !selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800 w-full">
                 {t('professor.calendar.noFutureLessonRecord')}
@@ -1148,41 +1135,6 @@ export default function CalendarioProfessorPage() {
 
       </Modal>
 
-      {showDesistirConfirm && selectedLesson && (
-        <ConfirmModal
-          isOpen={showDesistirConfirm}
-          onClose={() => setShowDesistirConfirm(false)}
-          onConfirm={async () => {
-            setDesistirLoading(true)
-            try {
-              const res = await fetch('/api/professor/desistir-aluno', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ enrollmentId: selectedLesson.enrollmentId }),
-              })
-              const json = await res.json()
-              if (json.ok) {
-                setToast({ message: json.message || 'Você saiu da agenda deste aluno.', type: 'success' })
-                closeModal()
-                setShowDesistirConfirm(false)
-                fetchLessons()
-              } else {
-                setToast({ message: json.message || 'Erro ao processar.', type: 'error' })
-              }
-            } catch {
-              setToast({ message: 'Erro de conexão. Tente novamente.', type: 'error' })
-            } finally {
-              setDesistirLoading(false)
-            }
-          }}
-          title="Desistir deste aluno"
-          message="Você sairá da agenda deste aluno. Todas as aulas futuras dele ficarão sem professor e a administração poderá redesignar. Tem certeza?"
-          confirmLabel="Sim, desistir"
-          cancelLabel="Cancelar"
-          variant="danger"
-        />
-      )}
 
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
