@@ -77,6 +77,9 @@ export async function PATCH(
     const updateEnrollment: Prisma.EnrollmentUpdateInput = {}
     if (metodoPagamento !== undefined) updateEnrollment.metodoPagamento = typeof metodoPagamento === 'string' ? metodoPagamento.trim() || null : null
     if (valorMensal !== undefined) updateEnrollment.valorMensalidade = valorMensal ?? null
+    // Dia de vencimento: a tela do Financeiro prioriza Enrollment.diaPagamento.
+    // Então quando o financeiro altera o vencimento, salvamos também na matrícula para refletir imediatamente na UI.
+    if (dueDay !== undefined) updateEnrollment.diaPagamento = dueDay ?? null
     if (faturamentoTipo !== undefined) updateEnrollment.faturamentoTipo = faturamentoTipo === 'ALUNO' || faturamentoTipo === 'EMPRESA' ? faturamentoTipo : 'ALUNO'
     if (faturamentoRazaoSocial !== undefined) updateEnrollment.faturamentoRazaoSocial = typeof faturamentoRazaoSocial === 'string' ? faturamentoRazaoSocial.trim() || null : null
     if (faturamentoCnpj !== undefined) updateEnrollment.faturamentoCnpj = typeof faturamentoCnpj === 'string' ? faturamentoCnpj.replace(/\D/g, '').slice(0, 14) || null : null
