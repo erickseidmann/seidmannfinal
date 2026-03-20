@@ -109,6 +109,7 @@ export default function RegistrarAulasPage() {
   const now = new Date()
   const [selectedYear, setSelectedYear] = useState(() => now.getFullYear())
   const [selectedMonth, setSelectedMonth] = useState(() => now.getMonth() + 1) // 1-12
+  const [initialMonthResolved, setInitialMonthResolved] = useState(false)
 
   const { t, locale } = useLanguage()
   const dateLocale = locale === 'pt-BR' ? 'pt-BR' : locale === 'es' ? 'es' : 'en-US'
@@ -135,6 +136,53 @@ export default function RegistrarAulasPage() {
   const [loadingRecord, setLoadingRecord] = useState(false)
   const [periodPaid, setPeriodPaid] = useState(false)
   const [registeringLessonId, setRegisteringLessonId] = useState<string | null>(null)
+
+  const resolveCurrentPeriodMonth = useCallback(async () => {
+    const current = { year: now.getFullYear(), month: now.getMonth() + 1 }
+    const next = current.month === 12 ? { year: current.year + 1, month: 1 } : { year: current.year, month: current.month + 1 }
+    const prev = current.month === 1 ? { year: current.year - 1, month: 12 } : { year: current.year, month: current.month - 1 }
+    const candidates = [current, next, prev]
+
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+    try {
+      const results = await Promise.all(
+        candidates.map(async (c) => {
+          const res = await fetch(`/api/professor/financeiro?year=${c.year}&month=${c.month}`, { credentials: 'include' })
+          const json = await res.json().catch(() => ({}))
+          if (!res.ok || !json?.ok || !json?.data?.dataInicio || !json?.data?.dataTermino) {
+            return null
+          }
+          return {
+            ...c,
+            start: String(json.data.dataInicio),
+            end: String(json.data.dataTermino),
+            status: String(json.data.statusPagamento || 'EM_ABERTO'),
+          }
+        })
+      )
+      const valid = results.filter((r): r is NonNullable<typeof r> => !!r)
+      if (valid.length > 0) {
+        const containingOpen = valid.find((r) => r.start <= todayKey && todayKey <= r.end && r.status !== 'PAGO')
+        if (containingOpen) {
+          if (selectedYear !== containingOpen.year) setSelectedYear(containingOpen.year)
+          if (selectedMonth !== containingOpen.month) setSelectedMonth(containingOpen.month)
+          setInitialMonthResolved(true)
+          return
+        }
+        const containingAny = valid.find((r) => r.start <= todayKey && todayKey <= r.end)
+        if (containingAny) {
+          if (selectedYear !== containingAny.year) setSelectedYear(containingAny.year)
+          if (selectedMonth !== containingAny.month) setSelectedMonth(containingAny.month)
+          setInitialMonthResolved(true)
+          return
+        }
+      }
+    } catch {
+      // fallback para mês atual
+    }
+    setInitialMonthResolved(true)
+  }, [now, selectedMonth, selectedYear])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -227,8 +275,14 @@ export default function RegistrarAulasPage() {
   }, [t, selectedYear, selectedMonth])
 
   useEffect(() => {
+    if (initialMonthResolved) return
+    resolveCurrentPeriodMonth()
+  }, [initialMonthResolved, resolveCurrentPeriodMonth])
+
+  useEffect(() => {
+    if (!initialMonthResolved) return
     fetchData()
-  }, [fetchData])
+  }, [initialMonthResolved, fetchData])
 
   const monthYearLabel = useMemo(() => {
     const d = new Date(selectedYear, selectedMonth - 1, 15)

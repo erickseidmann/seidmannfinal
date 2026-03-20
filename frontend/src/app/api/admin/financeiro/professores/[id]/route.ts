@@ -17,10 +17,29 @@ function addMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()))
 }
 
+function addDaysUtc(d: Date, days: number): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days))
+}
+
 /** Retorna (year, month) do próximo mês. */
 function nextYearMonth(year: number, month: number): { year: number; month: number } {
   if (month === 12) return { year: year + 1, month: 1 }
   return { year, month: month + 1 }
+}
+
+function lastDayOfMonthUtc(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function buildPeriodFromDueDay(year: number, month: number, dueDay: number): { inicio: Date; termino: Date } {
+  const safeDueCurrent = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(year, month))
+  // Pagamento no dia X fecha o período no dia X-1 do mês selecionado.
+  const pagamentoDate = new Date(Date.UTC(year, month - 1, safeDueCurrent))
+  const termino = addDaysUtc(pagamentoDate, -1)
+  const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
+  const safeDuePrev = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(prev.year, prev.month))
+  const inicio = new Date(Date.UTC(prev.year, prev.month - 1, safeDuePrev))
+  return { inicio, termino }
 }
 
 export async function PATCH(
@@ -59,6 +78,7 @@ export async function PATCH(
     const {
       year,
       month,
+      dueDay,
       paymentStatus,
       valorPorPeriodo,
       valorExtra,
@@ -105,6 +125,11 @@ export async function PATCH(
     }
     if (periodoTermino !== undefined) {
       updateData.periodoTermino = periodoTermino ? new Date(periodoTermino) : null
+    }
+    if (dueDay !== undefined) {
+      const p = buildPeriodFromDueDay(year, month, dueDay)
+      updateData.periodoInicio = p.inicio
+      updateData.periodoTermino = p.termino
     }
 
     if (Object.keys(updateData).length === 0 && (metodoPagamento === undefined && infosPagamento === undefined)) {
@@ -165,8 +190,10 @@ export async function PATCH(
           let nextYm = nextYearMonth(keyYear, keyMonth)
           const maxMonths = 12
           for (let i = 0; i < maxMonths; i++) {
-            const nextInicio = new Date(lastTermino)
-            const nextTermino = addMonth(lastTermino)
+            // Próximo período começa no dia seguinte ao término atual
+            // e termina um mês depois menos 1 dia (ex.: 25/03–24/04).
+            const nextInicio = addDaysUtc(lastTermino, 1)
+            const nextTermino = addDaysUtc(addMonth(nextInicio), -1)
             await prisma.teacherPaymentMonth.upsert({
               where: {
                 teacherId_year_month: {

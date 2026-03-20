@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays, Trash2, CheckCircle, XCircle, Clock, Video, ClipboardList, AlertTriangle } from 'lucide-react'
+import { Megaphone, Bell, Loader2, DollarSign, UserPlus, Calendar, CalendarDays, Trash2, CheckCircle, XCircle, Clock, ClipboardList, AlertTriangle } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useTranslation } from '@/contexts/LanguageContext'
@@ -664,22 +664,6 @@ export default function DashboardProfessoresInicioPage() {
                           {getStatusLabel(l.status)}
                         </span>
                       )}
-                      {(() => {
-                        const lessonStart = new Date(l.startAt).getTime()
-                        const lessonEnd = lessonStart + (l.durationMinutes || 60) * 60 * 1000
-                        const now = Date.now()
-                        const canJoin = l.status === 'CONFIRMED' && now >= lessonStart - 15 * 60 * 1000 && now <= lessonEnd + 15 * 60 * 1000
-                        if (!canJoin) return null
-                        return (
-                          <Link
-                            href={`/dashboard-professores/aula/${l.id}`}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-orange text-white text-xs font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shrink-0"
-                          >
-                            <Video className="w-3.5 h-3.5" />
-                            Entrar
-                          </Link>
-                        )
-                      })()}
                     </div>
                     <span className={`text-xs shrink-0 ${l.status === 'CANCELLED' ? 'text-red-600' : 'text-gray-500'}`}>
                       {formatLessonTime(l.startAt, l.durationMinutes)}

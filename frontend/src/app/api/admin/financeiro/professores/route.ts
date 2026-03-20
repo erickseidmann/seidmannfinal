@@ -82,7 +82,14 @@ export async function GET(request: NextRequest) {
     } as const
 
     const teachers = await prisma.teacher.findMany({
-      where: { status: 'ACTIVE' },
+      where: useMonthMode
+        ? {
+            status: 'ACTIVE',
+            // Professor só entra a partir do mês em que foi cadastrado.
+            // Se foi criado depois do fim do mês selecionado, não aparece na listagem.
+            criadoEm: { lte: periodEnd },
+          }
+        : { status: 'ACTIVE' },
       select: teacherSelect,
       orderBy: { nome: 'asc' },
     })

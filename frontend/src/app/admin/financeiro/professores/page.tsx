@@ -11,7 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw, Pencil } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -29,6 +29,7 @@ interface ProfessorFinanceiro {
   valorPorHora: number
   dataInicio: string
   dataTermino: string
+  diaPagamento?: number
   totalHorasEstimadas: number
   totalHorasRegistradas: number
   totalRegistrosEsperados: number
@@ -51,24 +52,47 @@ function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
 }
 
-/** Vencimento (data término) está nos próximos 7 dias (hoje inclusive). */
-function isProximoPagamento(dataTerminoISO: string): boolean {
-  const hoje = new Date()
-  hoje.setHours(0, 0, 0, 0)
-  const termino = new Date(dataTerminoISO + 'T12:00:00')
-  termino.setHours(0, 0, 0, 0)
-  const em7Dias = new Date(hoje)
-  em7Dias.setDate(em7Dias.getDate() + 7)
-  return termino.getTime() >= hoje.getTime() && termino.getTime() <= em7Dias.getTime()
+function getDiaPagamento(p: ProfessorFinanceiro): number {
+  if (typeof p.diaPagamento === 'number' && p.diaPagamento >= 1 && p.diaPagamento <= 31) {
+    return p.diaPagamento
+  }
+  return new Date(p.dataTermino + 'T12:00:00').getDate()
 }
 
-/** Vencimento (data término) já passou. */
-function isAtrasado(dataTerminoISO: string): boolean {
+function nextDueDateFromDay(day: number, afterDate: Date): Date {
+  const year = afterDate.getFullYear()
+  const month = afterDate.getMonth()
+  const safeDay = Math.min(day, new Date(year, month + 1, 0).getDate())
+  const candidate = new Date(year, month, safeDay)
+  candidate.setHours(0, 0, 0, 0)
+  if (candidate >= afterDate) return candidate
+  const nextSafe = Math.min(day, new Date(year, month + 2, 0).getDate())
+  const next = new Date(year, month + 1, nextSafe)
+  next.setHours(0, 0, 0, 0)
+  return next
+}
+
+/** Vencimento (dia pagto.) está nos próximos 7 dias (hoje inclusive). */
+function isProximoPagamento(diaPagamento: number): boolean {
   const hoje = new Date()
   hoje.setHours(0, 0, 0, 0)
-  const termino = new Date(dataTerminoISO + 'T12:00:00')
-  termino.setHours(0, 0, 0, 0)
-  return termino.getTime() < hoje.getTime()
+  const vencimento = nextDueDateFromDay(diaPagamento, hoje)
+  const em7Dias = new Date(hoje)
+  em7Dias.setDate(em7Dias.getDate() + 7)
+  return vencimento.getTime() >= hoje.getTime() && vencimento.getTime() <= em7Dias.getTime()
+}
+
+/** Vencimento (dia pagto.) já passou no mês atual. */
+function isAtrasado(diaPagamento: number): boolean {
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const thisMonthDue = new Date(
+    hoje.getFullYear(),
+    hoje.getMonth(),
+    Math.min(diaPagamento, new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate())
+  )
+  thisMonthDue.setHours(0, 0, 0, 0)
+  return thisMonthDue.getTime() < hoje.getTime()
 }
 
 function CellWithCopy({
@@ -115,8 +139,7 @@ export default function FinanceiroProfessoresPage() {
   const [professores, setProfessores] = useState<ProfessorFinanceiro[]>([])
   const [loading, setLoading] = useState(true)
   const [editPeriodo, setEditPeriodo] = useState<ProfessorFinanceiro | null>(null)
-  const [periodoInicio, setPeriodoInicio] = useState('')
-  const [periodoTermino, setPeriodoTermino] = useState('')
+  const [dueDay, setDueDay] = useState('')
   const [valorPorPeriodo, setValorPorPeriodo] = useState('')
   const [valorExtra, setValorExtra] = useState('')
   const [metodoPagamento, setMetodoPagamento] = useState('')
@@ -145,18 +168,19 @@ export default function FinanceiroProfessoresPage() {
   const [showFilterData, setShowFilterData] = useState(false)
   const filterDataRef = useRef<HTMLDivElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
-  const [modalDataInicio, setModalDataInicio] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
-  const [modalDataTermino, setModalDataTermino] = useState<{ open: boolean; data: string }>({ open: false, data: '' })
+  const [modalDueDay, setModalDueDay] = useState<{ open: boolean; day: string }>({ open: false, day: '' })
   const [savingBulkDates, setSavingBulkDates] = useState(false)
+  const [zerandoEmAberto, setZerandoEmAberto] = useState(false)
+  const [confirmZerarEmAbertoOpen, setConfirmZerarEmAbertoOpen] = useState(false)
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null)
   const COLUMN_KEYS_FINANCEIRO_PROF = [
-    'select', 'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
+    'select', 'nome', 'valorPorHora', 'diaPagamento', 'totalHorasEstimadas', 'totalHorasRegistradas',
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
     'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
   ] as const
   // Por padrão ocultar: Registros esperados, Valor por período, Valores extras (podem ser exibidas em Colunas)
   const DEFAULT_VISIBLE_FINANCEIRO_PROF = [
-    'select', 'nome', 'valorPorHora', 'dataInicio', 'dataTermino', 'totalHorasEstimadas', 'totalHorasRegistradas',
+    'select', 'nome', 'valorPorHora', 'diaPagamento', 'totalHorasEstimadas', 'totalHorasRegistradas',
     'valorAPagar', 'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
   ]
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => [...DEFAULT_VISIBLE_FINANCEIRO_PROF])
@@ -228,10 +252,14 @@ export default function FinanceiroProfessoresPage() {
 
   const { proximoPagamento, atrasados } = useMemo(() => {
     const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
-    const proximo = emAberto.filter((p) => isProximoPagamento(p.dataTermino))
-    const atrasadosList = emAberto.filter((p) => isAtrasado(p.dataTermino))
+    const proximo = emAberto.filter((p) => isProximoPagamento(getDiaPagamento(p)))
+    const atrasadosList = emAberto.filter((p) => isAtrasado(getDiaPagamento(p)))
     return { proximoPagamento: proximo, atrasados: atrasadosList }
   }, [professores])
+  const totalEmAberto = useMemo(
+    () => professores.filter((p) => p.statusPagamento === 'EM_ABERTO').length,
+    [professores]
+  )
 
   /** Próxima data de vencimento (data término) entre os em aberto, e valor estimado nessa data */
   const { proximaDataPagamento, valorEstimadoProximoPagamento, listaProximaData } = useMemo(() => {
@@ -337,8 +365,7 @@ export default function FinanceiroProfessoresPage() {
 
   const openEditPeriodo = (row: ProfessorFinanceiro) => {
     setEditPeriodo(row)
-    setPeriodoInicio(row.dataInicio)
-    setPeriodoTermino(row.dataTermino)
+    setDueDay(String(new Date(row.dataTermino + 'T12:00:00').getDate()))
     setValorPorPeriodo(row.valorPorPeriodo ? String(row.valorPorPeriodo) : '')
     setValorExtra(row.valorExtra ? String(row.valorExtra) : '')
     setMetodoPagamento(row.metodoPagamento ?? '')
@@ -484,14 +511,53 @@ Equipe Seidmann Institute`
     }
   }
 
-  const savePeriodo = async () => {
-    if (!editPeriodo) return
-    if (!periodoInicio || !periodoTermino) {
-      setToast({ message: 'Preencha data de início e data de término.', type: 'error' })
+  const zerarPeriodosEmAberto = async () => {
+    const idsEmAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO').map((p) => p.id)
+    if (idsEmAberto.length === 0) {
+      setToast({ message: 'Não há pagamentos em aberto para zerar.', type: 'error' })
       return
     }
-    if (new Date(periodoInicio) > new Date(periodoTermino)) {
-      setToast({ message: 'Data de início deve ser anterior à data de término.', type: 'error' })
+
+    setZerandoEmAberto(true)
+    setToast(null)
+    try {
+      let ok = 0
+      let err = 0
+      for (const id of idsEmAberto) {
+        const res = await fetch(`/api/admin/financeiro/professores/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            year: selectedAno,
+            month: selectedMes,
+            valorPorPeriodo: 0,
+          }),
+        })
+        const json = await res.json().catch(() => ({}))
+        if (res.ok && json?.ok) ok++
+        else err++
+      }
+
+      setToast({
+        message:
+          err === 0
+            ? `Valor por período zerado com sucesso em ${ok} professor(es).`
+            : `Zerados: ${ok}. Com erro: ${err}.`,
+        type: err === 0 ? 'success' : 'error',
+      })
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao zerar períodos em aberto.', type: 'error' })
+    } finally {
+      setZerandoEmAberto(false)
+    }
+  }
+
+  const savePeriodo = async () => {
+    if (!editPeriodo) return
+    const day = parseInt(dueDay, 10)
+    if (!Number.isFinite(day) || day < 1 || day > 31) {
+      setToast({ message: 'Informe um dia de pagamento válido (1-31).', type: 'error' })
       return
     }
     setSaving(true)
@@ -503,8 +569,7 @@ Equipe Seidmann Institute`
         body: JSON.stringify({
           year: selectedAno,
           month: selectedMes,
-          periodoInicio,
-          periodoTermino,
+          dueDay: day,
           valorPorPeriodo: valorPorPeriodo ? Number(valorPorPeriodo) : null,
           valorExtra: valorExtra ? Number(valorExtra) : null,
           metodoPagamento: metodoPagamento.trim() || null,
@@ -554,16 +619,14 @@ Equipe Seidmann Institute`
     if (el) el.indeterminate = someSelected && !allSelected
   }, [someSelected, allSelected])
 
-  const openModalDataInicio = () => {
-    setModalDataInicio({ open: true, data: '' })
-  }
-  const openModalDataTermino = () => {
-    setModalDataTermino({ open: true, data: '' })
+  const openModalDueDay = () => {
+    setModalDueDay({ open: true, day: '' })
   }
 
-  const saveBulkDataInicio = async () => {
-    if (!modalDataInicio.data.trim()) {
-      setToast({ message: 'Informe a data de início.', type: 'error' })
+  const saveBulkDueDay = async () => {
+    const day = parseInt(modalDueDay.day, 10)
+    if (!Number.isFinite(day) || day < 1 || day > 31) {
+      setToast({ message: 'Informe um dia de pagamento válido (1-31).', type: 'error' })
       return
     }
     const ids = Array.from(selectedIds)
@@ -583,7 +646,7 @@ Equipe Seidmann Institute`
           body: JSON.stringify({
             year: selectedAno,
             month: selectedMes,
-            periodoInicio: modalDataInicio.data,
+            dueDay: day,
           }),
         })
         const json = await res.json()
@@ -591,57 +654,14 @@ Equipe Seidmann Institute`
         else err++
       }
       setToast({
-        message: err === 0 ? `Data de início definida para ${ok} professor(es).` : `${ok} atualizado(s), ${err} erro(s).`,
+        message: err === 0 ? `Dia de pagamento definido para ${ok} professor(es).` : `${ok} atualizado(s), ${err} erro(s).`,
         type: err === 0 ? 'success' : 'error',
       })
       await fetchData(selectedAno, selectedMes)
-      setModalDataInicio({ open: false, data: '' })
+      setModalDueDay({ open: false, day: '' })
       setSelectedIds(new Set())
     } catch {
-      setToast({ message: 'Erro ao atualizar datas.', type: 'error' })
-    } finally {
-      setSavingBulkDates(false)
-    }
-  }
-
-  const saveBulkDataTermino = async () => {
-    if (!modalDataTermino.data.trim()) {
-      setToast({ message: 'Informe a data de término.', type: 'error' })
-      return
-    }
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) {
-      setToast({ message: 'Selecione ao menos um professor.', type: 'error' })
-      return
-    }
-    setSavingBulkDates(true)
-    setToast(null)
-    try {
-      let ok = 0
-      let err = 0
-      for (const id of ids) {
-        const res = await fetch(`/api/admin/financeiro/professores/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            year: selectedAno,
-            month: selectedMes,
-            periodoTermino: modalDataTermino.data,
-          }),
-        })
-        const json = await res.json()
-        if (res.ok && json.ok) ok++
-        else err++
-      }
-      setToast({
-        message: err === 0 ? `Data de término definida para ${ok} professor(es).` : `${ok} atualizado(s), ${err} erro(s).`,
-        type: err === 0 ? 'success' : 'error',
-      })
-      await fetchData(selectedAno, selectedMes)
-      setModalDataTermino({ open: false, data: '' })
-      setSelectedIds(new Set())
-    } catch {
-      setToast({ message: 'Erro ao atualizar datas.', type: 'error' })
+      setToast({ message: 'Erro ao atualizar dia de pagamento.', type: 'error' })
     } finally {
       setSavingBulkDates(false)
     }
@@ -677,17 +697,10 @@ Equipe Seidmann Institute`
       ),
     },
     {
-      key: 'dataInicio',
-      label: 'Data início',
+      key: 'diaPagamento',
+      label: 'Dia pagto.',
       render: (row) => (
-        <CellWithCopy value={formatDate(row.dataInicio)} onCopy={handleCopy} />
-      ),
-    },
-    {
-      key: 'dataTermino',
-      label: 'Data término',
-      render: (row) => (
-        <CellWithCopy value={formatDate(row.dataTermino)} onCopy={handleCopy} />
+        <CellWithCopy value={String(new Date(row.dataTermino + 'T12:00:00').getDate())} onCopy={handleCopy} />
       ),
     },
     {
@@ -827,7 +840,7 @@ Equipe Seidmann Institute`
             className="p-1.5 rounded text-orange-600 hover:bg-orange-50"
             title="Editar mês"
           >
-            <Calendar className="w-4 h-4" />
+            <Pencil className="w-4 h-4" />
           </button>
           <button
             type="button"
@@ -1100,17 +1113,10 @@ Equipe Seidmann Institute`
                   <>
                     <button
                       type="button"
-                      onClick={openModalDataInicio}
+                      onClick={openModalDueDay}
                       className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 h-9"
                     >
-                      Definir data de início para todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openModalDataTermino}
-                      className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 h-9"
-                    >
-                      Definir data de término para todos selecionados
+                      Definir dia de pagamento para selecionados
                     </button>
                     <span className="text-sm text-gray-500">{selectedIds.size} selecionado(s)</span>
                   </>
@@ -1136,6 +1142,16 @@ Equipe Seidmann Institute`
                   aria-label="Atualizar lista"
                 >
                   <RefreshCw className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmZerarEmAbertoOpen(true)}
+                  disabled={zerandoEmAberto || totalEmAberto === 0}
+                  className="rounded-lg border border-red-300 bg-red-50 px-4 h-9 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-2"
+                  title="Zerar períodos de pagamentos em aberto"
+                >
+                  {zerandoEmAberto ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Zerar períodos de pagamentos em aberto
                 </button>
                 {filterAlerta !== 'todos' && (
                   <button
@@ -1201,23 +1217,16 @@ Equipe Seidmann Institute`
         {editPeriodo && (
           <div className="space-y-4">
             <p className="text-sm text-gray-600">
-              Referência: {MESES_LABELS[selectedMes]} de {selectedAno}. Período personalizado (ex.: 15/01 a 15/02).
+              Referência: {MESES_LABELS[selectedMes]} de {selectedAno}. Defina apenas o dia de pagamento; o sistema calcula automaticamente o período.
             </p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Data início</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Dia de pagamento (1-31)</label>
               <input
-                type="date"
-                value={periodoInicio}
-                onChange={(e) => setPeriodoInicio(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Data término</label>
-              <input
-                type="date"
-                value={periodoTermino}
-                onChange={(e) => setPeriodoTermino(e.target.value)}
+                type="number"
+                min={1}
+                max={31}
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               />
             </div>
@@ -1272,31 +1281,33 @@ Equipe Seidmann Institute`
       </Modal>
 
       <Modal
-        isOpen={modalDataInicio.open}
-        onClose={() => setModalDataInicio({ open: false, data: '' })}
-        title="Definir data de início para todos selecionados"
+        isOpen={modalDueDay.open}
+        onClose={() => setModalDueDay({ open: false, day: '' })}
+        title="Definir dia de pagamento para selecionados"
         size="sm"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalDataInicio({ open: false, data: '' })}>
+            <Button variant="secondary" onClick={() => setModalDueDay({ open: false, day: '' })}>
               Cancelar
             </Button>
-            <Button onClick={saveBulkDataInicio} disabled={savingBulkDates}>
-              {savingBulkDates ? 'Salvando...' : 'Definir data de início'}
+            <Button onClick={saveBulkDueDay} disabled={savingBulkDates}>
+              {savingBulkDates ? 'Salvando...' : 'Definir dia'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Será aplicada a data de início para os {selectedIds.size} professor(es) selecionado(s) no mês {MESES_LABELS[selectedMes]} de {selectedAno}.
+            Será aplicado o dia de pagamento para os {selectedIds.size} professor(es) selecionado(s) no mês {MESES_LABELS[selectedMes]} de {selectedAno}.
           </p>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Data de início</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Dia de pagamento (1-31)</label>
             <input
-              type="date"
-              value={modalDataInicio.data}
-              onChange={(e) => setModalDataInicio((prev) => ({ ...prev, data: e.target.value }))}
+              type="number"
+              min={1}
+              max={31}
+              value={modalDueDay.day}
+              onChange={(e) => setModalDueDay((prev) => ({ ...prev, day: e.target.value }))}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
             />
           </div>
@@ -1304,34 +1315,39 @@ Equipe Seidmann Institute`
       </Modal>
 
       <Modal
-        isOpen={modalDataTermino.open}
-        onClose={() => setModalDataTermino({ open: false, data: '' })}
-        title="Definir data de término para todos selecionados"
+        isOpen={confirmZerarEmAbertoOpen}
+        onClose={() => !zerandoEmAberto && setConfirmZerarEmAbertoOpen(false)}
+        title="Zerar períodos de pagamentos em aberto"
         size="sm"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalDataTermino({ open: false, data: '' })}>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmZerarEmAbertoOpen(false)}
+              disabled={zerandoEmAberto}
+            >
               Cancelar
             </Button>
-            <Button onClick={saveBulkDataTermino} disabled={savingBulkDates}>
-              {savingBulkDates ? 'Salvando...' : 'Definir data de término'}
+            <Button
+              onClick={async () => {
+                await zerarPeriodosEmAberto()
+                setConfirmZerarEmAbertoOpen(false)
+              }}
+              disabled={zerandoEmAberto || totalEmAberto === 0}
+            >
+              {zerandoEmAberto ? 'Zerando...' : 'Confirmar'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Será aplicada a data de término para os {selectedIds.size} professor(es) selecionado(s) no mês {MESES_LABELS[selectedMes]} de {selectedAno}.
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">
+            Isso vai definir <strong>Valor por período = R$ 0,00</strong> para todos os professores com status <strong>Em aberto</strong> no mês{' '}
+            {MESES_LABELS[selectedMes]} de {selectedAno}.
           </p>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Data de término</label>
-            <input
-              type="date"
-              value={modalDataTermino.data}
-              onChange={(e) => setModalDataTermino((prev) => ({ ...prev, data: e.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            />
-          </div>
+          <p className="text-sm text-gray-600">
+            Total de professores em aberto: <strong>{totalEmAberto}</strong>
+          </p>
         </div>
       </Modal>
 

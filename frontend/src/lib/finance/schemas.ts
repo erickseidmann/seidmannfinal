@@ -43,6 +43,7 @@ export type UpdateStudentPaymentInput = z.infer<typeof updateStudentPaymentSchem
 export const updateTeacherPaymentSchema = z.object({
   year: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(2000).max(2100)),
   month: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(1).max(12)),
+  dueDay: z.preprocess((v) => (v === undefined || v === null || v === '' ? undefined : Number(v)), z.number().int().min(1).max(31).optional()),
   paymentStatus: z.enum(['PAGO', 'ATRASADO', 'PENDING', 'EM_ABERTO']).optional(),
   valorPorPeriodo: z.preprocess(
     (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
