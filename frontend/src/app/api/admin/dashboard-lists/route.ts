@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/dashboard-lists?type=activeStudents|studentsWithoutLesson|inactiveStudents|totalUsers|activeTeachers|inactiveTeachers|absencesStudentsWeek|...
+ * GET /api/admin/dashboard-lists?type=activeStudents|teachersWithLateLessonRecords|studentsWithoutLesson|inactiveStudents|totalUsers|activeTeachers|...
  * Retorna lista de nomes (e dados extras quando aplicável) para os cubos do dashboard admin.
  */
 
@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { EnrollmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { INACTIVE_REASON_LABELS } from '@/lib/inactive-reason'
+import { findLessonsPendingRecord, PENDING_RECORD_LOOKBACK_DAYS } from '@/lib/lesson-pending-record'
 
 const NOW = new Date()
 
@@ -40,12 +42,16 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type') || ''
 
     if (type === 'activeStudents') {
-      const users = await prisma.user.findMany({
-        where: { role: 'STUDENT', status: 'ACTIVE' },
+      /** Mesmo critério do resumo em Admin › Alunos: matrículas ativas (Enrollment) */
+      const enrollments = await prisma.enrollment.findMany({
+        where: { status: 'ACTIVE' },
         select: { id: true, nome: true },
         orderBy: { nome: 'asc' },
       })
-      return NextResponse.json({ ok: true, data: users.map((u) => ({ id: u.id, nome: u.nome })) })
+      return NextResponse.json({
+        ok: true,
+        data: enrollments.map((e) => ({ id: e.id, nome: e.nome })),
+      })
     }
 
     if (type === 'novosMatriculados') {
@@ -296,12 +302,38 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'inactiveStudents') {
-      const users = await prisma.user.findMany({
-        where: { role: 'STUDENT', status: 'INACTIVE' },
-        select: { id: true, nome: true },
+      /** Mesmo critério do resumo em Admin › Alunos: matrículas inativas (Enrollment) */
+      const enrollments = await prisma.enrollment.findMany({
+        where: { status: 'INACTIVE' },
+        select: {
+          id: true,
+          nome: true,
+          inactiveAt: true,
+          inactiveReason: true,
+          inactiveReasonOther: true,
+          inactiveByUser: { select: { nome: true } },
+        },
         orderBy: { nome: 'asc' },
       })
-      return NextResponse.json({ ok: true, data: users.map((u) => ({ id: u.id, nome: u.nome })) })
+      return NextResponse.json({
+        ok: true,
+        data: enrollments.map((e) => {
+          const reasonKey = e.inactiveReason as keyof typeof INACTIVE_REASON_LABELS | null
+          const motivoLabel =
+            reasonKey && INACTIVE_REASON_LABELS[reasonKey]
+              ? reasonKey === 'OUTRO' && e.inactiveReasonOther?.trim()
+                ? `Outro: ${e.inactiveReasonOther.trim()}`
+                : INACTIVE_REASON_LABELS[reasonKey]
+              : null
+          return {
+            id: e.id,
+            nome: e.nome,
+            inactiveAt: e.inactiveAt ? e.inactiveAt.toISOString() : null,
+            inativadoPorNome: e.inactiveByUser?.nome ?? null,
+            motivoInativacao: motivoLabel,
+          }
+        }),
+      })
     }
 
     if (type === 'totalUsers') {
@@ -346,44 +378,133 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Alunos com 3 ausências consecutivas (em dias corridos)
-    if (type === 'studentsWith3ConsecutiveAbsences') {
-      const absences = await prisma.attendance.findMany({
-        where: { type: 'STUDENT', status: 'ABSENT' },
-        select: { userId: true, date: true },
-      })
-      const byUser = new Map<string, Set<string>>()
-      for (const a of absences) {
-        if (!a.userId) continue
-        const key = new Date(a.date).toISOString().slice(0, 10)
-        if (!byUser.has(a.userId)) byUser.set(a.userId, new Set())
-        byUser.get(a.userId)!.add(key)
-      }
-      const oneDayMs = 24 * 60 * 60 * 1000
-      const userIdsWith3: string[] = []
-      for (const [userId, dateSet] of byUser) {
-        const sorted = Array.from(dateSet).sort()
-        let found = false
-        for (let i = 0; i <= sorted.length - 3 && !found; i++) {
-          const d1 = new Date(sorted[i]).getTime()
-          const d2 = new Date(sorted[i + 1]).getTime()
-          const d3 = new Date(sorted[i + 2]).getTime()
-          if (d2 - d1 === oneDayMs && d3 - d2 === oneDayMs) {
-            found = true
-          }
+    // Professores com aulas já encerradas sem registro (últimos N dias)
+    if (type === 'teachersWithLateLessonRecords') {
+      const pending = await findLessonsPendingRecord(new Date())
+      const byTeacher = new Map<
+        string,
+        { nome: string; count: number; oldestStart: Date | null }
+      >()
+      for (const l of pending) {
+        const tid = l.teacherId
+        if (!tid) continue
+        const nome = l.teacher?.nome?.trim() || 'Professor'
+        const cur = byTeacher.get(tid)
+        if (!cur) {
+          byTeacher.set(tid, { nome, count: 1, oldestStart: l.startAt })
+        } else {
+          cur.count++
+          if (!cur.oldestStart || l.startAt < cur.oldestStart) cur.oldestStart = l.startAt
         }
-        if (found) userIdsWith3.push(userId)
       }
-      const users = userIdsWith3.length
-        ? await prisma.user.findMany({
-            where: { id: { in: userIdsWith3 } },
+      const data = [...byTeacher.entries()]
+        .map(([id, v]) => ({
+          id,
+          nome: v.nome,
+          aulasSemRegistro: v.count,
+          aulaMaisAntiga: v.oldestStart ? v.oldestStart.toISOString() : null,
+          janelaDias: PENDING_RECORD_LOOKBACK_DAYS,
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+      return NextResponse.json({ ok: true, data })
+    }
+
+    // Alunos com 3 ou mais ausências no mesmo mês (marcadas como "Não compareceu")
+    if (type === 'studentsWith3ConsecutiveAbsences') {
+      const byEnrollmentMonth = new Map<string, Map<string, number>>() // enrollmentId -> { "YYYY-MM" -> count }
+      const byEnrollmentMonthTeachers = new Map<string, Map<string, string[]>>() // por mês: um nome de professor por falta
+      const addAbsence = (enrollmentId: string, startAt: Date, professorNome: string | null | undefined) => {
+        const monthKey = startAt.toISOString().slice(0, 7) // YYYY-MM
+        if (!byEnrollmentMonth.has(enrollmentId)) byEnrollmentMonth.set(enrollmentId, new Map())
+        const m = byEnrollmentMonth.get(enrollmentId)!
+        m.set(monthKey, (m.get(monthKey) ?? 0) + 1)
+        if (!byEnrollmentMonthTeachers.has(enrollmentId)) byEnrollmentMonthTeachers.set(enrollmentId, new Map())
+        const tm = byEnrollmentMonthTeachers.get(enrollmentId)!
+        if (!tm.has(monthKey)) tm.set(monthKey, [])
+        const label = professorNome?.trim() ? professorNome.trim() : 'Sem professor'
+        tm.get(monthKey)!.push(label)
+      }
+      const recordsIndividuais = await prisma.lessonRecord.findMany({
+        where: { presence: 'NAO_COMPARECEU' },
+        select: {
+          lesson: {
+            select: {
+              enrollmentId: true,
+              startAt: true,
+              teacher: { select: { nome: true } },
+            },
+          },
+        },
+      })
+      for (const r of recordsIndividuais) {
+        if (!r.lesson?.enrollmentId) continue
+        addAbsence(r.lesson.enrollmentId, r.lesson.startAt, r.lesson.teacher?.nome)
+      }
+      const recordsGrupo = await prisma.lessonRecordStudent.findMany({
+        where: { presence: 'NAO_COMPARECEU' },
+        select: {
+          enrollmentId: true,
+          lessonRecord: {
+            select: {
+              lesson: {
+                select: {
+                  startAt: true,
+                  teacher: { select: { nome: true } },
+                },
+              },
+            },
+          },
+        },
+      })
+      for (const s of recordsGrupo) {
+        const lesson = s.lessonRecord?.lesson
+        const startAt = lesson?.startAt
+        if (!s.enrollmentId || !startAt) continue
+        addAbsence(s.enrollmentId, startAt, lesson.teacher?.nome)
+      }
+      const enrollmentIdsWith3: string[] = []
+      for (const [enrollmentId, monthCounts] of byEnrollmentMonth) {
+        const maxInMonth = Math.max(...Array.from(monthCounts.values()))
+        if (maxInMonth >= 3) enrollmentIdsWith3.push(enrollmentId)
+      }
+      const enrollments = enrollmentIdsWith3.length
+        ? await prisma.enrollment.findMany({
+            where: { id: { in: enrollmentIdsWith3 } },
             select: { id: true, nome: true },
             orderBy: { nome: 'asc' },
           })
         : []
+
+      const pickCriticalMonth = (monthCounts: Map<string, number>): string => {
+        let best = ''
+        let bestCount = -1
+        for (const [mk, c] of monthCounts) {
+          if (c > bestCount || (c === bestCount && mk > best)) {
+            best = mk
+            bestCount = c
+          }
+        }
+        return best
+      }
+
+      const data = enrollments.map((e) => {
+        const monthCounts = byEnrollmentMonth.get(e.id) ?? new Map()
+        const criticalMonth = pickCriticalMonth(monthCounts)
+        const faltasNoMes = criticalMonth ? (monthCounts.get(criticalMonth) ?? 0) : 0
+        const teachersList = byEnrollmentMonthTeachers.get(e.id)?.get(criticalMonth) ?? []
+        const professoresUnicos = [...new Set(teachersList)].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+        return {
+          id: e.id,
+          nome: e.nome,
+          faltasNoMes,
+          mesReferencia: criticalMonth,
+          professoresNomes: professoresUnicos,
+        }
+      })
+
       return NextResponse.json({
         ok: true,
-        data: users.map((u) => ({ id: u.id, nome: u.nome })),
+        data,
       })
     }
 
@@ -534,6 +655,33 @@ export async function GET(request: NextRequest) {
         orderBy: { nome: 'asc' },
       })
       return NextResponse.json({ ok: true, data: enrollments })
+    }
+
+    if (type === 'studentsBolsistas') {
+      const enrollments = await prisma.enrollment.findMany({
+        where: { bolsista: true },
+        select: { id: true, nome: true, escolaMatricula: true, escolaMatriculaOutro: true },
+        orderBy: { nome: 'asc' },
+      })
+      return NextResponse.json({
+        ok: true,
+        data: enrollments.map((e) => ({
+          id: e.id,
+          nome: e.nome,
+          escola:
+            e.escolaMatricula === 'OUTRO' && e.escolaMatriculaOutro
+              ? e.escolaMatriculaOutro
+              : e.escolaMatricula === 'SEIDMANN'
+                ? 'Seidmann'
+                : e.escolaMatricula === 'YOUBECOME'
+                  ? 'Youbecome'
+                  : e.escolaMatricula === 'HIGHWAY'
+                    ? 'Highway'
+                    : e.escolaMatricula === 'OUTRO'
+                      ? 'Outro'
+                      : 'Não especificado',
+        })),
+      })
     }
 
     // Alunos sem professor selecionado nesta semana ou na próxima

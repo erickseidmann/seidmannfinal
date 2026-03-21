@@ -1951,7 +1951,7 @@ export default function AdminCalendarioPage() {
               value={novosMatriculadosCount}
               icon={<UserPlus className="w-5 h-5" />}
               color="blue"
-              subtitle="Clique para ver, marcar «enviei link pag» e «já adicionei aulas»"
+              subtitle="Clique para ver, marcar «enviei link pag» e «tudo feito»"
             />
           </div>
           <div
@@ -3045,7 +3045,7 @@ export default function AdminCalendarioPage() {
           {listModal?.type === 'novosMatriculados' ? (
             <div className="max-h-[60vh] overflow-y-auto space-y-3">
               <p className="text-sm text-gray-600">
-                Alunos que se matricularam (formulário ou lista) e ainda não foram marcados como «já adicionei aulas». Use «Enviei link pag» para registrar o envio do link de pagamento; «Já adicionei aulas» remove o aluno da lista.
+                Alunos que se matricularam (formulário ou lista) e ainda não foram marcados como «tudo feito». Use «Enviei link pag» para registrar o envio do link de pagamento. «Tudo feito» remove o aluno da lista mesmo sem pagamento confirmado.
               </p>
               {novosMatriculadosListLoading ? (
                 <p className="text-gray-500">Carregando...</p>
@@ -3095,7 +3095,7 @@ export default function AdminCalendarioPage() {
                                   disabled={isLoadingAulas}
                                   className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  {isLoadingAulas ? 'Salvando...' : 'Já adicionei aulas'}
+                                  {isLoadingAulas ? 'Salvando...' : 'Tudo feito'}
                                 </button>
                               </div>
                             </td>

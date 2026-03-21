@@ -159,6 +159,7 @@ export async function PATCH(
       })
       // Se marcou como PAGO: cancelar boleto Cora, emitir NF (se habilitado) e enviar confirmação + NF ao aluno
       if (newMonthStatus === 'PAGO') {
+        const isBolsista = Boolean((enrollment as { bolsista?: boolean | null }).bolsista)
         try {
           const coraInvoice = await prisma.coraInvoice.findUnique({
             where: { enrollmentId_year_month: { enrollmentId, year, month } },
@@ -186,6 +187,7 @@ export async function PATCH(
         }
 
         // Emitir NFSe (se habilitado) e enviar e-mail de confirmação de pagamento + NF ao aluno
+        // Regra: bolsista não gera NF.
         let nfInfo: { numero?: string; pdfUrl?: string; disponivel: boolean } | undefined
         try {
           const enrollmentFull = await prisma.enrollment.findUnique({
@@ -207,7 +209,7 @@ export async function PATCH(
           const amount = valorMensal ?? 0
           const paymentDate = dataUltimoPagamento ? new Date(dataUltimoPagamento) : new Date()
 
-          if (NFSE_ENABLED && (finance.cpf || finance.cnpj) && amount > 0) {
+          if (!isBolsista && NFSE_ENABLED && (finance.cpf || finance.cnpj) && amount > 0) {
             try {
               const nota = await emitirNfseParaAluno({
                 enrollmentId,

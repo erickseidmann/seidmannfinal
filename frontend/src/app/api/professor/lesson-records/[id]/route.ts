@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
 
 export async function GET(
   request: NextRequest,
@@ -134,16 +135,7 @@ export async function PATCH(
       },
       select: { periodoInicio: true, periodoTermino: true },
     })
-    const lessonTime = lessonStart.getTime()
-    const isInPaidPeriod = paymentMonths.some((pm) => {
-      const s = new Date(pm.periodoInicio as Date)
-      s.setUTCHours(0, 0, 0, 0)
-      const e = new Date(pm.periodoTermino as Date)
-      e.setUTCHours(23, 59, 59, 999)
-      const start = s.getTime()
-      const end = e.getTime()
-      return lessonTime >= start && lessonTime <= end
-    })
+    const isInPaidPeriod = isLessonStartInTeacherPaidPeriod(lessonStart, paymentMonths)
     if (isInPaidPeriod) {
       return NextResponse.json(
         { ok: false, message: 'Período já pago. Não é possível editar registros de aulas deste período.' },

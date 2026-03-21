@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { findLessonsPendingRecord } from '@/lib/lesson-pending-record'
 
 export async function GET(request: NextRequest) {
   try {
@@ -80,6 +81,18 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    /** Matrículas (Enrollment) — mesmo critério da página Admin › Alunos (resumo) */
+    let enrollmentsActive = 0
+    let enrollmentsInactive = 0
+    try {
+      ;[enrollmentsActive, enrollmentsInactive] = await Promise.all([
+        prisma.enrollment.count({ where: { status: 'ACTIVE' } }),
+        prisma.enrollment.count({ where: { status: 'INACTIVE' } }),
+      ])
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar matrículas por status:', err)
+    }
+
     // Alunos sem aula designada: matrículas ativas sem aula futura agendada
     let studentsWithoutLesson = 0
     try {
@@ -102,7 +115,7 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar alunos sem aula:', err)
     }
 
-    // Novos alunos matriculados (pelo formulário, pendentes de "já adicionei aulas" – podem ou não ter aulas já marcadas)
+    // Novos alunos matriculados (formulário, pendenteAdicionarAulas – até admin marcar «tudo feito»)
     let novosMatriculadosCount = 0
     try {
       novosMatriculadosCount = await prisma.enrollment.count({
@@ -205,38 +218,51 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar professores com problemas:', err)
     }
 
-    // Alunos com 3 ausências consecutivas (em dias corridos)
+    // Professores com registros atrasados (aulas já encerradas sem LessonRecord, últimos 60 dias)
+    let teachersWithLateLessonRecords = 0
+    try {
+      const pending = await findLessonsPendingRecord(new Date())
+      const teacherIds = new Set(
+        pending.map((l) => l.teacherId).filter((id): id is string => typeof id === 'string' && id.length > 0)
+      )
+      teachersWithLateLessonRecords = teacherIds.size
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar professores com registros atrasados:', err)
+    }
+
+    // Alunos com 3 ou mais ausências no mesmo mês (marcadas como "Não compareceu")
     let studentsWith3ConsecutiveAbsences = 0
-    if (prisma.attendance) {
-      try {
-        const absences = await prisma.attendance.findMany({
-          where: { type: 'STUDENT', status: 'ABSENT' },
-          select: { userId: true, date: true },
-        })
-        const byUser = new Map<string, Set<string>>()
-        for (const a of absences) {
-          if (!a.userId) continue
-          const key = new Date(a.date).toISOString().slice(0, 10)
-          if (!byUser.has(a.userId)) byUser.set(a.userId, new Set())
-          byUser.get(a.userId)!.add(key)
-        }
-        const oneDayMs = 24 * 60 * 60 * 1000
-        for (const [, dateSet] of byUser) {
-          const sorted = Array.from(dateSet).sort()
-          let found = false
-          for (let i = 0; i <= sorted.length - 3 && !found; i++) {
-            const d1 = new Date(sorted[i]).getTime()
-            const d2 = new Date(sorted[i + 1]).getTime()
-            const d3 = new Date(sorted[i + 2]).getTime()
-            if (d2 - d1 === oneDayMs && d3 - d2 === oneDayMs) {
-              found = true
-            }
-          }
-          if (found) studentsWith3ConsecutiveAbsences++
-        }
-      } catch (err) {
-        console.warn('[api/admin/metrics] Erro ao contar alunos com 3 ausências consecutivas:', err)
+    try {
+      const byEnrollmentMonth = new Map<string, Map<string, number>>() // enrollmentId -> { "YYYY-MM" -> count }
+      const addAbsence = (enrollmentId: string, startAt: Date) => {
+        const monthKey = startAt.toISOString().slice(0, 7) // YYYY-MM
+        if (!byEnrollmentMonth.has(enrollmentId)) byEnrollmentMonth.set(enrollmentId, new Map())
+        const m = byEnrollmentMonth.get(enrollmentId)!
+        m.set(monthKey, (m.get(monthKey) ?? 0) + 1)
       }
+      const recordsIndividuais = await prisma.lessonRecord.findMany({
+        where: { presence: 'NAO_COMPARECEU' },
+        select: { lesson: { select: { enrollmentId: true, startAt: true } } },
+      })
+      for (const r of recordsIndividuais) {
+        if (!r.lesson?.enrollmentId) continue
+        addAbsence(r.lesson.enrollmentId, r.lesson.startAt)
+      }
+      const recordsGrupo = await prisma.lessonRecordStudent.findMany({
+        where: { presence: 'NAO_COMPARECEU' },
+        select: { enrollmentId: true, lessonRecord: { select: { lesson: { select: { startAt: true } } } } },
+      })
+      for (const s of recordsGrupo) {
+        const startAt = s.lessonRecord?.lesson?.startAt
+        if (!s.enrollmentId || !startAt) continue
+        addAbsence(s.enrollmentId, startAt)
+      }
+      for (const [, monthCounts] of byEnrollmentMonth) {
+        const maxInMonth = Math.max(...Array.from(monthCounts.values()))
+        if (maxInMonth >= 3) studentsWith3ConsecutiveAbsences++
+      }
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar alunos com 3+ ausências no mesmo mês:', err)
     }
 
     // Calcular faltas (últimos 7 dias e 30 dias)
@@ -301,6 +327,11 @@ export async function GET(request: NextRequest) {
           INACTIVE: users.INACTIVE,
           total: users.total,
         },
+        /** Contagens de matrícula (alinhado à página Alunos) */
+        enrollments: {
+          ACTIVE: enrollmentsActive,
+          INACTIVE: enrollmentsInactive,
+        },
         teachers: {
           ACTIVE: teachers.ACTIVE,
           INACTIVE: teachers.INACTIVE,
@@ -310,6 +341,7 @@ export async function GET(request: NextRequest) {
         novosMatriculadosCount,
         alunosParaRedirecionarCount,
         teachersWithProblems,
+        teachersWithLateLessonRecords,
         studentsWith3ConsecutiveAbsences,
         absences: {
           studentsWeek: studentsAbsencesWeek,

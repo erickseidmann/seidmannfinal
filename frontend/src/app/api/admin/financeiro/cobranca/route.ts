@@ -56,6 +56,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (enrollmentId) {
+      const enrollment = await prisma.enrollment.findUnique({
+        where: { id: enrollmentId },
+        select: { bolsista: true, nome: true },
+      })
+      if (!enrollment) {
+        return NextResponse.json({ ok: false, message: 'Matrícula não encontrada' }, { status: 404 })
+      }
+      if (enrollment.bolsista) {
+        return NextResponse.json(
+          { ok: false, message: `Aluno bolsista (${enrollment.nome}) não deve gerar boleto.` },
+          { status: 400 }
+        )
+      }
       const result = await generateMonthlyBilling({
         enrollmentId,
         year,

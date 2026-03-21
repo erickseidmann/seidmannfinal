@@ -14,7 +14,22 @@ import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { Users, UserCheck, UserX, GraduationCap, CalendarX, AlertTriangle, UserPlus, History, Link2, ArrowRightLeft, Download, Copy } from 'lucide-react'
+import {
+  Users,
+  UserCheck,
+  UserX,
+  GraduationCap,
+  CalendarX,
+  AlertTriangle,
+  UserPlus,
+  History,
+  FileClock,
+  Link2,
+  ArrowRightLeft,
+  Download,
+  Copy,
+  ChevronDown,
+} from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
   const [copied, setCopied] = useState(false)
@@ -101,6 +116,11 @@ interface Metrics {
     INACTIVE: number
     total: number
   }
+  /** Matrículas (Enrollment) — mesmos números do resumo em Admin › Alunos */
+  enrollments?: {
+    ACTIVE: number
+    INACTIVE: number
+  }
   teachers: {
     ACTIVE: number
     INACTIVE: number
@@ -109,6 +129,8 @@ interface Metrics {
   studentsWithoutLesson: number
   novosMatriculadosCount: number
   teachersWithProblems: number
+  /** Professores com pelo menos uma aula já encerrada sem registro (últimos 60 dias) */
+  teachersWithLateLessonRecords: number
   studentsWith3ConsecutiveAbsences: number
   absences: {
     studentsWeek: number
@@ -127,16 +149,12 @@ type ListType =
   | 'activeTeachers'
   | 'inactiveTeachers'
   | 'teachersWithProblems'
+  | 'teachersWithLateLessonRecords'
   | 'studentsWith3ConsecutiveAbsences'
-  | 'absencesStudentsWeek'
-  | 'absencesStudentsMonth'
 
 interface ListItemBase {
   id: string
   nome: string
-}
-interface ListItemWithData extends ListItemBase {
-  data?: string
 }
 interface ListItemWithoutLesson extends ListItemBase {
   ultimaAulaData: string | null
@@ -167,6 +185,23 @@ interface ListItemAlunosParaRedirecionar extends ListItemBase {
 interface ListItemTotalUser extends ListItemBase {
   role?: string
 }
+interface ListItemInactiveStudent extends ListItemBase {
+  inactiveAt?: string | null
+  inativadoPorNome?: string | null
+  motivoInativacao?: string | null
+}
+/** Lista: alunos com 3+ faltas no mesmo mês (registro de aula) */
+interface ListItemAusenciasMes extends ListItemBase {
+  faltasNoMes?: number
+  mesReferencia?: string
+  professoresNomes?: string[]
+}
+/** Professores com aulas confirmadas já encerradas e sem LessonRecord */
+interface ListItemTeachersLateRecords extends ListItemBase {
+  aulasSemRegistro?: number
+  aulaMaisAntiga?: string | null
+  janelaDias?: number
+}
 
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
@@ -177,9 +212,8 @@ const LIST_TITLES: Record<ListType, string> = {
   activeTeachers: 'Professores Ativos',
   inactiveTeachers: 'Professores Inativos',
   teachersWithProblems: 'Professores com problemas',
+  teachersWithLateLessonRecords: 'Professores com registros atrasados',
   studentsWith3ConsecutiveAbsences: 'Alunos com 3 ausências consecutivas',
-  absencesStudentsWeek: 'Faltas Alunos (7 dias)',
-  absencesStudentsMonth: 'Faltas Alunos (30 dias)',
 }
 
 export default function AdminDashboardPage() {
@@ -189,7 +223,15 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [modalType, setModalType] = useState<ListType | null>(null)
   const [listData, setListData] = useState<
-    (ListItemWithData | ListItemWithoutLesson | ListItemTotalUser | ListItemNovosMatriculados | ListItemAlunosParaRedirecionar)[]
+    (
+      | ListItemWithoutLesson
+      | ListItemTotalUser
+      | ListItemNovosMatriculados
+      | ListItemAlunosParaRedirecionar
+      | ListItemInactiveStudent
+      | ListItemAusenciasMes
+      | ListItemTeachersLateRecords
+    )[]
   >([])
   const [listLoading, setListLoading] = useState(false)
   const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
@@ -198,6 +240,7 @@ export default function AdminDashboardPage() {
   const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
+  const [linksMatriculaAberto, setLinksMatriculaAberto] = useState(false)
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null)
   const [showAuditModal, setShowAuditModal] = useState(false)
   const [auditActivities, setAuditActivities] = useState<Array<{ id: string; actorName: string; action: string; detail: string; createdAt: string }>>([])
@@ -553,13 +596,21 @@ export default function AdminDashboardPage() {
   // Preparar dados para o gráfico (Sem aula = freq. incorreta na semana)
   const chartData = metrics
     ? [
-        { name: 'Ativos', Alunos: metrics.users.ACTIVE, Professores: metrics.teachers.ACTIVE },
+        {
+          name: 'Ativos',
+          Alunos: metrics.enrollments?.ACTIVE ?? metrics.users.ACTIVE,
+          Professores: metrics.teachers.ACTIVE,
+        },
         {
           name: 'Sem aula',
           Alunos: calendarStats?.wrongFrequencyCount ?? 0,
           Professores: 0,
         },
-        { name: 'Inativos', Alunos: metrics.users.INACTIVE, Professores: metrics.teachers.INACTIVE },
+        {
+          name: 'Inativos',
+          Alunos: metrics.enrollments?.INACTIVE ?? metrics.users.INACTIVE,
+          Professores: metrics.teachers.INACTIVE,
+        },
       ]
     : []
 
@@ -608,20 +659,36 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        {/* Links de matrícula para escolas parceiras */}
-        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Link2 className="w-5 h-5 text-slate-600" />
-            <h3 className="text-sm font-semibold text-slate-700">Links de matrícula para escolas parceiras</h3>
-          </div>
-          <p className="text-xs text-slate-600 mb-3">
-            Envie estes links para as escolas adicionarem alunos. O formulário exibe o nome da escola automaticamente.
-          </p>
-          <div className="space-y-2">
-            <LinkItem label="Youbecome" path="/matricula?escola=YOUBECOME" />
-            <LinkItem label="Highway" path="/matricula?escola=HIGHWAY" />
-            <LinkItem label="Outra escola (troque NomeEscola)" path="/matricula?escola=OUTRO&nome=NomeEscola" />
-          </div>
+        {/* Links de matrícula para escolas parceiras (recolhível) */}
+        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setLinksMatriculaAberto((v) => !v)}
+            aria-expanded={linksMatriculaAberto}
+            className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-100/80 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange focus-visible:ring-offset-2 rounded-xl"
+          >
+            <ChevronDown
+              className={`w-5 h-5 text-slate-500 shrink-0 transition-transform duration-200 ${linksMatriculaAberto ? 'rotate-0' : '-rotate-90'}`}
+              aria-hidden
+            />
+            <Link2 className="w-5 h-5 text-slate-600 shrink-0" />
+            <h3 className="text-sm font-semibold text-slate-700 flex-1">Links de matrícula para escolas parceiras</h3>
+            <span className="text-xs text-slate-500 hidden sm:inline">
+              {linksMatriculaAberto ? 'Recolher' : 'Expandir'}
+            </span>
+          </button>
+          {linksMatriculaAberto && (
+            <div className="px-4 pb-4 pt-0 border-t border-slate-200/80">
+              <p className="text-xs text-slate-600 mb-3 pt-3">
+                Envie estes links para as escolas adicionarem alunos. O formulário exibe o nome da escola automaticamente.
+              </p>
+              <div className="space-y-2">
+                <LinkItem label="Youbecome" path="/matricula?escola=YOUBECOME" />
+                <LinkItem label="Highway" path="/matricula?escola=HIGHWAY" />
+                <LinkItem label="Outra escola (troque NomeEscola)" path="/matricula?escola=OUTRO&nome=NomeEscola" />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Cubos de métricas (estilo financeiro, um único grid alinhado) */}
@@ -636,9 +703,10 @@ export default function AdminDashboardPage() {
             <StatCard
               variant="finance"
               title="Alunos Ativos"
-              value={metrics?.users.ACTIVE || 0}
+              value={metrics?.enrollments?.ACTIVE ?? metrics?.users.ACTIVE ?? 0}
               icon={<UserCheck className="w-5 h-5" />}
               color="green"
+              subtitle="Matrículas ativas (mesmo critério da página Alunos)"
             />
           </div>
           <div
@@ -654,7 +722,7 @@ export default function AdminDashboardPage() {
               value={metrics?.novosMatriculadosCount ?? 0}
               icon={<UserPlus className="w-5 h-5" />}
               color="blue"
-              subtitle="Clique para ver, marcar «enviei link pag» e «já adicionei aulas»"
+              subtitle="Clique para ver, marcar «enviei link pag» e «tudo feito»"
             />
           </div>
           <div
@@ -683,9 +751,10 @@ export default function AdminDashboardPage() {
             <StatCard
               variant="finance"
               title="Alunos Inativos"
-              value={metrics?.users.INACTIVE || 0}
+              value={metrics?.enrollments?.INACTIVE ?? metrics?.users.INACTIVE ?? 0}
               icon={<UserX className="w-5 h-5" />}
               color="red"
+              subtitle="Matrículas inativas (mesmo critério da página Alunos)"
             />
           </div>
           <div
@@ -701,7 +770,7 @@ export default function AdminDashboardPage() {
               value={metrics?.studentsWith3ConsecutiveAbsences ?? 0}
               icon={<CalendarX className="w-5 h-5" />}
               color="orange"
-              subtitle="Registros de falta em 3 dias seguidos"
+              subtitle="3x ou mais 'Não compareceu' no mesmo mês"
             />
           </div>
           <div
@@ -723,17 +792,17 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('absencesStudentsMonth')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('absencesStudentsMonth')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+            onClick={() => openListModal('teachersWithLateLessonRecords')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('teachersWithLateLessonRecords')}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.teachersWithLateLessonRecords ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
           >
             <StatCard
               variant="finance"
-              title="Faltas Alunos (30 dias)"
-              value={metrics?.absences.studentsMonth || 0}
-              icon={<CalendarX className="w-5 h-5" />}
-              color="orange"
-              subtitle="Último mês"
+              title="Professores com registros atrasados"
+              value={metrics?.teachersWithLateLessonRecords ?? 0}
+              icon={<FileClock className="w-5 h-5" />}
+              color="indigo"
+              subtitle="Sem registro após término; exclui períodos já pagos ao prof. (60 dias)"
             />
           </div>
           <div
@@ -756,9 +825,12 @@ export default function AdminDashboardPage() {
 
         {/* Gráfico */}
         <div className="rounded-2xl border border-slate-200/80 bg-white p-6 md:p-8 shadow-lg mb-8">
-          <h2 className="text-xl font-semibold text-slate-800 mb-6 pb-3 border-b border-slate-100">
-            Distribuição de Usuários por Status
+          <h2 className="text-xl font-semibold text-slate-800 mb-1 pb-3 border-b border-slate-100">
+            Distribuição por Status
           </h2>
+          <p className="text-xs text-slate-500 mb-6">
+            Coluna <strong>Alunos</strong>: matrículas (Enrollment), como no resumo da página Alunos. Coluna <strong>Professores</strong>: cadastro de professores.
+          </p>
           <ResponsiveContainer width="100%" height={400}>
             <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -789,7 +861,8 @@ export default function AdminDashboardPage() {
           ) : modalType === 'novosMatriculados' ? (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                Alunos que se matricularam pelo formulário e ainda não foram marcados como «já adicionei aulas». Use «Enviei link pag» para registrar o envio do link de pagamento; «Designar aula» (quando pago) para agendar as aulas; «Já adicionei aulas» remove o aluno da lista.
+                Alunos que se matricularam pelo formulário e ainda não foram marcados como «tudo feito». Use «Enviei link pag» para registrar o envio do link de pagamento; «Selecionar aulas» para agendar as aulas. «Tudo feito» remove o aluno desta lista{' '}
+                <strong>mesmo sem pagamento confirmado</strong> (quem começa e paga depois).
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -908,11 +981,7 @@ export default function AdminDashboardPage() {
                                   disabled={isLoadingAulas}
                                   className="w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-orange text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  {isLoadingAulas
-                                    ? 'Salvando...'
-                                    : jaPagou && temAula
-                                      ? 'Aluno pronto'
-                                      : 'Já adicionei aulas'}
+                                  {isLoadingAulas ? 'Salvando...' : 'Tudo feito'}
                                 </button>
                               </div>
                               {temAula && primeiraAulaDataHora ? (
@@ -981,30 +1050,102 @@ export default function AdminDashboardPage() {
           ) : modalType === 'studentsWith3ConsecutiveAbsences' ? (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                Alunos que tiveram registro de ausência em 3 dias consecutivos (dias corridos). Clique para ver a lista completa.
+                Alunos que tiveram 3 ou mais registros de &quot;Não compareceu&quot; no mesmo mês. A coluna{' '}
+                <strong>Faltas</strong> refere-se ao mês em que o aluno mais faltou (entre os meses com 3+ faltas).
               </p>
-              <ul className="space-y-1 max-h-96 overflow-y-auto">
-                {listData.map((item) => (
-                  <li key={item.id} className="py-1">
-                    {item.nome}
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Mês</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Faltas no mês</th>
+                      <th className="py-2 font-semibold text-gray-700">Professores</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as ListItemAusenciasMes
+                      const mesFmt = row.mesReferencia
+                        ? (() => {
+                            const [y, m] = row.mesReferencia.split('-')
+                            const d = new Date(Number(y), Number(m) - 1, 1)
+                            return d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+                          })()
+                        : '—'
+                      const profs =
+                        row.professoresNomes && row.professoresNomes.length > 0
+                          ? row.professoresNomes.join(', ')
+                          : '—'
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4">{row.nome}</td>
+                          <td className="py-2 pr-4 text-gray-700">{mesFmt}</td>
+                          <td className="py-2 pr-4 font-medium text-gray-900">{row.faltasNoMes ?? '—'}</td>
+                          <td className="py-2 text-gray-700 text-sm">{profs}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          ) : modalType?.startsWith('absences') ? (
+          ) : modalType === 'teachersWithLateLessonRecords' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Professores com pelo menos uma aula <strong>confirmada ou reposição</strong> que já terminou (horário de
+                fim) e ainda <strong>não tem registro de aula</strong> (livro/páginas/presença). Considera apenas aulas
+                nos últimos{' '}
+                {(listData[0] as ListItemTeachersLateRecords | undefined)?.janelaDias ?? 60} dias e matrículas ativas
+                ou em curso. <strong>Não entram</strong> aulas cujo início cai em um período já marcado como{' '}
+                <strong>PAGO</strong> ao professor (financeiro, com início e fim do período definidos).
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Professor</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Aulas sem registro</th>
+                      <th className="py-2 font-semibold text-gray-700">Início da aula mais antiga (pendente)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as ListItemTeachersLateRecords
+                      const maisAntiga =
+                        row.aulaMaisAntiga != null
+                          ? formatDateTime(row.aulaMaisAntiga)
+                          : '—'
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4 font-medium">{row.nome}</td>
+                          <td className="py-2 pr-4">{row.aulasSemRegistro ?? '—'}</td>
+                          <td className="py-2 text-gray-700 text-sm">{maisAntiga}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : modalType === 'inactiveStudents' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Motivo</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Inativado por</th>
                     <th className="py-2 font-semibold text-gray-700">Data</th>
                   </tr>
                 </thead>
                 <tbody>
                   {listData.map((item) => {
-                    const row = item as ListItemWithData
-                    const dataFormatada = row.data
-                      ? new Date(row.data).toLocaleDateString('pt-BR', {
+                    const row = item as ListItemInactiveStudent
+                    const por = row.inativadoPorNome?.trim() ? row.inativadoPorNome : 'Não registrado'
+                    const motivo = row.motivoInativacao?.trim() ? row.motivoInativacao : '—'
+                    const dataFormatada = row.inactiveAt
+                      ? new Date(row.inactiveAt).toLocaleDateString('pt-BR', {
                           day: '2-digit',
                           month: '2-digit',
                           year: 'numeric',
@@ -1013,7 +1154,9 @@ export default function AdminDashboardPage() {
                     return (
                       <tr key={row.id} className="border-b border-gray-100">
                         <td className="py-2 pr-4">{row.nome}</td>
-                        <td className="py-2">{dataFormatada}</td>
+                        <td className="py-2 pr-4 text-gray-700 text-sm">{motivo}</td>
+                        <td className="py-2 pr-4 text-gray-700">{por}</td>
+                        <td className="py-2 text-gray-600 text-sm">{dataFormatada}</td>
                       </tr>
                     )
                   })}

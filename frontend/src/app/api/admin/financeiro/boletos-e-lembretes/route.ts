@@ -88,6 +88,7 @@ export async function POST(request: NextRequest) {
     const invoiceSet = new Set(existingInvoices.map((r) => r.enrollmentId))
 
     const toProcess = enrollments.filter((e) => {
+      if ((e as { bolsista?: boolean | null }).bolsista) return false
       // Não gerar boleto/PIX para alunos faturados em nome de EMPRESA
       const faturamentoTipo = (e as { faturamentoTipo?: string | null }).faturamentoTipo ?? 'ALUNO'
       if (faturamentoTipo === 'EMPRESA') return false

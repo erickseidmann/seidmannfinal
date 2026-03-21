@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
+import type { InactiveReason } from '@prisma/client'
+import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -253,8 +255,11 @@ export async function GET(request: NextRequest) {
             faturamentoCnpj: (e as any).faturamentoCnpj ?? null,
             faturamentoEmail: (e as any).faturamentoEmail ?? null,
             faturamentoEndereco: (e as any).faturamentoEndereco ?? null,
+            bolsista: (e as any).bolsista ?? false,
             observacoes: (e as any).observacoes ?? null,
             activationDate: (e as any).activationDate?.toISOString?.() ?? null,
+            inactiveReason: (e as any).inactiveReason ?? null,
+            inactiveReasonOther: (e as any).inactiveReasonOther ?? null,
             alertsCount: (e as any)._count?.alerts ?? 0,
             alerts: Array.isArray((e as any).alerts) ? (e as any).alerts.map((a: { id: string; message: string; level: string | null }) => ({ id: a.id, message: a.message, level: a.level })) : [],
             paymentInfo: e.paymentInfo ? {
@@ -352,6 +357,9 @@ export async function POST(request: NextRequest) {
       faturamentoEmail,
       faturamentoEndereco,
       faturamentoDescricaoNfse,
+      bolsista,
+      inactiveReason,
+      inactiveReasonOther,
     } = body
 
     if (!nome || !email || !whatsapp) {
@@ -403,12 +411,33 @@ export async function POST(request: NextRequest) {
       attempts++
     }
 
+    const isBolsista = Boolean(bolsista)
+    const statusFinal = (status as string) || 'LEAD'
+    let inactiveReasonCreate: InactiveReason | undefined
+    let inactiveReasonOtherCreate: string | null | undefined
+    if (statusFinal === 'INACTIVE') {
+      const v = validateInactiveReasonPayload(inactiveReason, inactiveReasonOther)
+      if (!v.ok) {
+        return NextResponse.json({ ok: false, message: v.message }, { status: 400 })
+      }
+      inactiveReasonCreate = v.inactiveReason as InactiveReason
+      inactiveReasonOtherCreate = v.inactiveReasonOther
+    }
+
     const enrollment = await prisma.enrollment.create({
       data: {
         nome: String(nome).trim(),
         email: normalizedEmail,
         whatsapp: String(whatsapp).trim(),
-        status: status || 'LEAD',
+        status: statusFinal,
+        ...(statusFinal === 'INACTIVE' && inactiveReasonCreate
+          ? {
+              inactiveReason: inactiveReasonCreate,
+              inactiveReasonOther: inactiveReasonOtherCreate ?? null,
+              inactiveAt: new Date(),
+              inactiveByUserId: auth.session?.sub ?? null,
+            }
+          : {}),
         trackingCode,
         dataNascimento: dataNascimento ? new Date(dataNascimento) : null,
         dataInicio: dataInicio ? new Date(dataInicio) : new Date(), // padrão = data em que foi adicionado (editável depois)
@@ -442,8 +471,11 @@ export async function POST(request: NextRequest) {
         complemento: complemento?.trim() || null,
         moraNoExterior: Boolean(moraNoExterior),
         enderecoExterior: enderecoExterior?.trim() || null,
+        bolsista: isBolsista,
         valorMensalidade:
-          valorMensalidade != null && valorMensalidade !== ''
+          isBolsista
+            ? 0
+            : valorMensalidade != null && valorMensalidade !== ''
             ? Number(String(valorMensalidade).replace(',', '.'))
             : null,
         metodoPagamento: metodoPagamento?.trim() || null,

@@ -54,6 +54,8 @@ interface AlunoFinanceiro {
   escolaMatricula: string | null
   paymentInfoId: string | null
   hasFinanceObservations?: boolean
+  /** Matrícula com bolsa integral — tratado como pago; sem boleto/NF na UI */
+  bolsista?: boolean
 }
 
 interface AlunoRemovidoMes {
@@ -71,6 +73,7 @@ function getEffectiveStatus(
   year?: number,
   month?: number
 ): 'PAGO' | 'ATRASADO' | 'PENDING' {
+  if (a.bolsista) return 'PAGO'
   if (a.status === 'PAGO') return 'PAGO'
   const dia = a.diaPagamento
   if (dia == null || dia < 1 || dia > 31) return (a.status as 'PENDING') || 'PENDING'
@@ -170,8 +173,12 @@ type CobrancaStatusDisplay =
 
 function getCobrancaStatusDisplay(
   paymentStatus: string | null,
-  cobranca: CobrancaCora | null
+  cobranca: CobrancaCora | null,
+  opts?: { bolsista?: boolean }
 ): CobrancaStatusDisplay {
+  if (opts?.bolsista) {
+    return { type: 'pago', label: 'Pago (bolsista)', variant: 'success' }
+  }
   // 1. Se EnrollmentPaymentMonth.paymentStatus === 'PAGO' → badge verde "Pago"
   if (paymentStatus === 'PAGO') {
     return { type: 'pago', label: 'Pago', variant: 'success' }
@@ -700,7 +707,7 @@ export default function FinanceiroAlunosPage() {
       if (a.notaFiscalEmitida === true) {
         emitida++
         nfEmitidaList.push(a)
-      } else {
+      } else if (!a.bolsista) {
         emAberto++
         nfEmAbertoList.push(a)
       }
@@ -888,7 +895,7 @@ export default function FinanceiroAlunosPage() {
     if (filterNfEmitida === 'emitida') {
       list = list.filter((a) => a.notaFiscalEmitida === true)
     } else if (filterNfEmitida === 'aberto') {
-      list = list.filter((a) => a.notaFiscalEmitida !== true)
+      list = list.filter((a) => a.notaFiscalEmitida !== true && !a.bolsista)
     }
     if (filterEscola) {
       if (filterEscola === 'OUTROS') {
@@ -983,9 +990,14 @@ export default function FinanceiroAlunosPage() {
   }
 
   const bulkMarkPaid = async () => {
-    const ids = Array.from(selectedIds)
+    const ids = Array.from(selectedIds).filter((id) => !alunos.find((x) => x.id === id)?.bolsista)
     if (ids.length === 0) {
-      setToast({ message: 'Selecione ao menos um aluno.', type: 'error' })
+      setToast({
+        message: selectedIds.size > 0
+          ? 'Os selecionados são bolsistas (já tratados como pagos).'
+          : 'Selecione ao menos um aluno.',
+        type: 'error',
+      })
       return
     }
     setSaving(true)
@@ -1272,6 +1284,7 @@ export default function FinanceiroAlunosPage() {
 
   const applyPagoStatus = useCallback(
     async (a: AlunoFinanceiro, checked: boolean) => {
+      if (a.bolsista) return
       setSaving(true)
       try {
         if (checked) {
@@ -1293,6 +1306,7 @@ export default function FinanceiroAlunosPage() {
 
   const handlePagoCheck = useCallback(
     (a: AlunoFinanceiro, checked: boolean) => {
+      if (a.bolsista) return
       if (!checked) {
         setConfirmUnpay(a)
         return
@@ -1542,6 +1556,10 @@ export default function FinanceiroAlunosPage() {
 
   const handleGerarCobrancaIndividual = useCallback(
     async (a: AlunoFinanceiro) => {
+      if (a.bolsista) {
+        setToast({ message: 'Bolsista: não é possível gerar boleto ou cobrança.', type: 'error' })
+        return
+      }
       setGerarCobrancaIndividualLoading(a.id)
       try {
         const res = await fetch('/api/admin/financeiro/cobranca', {
@@ -1569,6 +1587,10 @@ export default function FinanceiroAlunosPage() {
 
   const handleEmitirNf = useCallback(
     async (a: AlunoFinanceiro) => {
+      if (a.bolsista) {
+        setToast({ message: 'Bolsista: nota fiscal não se aplica.', type: 'error' })
+        return
+      }
       setEmitirNfLoading(a.id)
       try {
         const res = await fetch('/api/admin/nfse', {
@@ -1694,7 +1716,11 @@ export default function FinanceiroAlunosPage() {
 
   const countPagosSemNf = useMemo(() => {
     return alunos.filter(
-      (a) => a.status === 'PAGO' && !a.notaFiscalEmitida && a.nfseStatus !== 'processando_autorizacao'
+      (a) =>
+        !a.bolsista &&
+        a.status === 'PAGO' &&
+        !a.notaFiscalEmitida &&
+        a.nfseStatus !== 'processando_autorizacao'
     ).length
   }, [alunos])
 
@@ -2279,7 +2305,7 @@ export default function FinanceiroAlunosPage() {
                         if (col.key === 'ultimoPag') return formatDate(a.dataPagamento)
                         if (col.key === 'diaVenc') return a.diaPagamento != null ? String(a.diaPagamento) : ''
                         if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
-                        if (col.key === 'nfEmitida') return a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfseEmailEnviado ? 'E-mail enviado' : a.nfAgendada ? 'Agendada' : 'Em aberto'
+                        if (col.key === 'nfEmitida') return a.bolsista ? 'Isento (bolsista)' : a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfseEmailEnviado ? 'E-mail enviado' : a.nfAgendada ? 'Agendada' : 'Em aberto'
                         if (col.key === 'acoesNf') return ''
                         if (col.key === 'acoes') return ''
                         return ''
@@ -2383,7 +2409,7 @@ export default function FinanceiroAlunosPage() {
                   const cobranca = cobrancasMap.get(a.id) ?? null
                   const display = isAtrasado
                     ? { type: 'atrasado' as const, label: 'Atrasado', variant: 'danger' as const }
-                    : getCobrancaStatusDisplay(a.status, cobranca)
+                    : getCobrancaStatusDisplay(a.status, cobranca, { bolsista: a.bolsista })
                   const isEditing = (id: string, field: string) => editingCell?.id === id && editingCell?.field === field
 
                   const baseTextClass = isAtrasado
@@ -2394,9 +2420,11 @@ export default function FinanceiroAlunosPage() {
 
                   const rowClass = isAtrasado
                     ? 'bg-red-50 hover:bg-red-100'
-                    : hasCpfProblem || isEmpresa
-                      ? 'bg-violet-50 hover:bg-violet-100'
-                      : 'hover:bg-gray-50'
+                    : a.bolsista
+                      ? 'bg-emerald-50/60 hover:bg-emerald-50'
+                      : hasCpfProblem || isEmpresa
+                        ? 'bg-violet-50 hover:bg-violet-100'
+                        : 'hover:bg-gray-50'
 
                   const EdCell = (field: string, children: React.ReactNode, inputNode?: React.ReactNode) => (
                     <td
@@ -2533,11 +2561,18 @@ export default function FinanceiroAlunosPage() {
                               </div>
                             )
                           })()}
-                          <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Marque quando o pagamento for realizado">
+                          <label
+                            className={`flex items-center gap-1.5 whitespace-nowrap ${a.bolsista ? 'cursor-default opacity-90' : 'cursor-pointer'}`}
+                            title={
+                              a.bolsista
+                                ? 'Bolsista: considerado pago automaticamente (sem cobrança).'
+                                : 'Marque quando o pagamento for realizado'
+                            }
+                          >
                             <input
                               type="checkbox"
-                              checked={a.status === 'PAGO'}
-                              disabled={saving}
+                              checked={a.status === 'PAGO' || !!a.bolsista}
+                              disabled={saving || !!a.bolsista}
                               onChange={(e) => handlePagoCheck(a, e.target.checked)}
                               className="rounded border-gray-300 text-green-600"
                             />
@@ -2603,7 +2638,11 @@ export default function FinanceiroAlunosPage() {
                       ))}
                       {displayColumns.some((c) => c.key === 'nfEmitida') && (
                       <td className={`px-3 py-2 text-sm text-center ${isAtrasado ? 'bg-red-50' : ''}`}>
-                        {emitirNfLoading === a.id ? (
+                        {a.bolsista ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700" title="Bolsa integral — não há nota fiscal">
+                            Isento (bolsista)
+                          </span>
+                        ) : emitirNfLoading === a.id ? (
                           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             Em processamento
@@ -2653,69 +2692,77 @@ export default function FinanceiroAlunosPage() {
                       {displayColumns.some((c) => c.key === 'acoesNf') && (
                       <td className="px-3 py-2 text-sm whitespace-nowrap">
                         <div className="flex items-center gap-1">
-                          {a.nfseStatus === 'autorizado' && a.nfsePdfUrl ? (
-                            <button
-                              type="button"
-                              onClick={() => window.open(a.nfsePdfUrl || '', '_blank', 'noopener,noreferrer')}
-                              className="p-1.5 rounded text-gray-500 hover:text-indigo-600"
-                              title="Baixar NF (PDF)"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
+                          {a.bolsista ? (
+                            <span className="text-xs text-slate-400 px-1" title="Bolsista: emissão e agendamento de NF não se aplicam">
+                              —
+                            </span>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleEmitirNf(a)}
-                              disabled={!!emitirNfLoading || emitirNfLoading === a.id}
-                              className={`p-1.5 rounded ${emitirNfLoading === a.id ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-green-600'}`}
-                              title="Emitir NF"
-                            >
-                              {emitirNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
-                            </button>
+                            <>
+                              {a.nfseStatus === 'autorizado' && a.nfsePdfUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(a.nfsePdfUrl || '', '_blank', 'noopener,noreferrer')}
+                                  className="p-1.5 rounded text-gray-500 hover:text-indigo-600"
+                                  title="Baixar NF (PDF)"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEmitirNf(a)}
+                                  disabled={!!emitirNfLoading || emitirNfLoading === a.id}
+                                  className={`p-1.5 rounded ${emitirNfLoading === a.id ? 'text-red-600 bg-red-50' : 'text-gray-500 hover:text-green-600'}`}
+                                  title="Emitir NF"
+                                >
+                                  {emitirNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
+                                </button>
+                              )}
+                              {a.nfseFocusRef && a.nfseStatus === 'autorizado' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelarNf(a)}
+                                  disabled={!!cancelarNfLoading || cancelarNfLoading === a.id}
+                                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded"
+                                  title="Cancelar NF"
+                                >
+                                  {cancelarNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                                </button>
+                              )}
+                              {a.nfAgendada && !a.nfseEmailEnviado && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelarAgendamento(a)}
+                                  disabled={!!cancelarAgendamentoLoading || cancelarAgendamentoLoading === a.id}
+                                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded inline-flex"
+                                  title="Cancelar agendamento (e-mail não será enviado na data)"
+                                >
+                                  {cancelarAgendamentoLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarX className="w-4 h-4" />}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => !a.nfseEmailEnviado && openAgendarNfModal(a)}
+                                disabled={!!a.nfseEmailEnviado}
+                                className={`p-1.5 rounded inline-flex ${
+                                  a.nfseEmailEnviado
+                                    ? 'text-gray-400 cursor-not-allowed'
+                                    : a.nfAgendada
+                                      ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
+                                      : 'text-gray-500 hover:text-brand-orange'
+                                }`}
+                                title={
+                                  a.nfseEmailEnviado
+                                    ? 'E-mail já enviado neste mês. Não é possível agendar outro envio.'
+                                    : a.nfAgendada
+                                      ? 'Envio de NF já agendado (clique para revisar/editar)'
+                                      : 'Agendar envio de e-mail da NF'
+                                }
+                              >
+                                {a.nfseEmailEnviado ? <Mail className="w-4 h-4" /> : a.nfAgendada ? <CheckCircle2 className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
+                              </button>
+                            </>
                           )}
-                          {a.nfseFocusRef && a.nfseStatus === 'autorizado' && (
-                            <button
-                              type="button"
-                              onClick={() => handleCancelarNf(a)}
-                              disabled={!!cancelarNfLoading || cancelarNfLoading === a.id}
-                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded"
-                              title="Cancelar NF"
-                            >
-                              {cancelarNfLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                            </button>
-                          )}
-                          {a.nfAgendada && !a.nfseEmailEnviado && (
-                            <button
-                              type="button"
-                              onClick={() => handleCancelarAgendamento(a)}
-                              disabled={!!cancelarAgendamentoLoading || cancelarAgendamentoLoading === a.id}
-                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 rounded inline-flex"
-                              title="Cancelar agendamento (e-mail não será enviado na data)"
-                            >
-                              {cancelarAgendamentoLoading === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarX className="w-4 h-4" />}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => !a.nfseEmailEnviado && openAgendarNfModal(a)}
-                            disabled={!!a.nfseEmailEnviado}
-                            className={`p-1.5 rounded inline-flex ${
-                              a.nfseEmailEnviado
-                                ? 'text-gray-400 cursor-not-allowed'
-                                : a.nfAgendada
-                                  ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
-                                  : 'text-gray-500 hover:text-brand-orange'
-                            }`}
-                            title={
-                              a.nfseEmailEnviado
-                                ? 'E-mail já enviado neste mês. Não é possível agendar outro envio.'
-                                : a.nfAgendada
-                                  ? 'Envio de NF já agendado (clique para revisar/editar)'
-                                  : 'Agendar envio de e-mail da NF'
-                            }
-                          >
-                            {a.nfseEmailEnviado ? <Mail className="w-4 h-4" /> : a.nfAgendada ? <CheckCircle2 className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
-                          </button>
                         </div>
                       </td>
                       )}
@@ -2737,6 +2784,7 @@ export default function FinanceiroAlunosPage() {
                           const hasBoleto = !!cobranca?.boletoUrl
                           const isLoading = gerarCobrancaIndividualLoading === a.id && !hasBoleto
                           const handleClick = () => {
+                            if (a.bolsista) return
                             if (hasBoleto && cobranca?.boletoUrl) {
                               window.open(cobranca.boletoUrl, '_blank', 'noopener,noreferrer')
                             } else {
@@ -2747,9 +2795,15 @@ export default function FinanceiroAlunosPage() {
                             <button
                               type="button"
                               onClick={handleClick}
-                              disabled={isLoading}
+                              disabled={isLoading || !!a.bolsista}
                               className="ml-1 text-gray-500 hover:text-brand-orange p-1 disabled:opacity-50"
-                              title={hasBoleto ? 'Abrir boleto já gerado' : 'Gerar boleto/PIX na Cora'}
+                              title={
+                                a.bolsista
+                                  ? 'Bolsista: sem cobrança/boleto'
+                                  : hasBoleto
+                                    ? 'Abrir boleto já gerado'
+                                    : 'Gerar boleto/PIX na Cora'
+                              }
                             >
                               {isLoading ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -2764,9 +2818,9 @@ export default function FinanceiroAlunosPage() {
                         <button
                           type="button"
                           onClick={() => openCobrancaModal(a.id, a.nome)}
-                          disabled={!a.email || loadingCobrancaForId === a.id}
+                          disabled={!a.email || loadingCobrancaForId === a.id || !!a.bolsista}
                           className="ml-1 text-gray-600 hover:text-green-600 p-1 disabled:opacity-50"
-                          title="Enviar cobrança por e-mail"
+                          title={a.bolsista ? 'Bolsista: não enviar cobrança' : 'Enviar cobrança por e-mail'}
                         >
                           {loadingCobrancaForId === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         </button>

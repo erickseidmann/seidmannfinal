@@ -67,10 +67,11 @@ export async function GET(request: NextRequest) {
     ])
 
     // Contagens por status
-    const [ativosCount, inativosCount, pausadosCount] = await Promise.all([
+    const [ativosCount, inativosCount, pausadosCount, bolsistasCount] = await Promise.all([
       prisma.enrollment.count({ where: { status: 'ACTIVE' } }),
       prisma.enrollment.count({ where: { status: 'INACTIVE' } }),
       prisma.enrollment.count({ where: { status: 'PAUSED' } }),
+      prisma.enrollment.count({ where: { bolsista: true } }),
     ])
 
     // Alunos "sem professor (semana)" = apenas ATIVOS que NÃO têm nenhuma aula esta semana COM professor
@@ -174,6 +175,7 @@ export async function GET(request: NextRequest) {
         semProfessor: semProfessorCount,
         semProfessorProximaSemana: semProfessorProximaSemanaCount,
         repetitionEndingSoon: repetitionEndingSoonCount,
+        bolsistas: bolsistasCount,
       },
     })
   } catch (error) {

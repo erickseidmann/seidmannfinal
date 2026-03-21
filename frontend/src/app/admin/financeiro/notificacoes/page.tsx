@@ -243,7 +243,10 @@ export default function FinanceiroNotificacoesPage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ status: 'INACTIVE' }),
+        body: JSON.stringify({
+          status: 'INACTIVE',
+          inactiveReason: 'FINANCEIRO',
+        }),
       })
       const json = await res.json()
       if (res.ok && json.ok) {

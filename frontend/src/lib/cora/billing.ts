@@ -84,6 +84,9 @@ export async function generateMonthlyBilling(params: {
   if (enrollment.status !== 'ACTIVE') {
     throw new Error(`Matrícula não está ativa (status: ${enrollment.status})`)
   }
+  if ((enrollment as { bolsista?: boolean | null }).bolsista) {
+    throw new Error(`Aluno bolsista (${enrollment.nome}) não deve gerar boleto.`)
+  }
 
   const existing = await prisma.coraInvoice.findUnique({
     where: { enrollmentId_year_month: { enrollmentId, year, month } },
@@ -256,6 +259,7 @@ export async function generateBulkBilling(params: {
         { valorMensalidade: { not: null } },
         { paymentInfo: { valorMensal: { not: null } } },
       ],
+      bolsista: false,
     },
     select: {
       id: true,

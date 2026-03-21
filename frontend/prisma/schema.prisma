@@ -23,6 +23,17 @@ enum EnrollmentStatus {
   COMPLETED
 }
 
+/** Motivo informado ao marcar a matrícula como inativa */
+enum InactiveReason {
+  FINANCEIRO
+  SEM_TEMPO_AULAS
+  PROBLEMAS_METODO
+  PROBLEMAS_PROFESSORES
+  PROBLEMAS_GESTAO_ESCOLA
+  NAO_GOSTOU
+  OUTRO
+}
+
 enum Language {
   ENGLISH  // Ingl├¬s
   SPANISH  // Espanhol
@@ -85,6 +96,8 @@ model User {
   
   // Relacionamentos
   enrollments        Enrollment[]
+  /** Matrículas que este admin marcou como inativas */
+  enrollmentsInactivated Enrollment[] @relation("EnrollmentInactivatedBy")
   attendances        Attendance[]
   bookReleases       BookRelease[]
   teacher            Teacher?
@@ -288,6 +301,7 @@ model Enrollment {
   complemento       String?      @db.VarChar(255)
   moraNoExterior    Boolean      @default(false) @map("mora_no_exterior")
   enderecoExterior  String?      @db.Text @map("endereco_exterior")
+  bolsista          Boolean      @default(false) @map("bolsista")
   valorMensalidade  Decimal?     @db.Decimal(10, 2) @map("valor_mensalidade")
   metodoPagamento   String?      @db.VarChar(50) @map("metodo_pagamento")
   diaPagamento      Int?         @map("dia_pagamento") // 1-31
@@ -299,7 +313,7 @@ model Enrollment {
   escolaMatriculaOutro String?   @db.VarChar(255) @map("escola_matricula_outro") // Quando escolaMatricula = OUTRO
   cancelamentoAntecedenciaHoras Int? @map("cancelamento_antecedencia_horas") // Tempo m├¡nimo de anteced├¬ncia para cancelamento (em horas). Padr├úo: 6h para n├úo-YOUBECOME, 24h para YOUBECOME
   observacoes       String?      @db.Text
-  pendenteAdicionarAulas Boolean @default(false) @map("pendente_adicionar_aulas") // true = matriculado pelo formul├írio, ainda n├úo marcou "j├í adicionei aulas"
+  pendenteAdicionarAulas Boolean @default(false) @map("pendente_adicionar_aulas") // true = novo matrículado (formulário), ainda na lista até admin marcar «tudo feito»
   linkPagamentoEnviadoAt DateTime? @map("link_pagamento_enviado_at") // data em que o admin marcou "enviei link pag"
 
   // Dados de faturamento para NFSe em nome de empresa
@@ -312,6 +326,12 @@ model Enrollment {
 
   status         EnrollmentStatus @default(LEAD)
   inactiveAt     DateTime?        @map("inactive_at") // Data em que foi marcado como inativo (para hist├│rico por m├¬s)
+  /** Admin (User) que marcou a matrícula como inativa (última inativação) */
+  inactiveByUserId String?        @map("inactive_by_user_id")
+  /** Motivo da inativação (obrigatório em novas inativações via API) */
+  inactiveReason     InactiveReason? @map("inactive_reason")
+  /** Detalhe quando o motivo é OUTRO */
+  inactiveReasonOther String?       @db.VarChar(500) @map("inactive_reason_other")
   pausedAt       DateTime?        @map("paused_at") // Data em que foi marcado como pausado (aulas n├úo contam para pagamento a partir desta data)
   activationDate DateTime?        @map("activation_date") // Data de ativa├º├úo para alunos pausados (volta para ACTIVE automaticamente nesta data)
   trackingCode   String?          @unique @map("tracking_code")
@@ -324,6 +344,7 @@ model Enrollment {
   
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  inactiveByUser User?            @relation("EnrollmentInactivatedBy", fields: [inactiveByUserId], references: [id], onDelete: SetNull)
   coupon         Coupon?          @relation(fields: [couponId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
   paymentMonths       EnrollmentPaymentMonth[]

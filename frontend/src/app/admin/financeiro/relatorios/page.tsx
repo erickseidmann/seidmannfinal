@@ -8,7 +8,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Button from '@/components/ui/Button'
-import { Loader2, Search, Download } from 'lucide-react'
+import { Loader2, Search, Download, HeartPulse, Lightbulb } from 'lucide-react'
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+} from 'recharts'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -169,6 +180,19 @@ export default function FinanceiroRelatoriosPage() {
               Exportar CSV
             </Button>
           </div>
+          {tipo === 'geral' && (
+            <p className="text-xs text-gray-500 mt-3 w-full">
+              {month ? (
+                <>
+                  Com <strong>mês específico</strong>, a Visão Geral inclui alunos matriculados no financeiro, inativações no mês, gráfico combinado e o cubo de saúde com sugestões.
+                </>
+              ) : (
+                <>
+                  Com <strong>ano inteiro (todos os meses)</strong>, a Visão Geral inclui médias de alunos e mensalidades, totais de inativações no ano, gráfico mês a mês e o cubo de saúde com base no ano.
+                </>
+              )}
+            </p>
+          )}
         </div>
 
         {/* Erro */}
@@ -235,8 +259,39 @@ interface GeralItem {
   totalDespesas: number
   saldo: number
 }
+interface EscolaSaudePayload {
+  score: number
+  label: string
+  cor: 'green' | 'amber' | 'red'
+  sugestoes: string[]
+}
+
+interface KpisMesItem {
+  month: number
+  matriculadosCount: number
+  matriculadosValorTotal: number
+  inativadosCount: number
+  valorPerdidoInativos: number
+}
+
+interface ResumoAnualPayload {
+  mediaMatriculados: number
+  mediaValorMensalidades: number
+  totalInativadosAno: number
+  valorPerdidoAno: number
+}
+
 interface GeralData {
   items?: GeralItem[]
+  /** Preenchidos pela API quando há mês específico (Visão geral) */
+  matriculadosCount?: number
+  matriculadosValorTotal?: number
+  inativadosCount?: number
+  valorPerdidoInativos?: number
+  /** Visão anual: KPIs por mês + resumo */
+  kpisPorMes?: KpisMesItem[]
+  resumoAnual?: ResumoAnualPayload
+  escolaSaude?: EscolaSaudePayload
 }
 
 interface ReceitasItemMes {
@@ -296,6 +351,125 @@ interface ProfessoresData {
   totalGeral?: number
 }
 
+type GeralChartRow = {
+  name: string
+  receita: number
+  despesas: number
+  valorMatriculas: number
+  valorPerdido: number
+  qtdMatriculados: number
+  qtdInativos: number
+}
+
+function VisaoGeralComposedChart({ chartRows, compact }: { chartRows: GeralChartRow[]; compact?: boolean }) {
+  const maxBar = compact ? 22 : 48
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <h3 className="text-sm font-semibold text-gray-800 mb-4">Visão combinada (valores em R$ e quantidades)</h3>
+      <div className={`w-full min-h-[320px] ${compact ? 'h-[400px]' : 'h-[380px]'}`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartRows} margin={{ top: 12, right: 16, left: 8, bottom: compact ? 20 : 8 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+            <XAxis dataKey="name" tick={{ fontSize: compact ? 10 : 11 }} interval={0} />
+            <YAxis
+              yAxisId="left"
+              tickFormatter={(v) =>
+                Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(Math.round(v))
+              }
+              width={48}
+            />
+            <YAxis yAxisId="right" orientation="right" allowDecimals={false} width={36} />
+            <Tooltip
+              formatter={(value: number, name: string) => {
+                if (name.includes('Qtd') || name.includes('matriculados') || name.includes('inativados'))
+                  return [value, name]
+                return [formatMoney(value), name]
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar yAxisId="left" dataKey="receita" name="Receita" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={maxBar} />
+            <Bar yAxisId="left" dataKey="despesas" name="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={maxBar} />
+            <Bar yAxisId="left" dataKey="valorMatriculas" name="Valor mensalidades (ativos)" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={maxBar} />
+            <Bar yAxisId="left" dataKey="valorPerdido" name="Valor perdido (inativos)" fill="#f97316" radius={[4, 4, 0, 0]} maxBarSize={maxBar} />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="qtdMatriculados"
+              name="Qtd. matriculados"
+              stroke="#6366f1"
+              strokeWidth={2}
+              dot={{ r: 4 }}
+            />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="qtdInativos"
+              name="Qtd. inativados"
+              stroke="#a855f7"
+              strokeWidth={2}
+              dot={{ r: 4 }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
+
+function CuboSaudeEscola({ saude, descricaoIndicador }: { saude: EscolaSaudePayload; descricaoIndicador: string }) {
+  const cubeBorder =
+    saude.cor === 'green'
+      ? 'border-emerald-300 from-emerald-50 to-teal-50'
+      : saude.cor === 'amber'
+        ? 'border-amber-300 from-amber-50 to-orange-50'
+        : 'border-rose-300 from-rose-50 to-red-50'
+
+  return (
+    <div
+      className={`relative rounded-2xl border-2 bg-gradient-to-br p-6 shadow-lg transition-transform hover:scale-[1.01] ${cubeBorder}`}
+      style={{ transformStyle: 'preserve-3d' }}
+    >
+      <div className="flex flex-col md:flex-row md:items-start gap-6">
+        <div className="flex-shrink-0 mx-auto md:mx-0">
+          <div className="relative w-28 h-28 rounded-2xl bg-white/80 border border-black/5 shadow-inner flex flex-col items-center justify-center rotate-[-2deg]">
+            <HeartPulse
+              className={`w-8 h-8 mb-1 ${saude.cor === 'green' ? 'text-emerald-600' : saude.cor === 'amber' ? 'text-amber-600' : 'text-rose-600'}`}
+            />
+            <span className="text-3xl font-black text-gray-900">{saude.score}</span>
+            <span className="text-[10px] uppercase font-bold text-gray-500">índice</span>
+          </div>
+          <p className="text-center text-xs text-gray-600 mt-2">Saúde da escola</p>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <h3 className="text-lg font-bold text-gray-900">Cubo de saúde</h3>
+            <span
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                saude.cor === 'green'
+                  ? 'bg-emerald-200 text-emerald-900'
+                  : saude.cor === 'amber'
+                    ? 'bg-amber-200 text-amber-900'
+                    : 'bg-rose-200 text-rose-900'
+              }`}
+            >
+              {saude.label}
+            </span>
+          </div>
+          <p className="text-sm text-gray-700 mb-4">{descricaoIndicador}</p>
+          <ul className="space-y-2">
+            {saude.sugestoes.map((s, idx) => (
+              <li key={idx} className="flex gap-2 text-sm text-gray-800">
+                <Lightbulb className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <span>{s}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // --- Geral ---
 function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMonth: boolean; month: number; year: number }) {
   const items = data?.items ?? []
@@ -305,9 +479,25 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
   if (hasMonth && items.length === 1) {
     const i = items[0]
+    const md = data
+    const labelMes = MESES_LABELS[month] ?? `Mês ${month}`
+    const chartRows = [
+      {
+        name: `${labelMes} ${year}`,
+        receita: i?.receita ?? 0,
+        despesas: i?.totalDespesas ?? 0,
+        valorMatriculas: md.matriculadosValorTotal ?? 0,
+        valorPerdido: md.valorPerdidoInativos ?? 0,
+        qtdMatriculados: md.matriculadosCount ?? 0,
+        qtdInativos: md.inativadosCount ?? 0,
+      },
+    ]
+
+    const saude = md.escolaSaude
+
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase">Receita</p>
             <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(i?.receita)}</p>
@@ -323,8 +513,154 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
             </p>
           </div>
         </div>
-        <div className="text-sm text-gray-600">
-          Prof.: {formatMoney(i?.despesaProfessores)} | Admin: {formatMoney(i?.despesaAdmin)} | Outras: {formatMoney(i?.despesaOutras)}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
+            <p className="text-xs font-semibold text-blue-800 uppercase">Alunos matriculados (no mês)</p>
+            <p className="text-2xl font-bold text-blue-900 mt-1">{md.matriculadosCount ?? '—'}</p>
+            <p className="text-sm text-blue-800 mt-2">
+              Valor total mensalidades: <span className="font-semibold">{formatMoney(md.matriculadosValorTotal)}</span>
+              <span className="block text-xs font-normal text-blue-700/90 mt-1">Soma das mensalidades dos alunos ativos no financeiro (bolsistas contam na quantidade, R$ 0 no valor).</span>
+            </p>
+          </div>
+          <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4">
+            <p className="text-xs font-semibold text-orange-800 uppercase">Inativados neste mês</p>
+            <p className="text-2xl font-bold text-orange-900 mt-1">{md.inativadosCount ?? '—'}</p>
+            <p className="text-sm text-orange-800 mt-2">
+              Valor estimado perdido: <span className="font-semibold">{formatMoney(md.valorPerdidoInativos)}</span>
+              <span className="block text-xs font-normal text-orange-700/90 mt-1">Com base na mensalidade no cadastro (exceto bolsistas).</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+          Detalhe despesas — Prof.: {formatMoney(i?.despesaProfessores)} | Admin: {formatMoney(i?.despesaAdmin)} | Outras:{' '}
+          {formatMoney(i?.despesaOutras)}
+        </div>
+
+        <VisaoGeralComposedChart chartRows={chartRows} />
+
+        {saude && (
+          <CuboSaudeEscola
+            saude={saude}
+            descricaoIndicador="Indicador automático a partir do saldo do mês, proporção receita/despesa e movimentação de alunos (matrículas x inativações)."
+          />
+        )}
+      </div>
+    )
+  }
+
+  if (!hasMonth && data.resumoAnual && items.length > 0) {
+    const ra = data.resumoAnual
+    const kpisPorMes = data.kpisPorMes ?? []
+    const chartRowsAnual: GeralChartRow[] = items.map((row) => {
+      const kp = kpisPorMes.find((k) => k.month === row.mes)
+      return {
+        name: `${(MESES_LABELS[row.mes] ?? row.mes).slice(0, 3)}.`,
+        receita: row.receita,
+        despesas: row.totalDespesas,
+        valorMatriculas: kp?.matriculadosValorTotal ?? 0,
+        valorPerdido: kp?.valorPerdidoInativos ?? 0,
+        qtdMatriculados: kp?.matriculadosCount ?? 0,
+        qtdInativos: kp?.inativadosCount ?? 0,
+      }
+    })
+    const saudeAno = data.escolaSaude
+
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
+            <p className="text-xs font-semibold text-green-800 uppercase">Receita Total</p>
+            <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(receitaTotal)}</p>
+          </div>
+          <div className="rounded-xl border-2 border-red-200 bg-red-50 p-4">
+            <p className="text-xs font-semibold text-red-800 uppercase">Despesa Total</p>
+            <p className="text-xl font-bold text-red-900 mt-1">{formatMoney(despesaTotal)}</p>
+          </div>
+          <div className={`rounded-xl border-2 p-4 ${saldoTotal >= 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+            <p className="text-xs font-semibold uppercase">Saldo</p>
+            <p className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? 'text-green-900' : 'text-red-900'}`}>{formatMoney(saldoTotal)}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
+            <p className="text-xs font-semibold text-blue-800 uppercase">Média mensal — alunos no financeiro</p>
+            <p className="text-2xl font-bold text-blue-900 mt-1">{ra.mediaMatriculados}</p>
+            <p className="text-sm text-blue-800 mt-2">
+              Média do valor mensalidades: <span className="font-semibold">{formatMoney(ra.mediaValorMensalidades)}</span>
+              <span className="block text-xs font-normal text-blue-700/90 mt-1">
+                Média aritmética dos 12 meses (bolsistas contam na quantidade; R$ 0 no valor).
+              </span>
+            </p>
+          </div>
+          <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4">
+            <p className="text-xs font-semibold text-orange-800 uppercase">Inativados no ano</p>
+            <p className="text-2xl font-bold text-orange-900 mt-1">{ra.totalInativadosAno}</p>
+            <p className="text-sm text-orange-800 mt-2">
+              Valor estimado perdido (soma dos meses): <span className="font-semibold">{formatMoney(ra.valorPerdidoAno)}</span>
+            </p>
+          </div>
+        </div>
+
+        <VisaoGeralComposedChart chartRows={chartRowsAnual} compact />
+
+        {saudeAno && (
+          <CuboSaudeEscola
+            saude={saudeAno}
+            descricaoIndicador="Indicador automático a partir do saldo anual, proporção receita/despesa, média de alunos ativos e inativações no ano."
+          />
+        )}
+
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+          <table className="w-full min-w-[800px]">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Mês</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Receita</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Despesas Prof.</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Despesas Admin</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Outras</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Total Despesas</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r) => (
+                <tr key={`${r.ano}-${r.mes}`} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-2 text-sm text-gray-900">
+                    {MESES_LABELS[r.mes]} {r.ano}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(r.receita)}</td>
+                  <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(r.despesaProfessores)}</td>
+                  <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(r.despesaAdmin)}</td>
+                  <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(r.despesaOutras)}</td>
+                  <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(r.totalDespesas)}</td>
+                  <td className={`px-4 py-2 text-sm text-right font-medium ${r.saldo >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    {formatMoney(r.saldo)}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
+                <td className="px-4 py-2 text-sm text-gray-900">Total {year}</td>
+                <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(receitaTotal)}</td>
+                <td className="px-4 py-2 text-sm text-right text-gray-900">
+                  {formatMoney(items.reduce((s, i) => s + i.despesaProfessores, 0))}
+                </td>
+                <td className="px-4 py-2 text-sm text-right text-gray-900">
+                  {formatMoney(items.reduce((s, i) => s + i.despesaAdmin, 0))}
+                </td>
+                <td className="px-4 py-2 text-sm text-right text-gray-900">
+                  {formatMoney(items.reduce((s, i) => s + i.despesaOutras, 0))}
+                </td>
+                <td className="px-4 py-2 text-sm text-right text-gray-900">{formatMoney(despesaTotal)}</td>
+                <td className={`px-4 py-2 text-sm text-right ${saldoTotal >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                  {formatMoney(saldoTotal)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     )

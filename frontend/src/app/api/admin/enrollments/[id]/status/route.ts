@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { EnrollmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import type { InactiveReason } from '@prisma/client'
+import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -31,7 +33,7 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { status, activationDate, inactiveFrom } = body
+    const { status, activationDate, inactiveFrom, inactiveReason, inactiveReasonOther } = body
 
     // Validações
     if (!status || typeof status !== 'string') {
@@ -99,8 +101,33 @@ export async function PATCH(
       })
     }
 
+    const adminUserId = auth.session?.sub
+
+    let validatedInactive: {
+      inactiveReason: InactiveReason
+      inactiveReasonOther: string | null
+    } | null = null
+    if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
+      const v = validateInactiveReasonPayload(inactiveReason, inactiveReasonOther)
+      if (!v.ok) {
+        return NextResponse.json({ ok: false, message: v.message }, { status: 400 })
+      }
+      validatedInactive = {
+        inactiveReason: v.inactiveReason as InactiveReason,
+        inactiveReasonOther: v.inactiveReasonOther,
+      }
+    }
+
     // Atualizar status do Enrollment; ao marcar INACTIVE grava inactiveAt; ao marcar PAUSED grava pausedAt; ao voltar para ACTIVE limpa ambos
-    const updateData: { status: EnrollmentStatus; inactiveAt?: Date | null; pausedAt?: Date | null; activationDate?: Date | null } = { status: status as EnrollmentStatus }
+    const updateData: {
+      status: EnrollmentStatus
+      inactiveAt?: Date | null
+      pausedAt?: Date | null
+      activationDate?: Date | null
+      inactiveByUserId?: string | null
+      inactiveReason?: InactiveReason | null
+      inactiveReasonOther?: string | null
+    } = { status: status as EnrollmentStatus }
     if (status === 'INACTIVE') {
       let inactiveAt = new Date()
       if (inactiveFrom && typeof inactiveFrom === 'string') {
@@ -113,9 +140,19 @@ export async function PATCH(
       updateData.inactiveAt = inactiveAt
       updateData.pausedAt = null
       updateData.activationDate = null
+      if (oldStatus !== 'INACTIVE') {
+        updateData.inactiveByUserId = adminUserId ?? null
+        if (validatedInactive) {
+          updateData.inactiveReason = validatedInactive.inactiveReason
+          updateData.inactiveReasonOther = validatedInactive.inactiveReasonOther
+        }
+      }
     } else if (status === 'PAUSED') {
       updateData.pausedAt = new Date()
       updateData.inactiveAt = null
+      updateData.inactiveByUserId = null
+      updateData.inactiveReason = null
+      updateData.inactiveReasonOther = null
       // activationDate é obrigatório para PAUSED
       if (!activationDate) {
         return NextResponse.json(
@@ -128,6 +165,9 @@ export async function PATCH(
       updateData.inactiveAt = null
       updateData.pausedAt = null
       updateData.activationDate = null
+      updateData.inactiveByUserId = null
+      updateData.inactiveReason = null
+      updateData.inactiveReasonOther = null
     }
     const updatedEnrollment = await prisma.enrollment.update({
       where: { id },

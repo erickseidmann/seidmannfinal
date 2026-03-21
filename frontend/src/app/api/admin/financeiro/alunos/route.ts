@@ -34,6 +34,11 @@ function nextDueDateFixed(dayOfMonth: number, refDate: Date): Date {
   return nextDueDateFromDay(dayOfMonth, refDate)
 }
 
+/** Ano/mês calendário em UTC (evita deslocar o mês por fuso quando a data veio como meia-noite UTC). */
+function getYearMonthUtc(d: Date): { year: number; month: number } {
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
@@ -70,6 +75,12 @@ export async function GET(request: NextRequest) {
     const filteredEnrollments =
       hasMonthFilter && year != null && month != null
         ? enrollments.filter((e) => {
+            // 1) Com data de início preenchida: só aparece no financeiro a partir desse mês (ano/mês em UTC para bater com o calendário salvo)
+            const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
+            if (dataInicio) {
+              const { year: y0, month: m0 } = getYearMonthUtc(new Date(dataInicio))
+              if (year < y0 || (year === y0 && month < m0)) return false
+            }
             // Inativos: não constar a partir do mês de inativação
             if (e.status === 'INACTIVE') {
               if (!e.inactiveAt) return false
@@ -87,14 +98,6 @@ export async function GET(request: NextRequest) {
                 return false
               }
               return true
-            }
-            // Só aparecer a partir do mês da data de início (mesmo sendo independente da página Alunos)
-            const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
-            if (dataInicio) {
-              const di = new Date(dataInicio)
-              const anoInicio = di.getFullYear()
-              const mesInicio = di.getMonth() + 1
-              if (year < anoInicio || (year === anoInicio && month < mesInicio)) return false
             }
             // Esconder só quem foi explicitamente "Removido deste mês". PENDING = no mês, aguardando pagamento (ex.: boleto gerado).
             const pmArr = (e as any).paymentMonths as { paymentStatus: string | null }[] | undefined
@@ -282,7 +285,10 @@ export async function GET(request: NextRequest) {
       }
       
       // Status no mês: cada mês é independente; vem de EnrollmentPaymentMonth quando há filtro, senão do PaymentInfo global
-      const status: string | null = hasMonthFilter && pm ? pm.paymentStatus ?? null : pi?.paymentStatus ?? null
+      const rawStatus: string | null = hasMonthFilter && pm ? pm.paymentStatus ?? null : pi?.paymentStatus ?? null
+      const bolsista = Boolean((e as { bolsista?: boolean | null }).bolsista)
+      // Bolsista: exibir como quitado no financeiro (sem cobrança/NF)
+      const status: string | null = bolsista ? 'PAGO' : rawStatus
 
       // Verificar se existe NFSe autorizada para este enrollment no mês/ano de referência
       const nfseKey = `${e.id}:${refYear}:${refMonth}`
@@ -344,6 +350,7 @@ export async function GET(request: NextRequest) {
         dataProximoPagamento,
         dataUltimaCobranca: lastChargeAt ? lastChargeAt.toISOString() : null,
         diaPagamento: diaPagamento ?? null,
+        bolsista,
         notaFiscalEmitida: nfEmitida, // Calculado automaticamente da tabela nfse_invoices
         nfseFocusRef: nfseInfo?.focusRef ?? null,
         nfseStatus: nfseInfo?.status ?? null,

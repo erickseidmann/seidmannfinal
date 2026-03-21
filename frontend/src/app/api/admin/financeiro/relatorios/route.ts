@@ -41,6 +41,198 @@ function lastDayOfMonth(y: number, m: number): Date {
   return endOfDay(new Date(y, m, 0))
 }
 
+/** Ano/mês calendário em UTC (alinhado ao financeiro – alunos). */
+function getYearMonthUtc(d: Date): { year: number; month: number } {
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
+}
+
+function valorMensalAluno(e: {
+  valorMensalidade: unknown
+  paymentInfo?: { valorMensal: unknown } | null
+}): number {
+  const v =
+    e.valorMensalidade != null
+      ? Number(e.valorMensalidade)
+      : e.paymentInfo?.valorMensal != null
+        ? Number(e.paymentInfo.valorMensal)
+        : 0
+  return Math.round(v * 100) / 100
+}
+
+/**
+ * Mesma regra de visibilidade do financeiro por mês que em /api/admin/financeiro/alunos.
+ */
+function enrollmentVisibleInFinanceiroMonth(
+  e: {
+    status: string
+    dataInicio?: Date | null
+    inactiveAt?: Date | null
+    paymentMonths?: { paymentStatus: string | null }[]
+  },
+  year: number,
+  month: number
+): boolean {
+  const dataInicio = e.dataInicio
+  if (dataInicio) {
+    const { year: y0, month: m0 } = getYearMonthUtc(new Date(dataInicio))
+    if (year < y0 || (year === y0 && month < m0)) return false
+  }
+  if (e.status === 'INACTIVE') {
+    if (!e.inactiveAt) return false
+    const d = new Date(e.inactiveAt)
+    const anoInativo = d.getFullYear()
+    const mesInativo = d.getMonth() + 1
+    const viewingAfterOrSameInactiveMonth = year > anoInativo || (year === anoInativo && month >= mesInativo)
+    if (viewingAfterOrSameInactiveMonth) return false
+    const pm = e.paymentMonths?.[0]
+    if (pm?.paymentStatus === 'REMOVIDO') return false
+    return true
+  }
+  const pm = e.paymentMonths?.[0]
+  if (pm?.paymentStatus === 'REMOVIDO') return false
+  return true
+}
+
+async function computeMatriculaKpis(year: number, month: number) {
+  const enrollments = await prisma.enrollment.findMany({
+    include: {
+      paymentInfo: true,
+      paymentMonths: { where: { year, month }, take: 1 },
+    },
+  })
+
+  let matriculadosCount = 0
+  let matriculadosValorTotal = 0
+  for (const e of enrollments) {
+    if (!enrollmentVisibleInFinanceiroMonth(e, year, month)) continue
+    matriculadosCount += 1
+    const v = valorMensalAluno(e)
+    const bolsista = Boolean((e as { bolsista?: boolean | null }).bolsista)
+    matriculadosValorTotal += bolsista ? 0 : v
+  }
+
+  const periodStart = firstDayOfMonth(year, month)
+  const periodEnd = lastDayOfMonth(year, month)
+  const inativadosRows = await prisma.enrollment.findMany({
+    where: {
+      status: 'INACTIVE',
+      inactiveAt: { gte: periodStart, lte: periodEnd },
+    },
+    include: { paymentInfo: true },
+  })
+  let inativadosCount = inativadosRows.length
+  let valorPerdidoInativos = 0
+  for (const e of inativadosRows) {
+    if ((e as { bolsista?: boolean | null }).bolsista) continue
+    valorPerdidoInativos += valorMensalAluno(e)
+  }
+  valorPerdidoInativos = Math.round(valorPerdidoInativos * 100) / 100
+  matriculadosValorTotal = Math.round(matriculadosValorTotal * 100) / 100
+
+  return {
+    matriculadosCount,
+    matriculadosValorTotal,
+    inativadosCount,
+    valorPerdidoInativos,
+  }
+}
+
+type MatriculaKpis = Awaited<ReturnType<typeof computeMatriculaKpis>>
+
+async function computeMatriculaKpisYear(year: number) {
+  const porMesRaw = await Promise.all(
+    Array.from({ length: 12 }, (_, idx) => computeMatriculaKpis(year, idx + 1))
+  )
+  const porMes = porMesRaw.map((k, idx) => ({ month: idx + 1, ...k }))
+  const sum = (fn: (k: MatriculaKpis) => number) => porMesRaw.reduce((s, k) => s + fn(k), 0)
+  const mediaMatriculados = sum((k) => k.matriculadosCount) / 12
+  const mediaValorMensalidades = sum((k) => k.matriculadosValorTotal) / 12
+  const totalInativadosAno = sum((k) => k.inativadosCount)
+  const valorPerdidoAno = sum((k) => k.valorPerdidoInativos)
+  return {
+    porMes,
+    mediaMatriculados: Math.round(mediaMatriculados * 100) / 100,
+    mediaValorMensalidades: Math.round(mediaValorMensalidades * 100) / 100,
+    totalInativadosAno,
+    valorPerdidoAno: Math.round(valorPerdidoAno * 100) / 100,
+  }
+}
+
+function buildEscolaSaude(
+  input: {
+    saldo: number
+    receita: number
+    totalDespesas: number
+    matriculadosCount: number
+    matriculadosValorTotal: number
+    inativadosCount: number
+    valorPerdido: number
+  },
+  periodo: 'mes' | 'ano' = 'mes'
+): { score: number; label: string; cor: 'green' | 'amber' | 'red'; sugestoes: string[] } {
+  let score = 72
+  const sugestoes: string[] = []
+  const ano = periodo === 'ano'
+
+  if (input.saldo >= 0) {
+    score += 8
+  } else {
+    score -= 18
+    sugestoes.push(
+      ano
+        ? 'Saldo do ano negativo: avalie cortes de despesas ou metas de receita.'
+        : 'Saldo do mês negativo: avalie cortes de despesas ou metas de receita.'
+    )
+  }
+
+  if (input.receita > 0 && input.totalDespesas / input.receita > 0.95) {
+    score -= 5
+    sugestoes.push('Despesas estão muito próximas da receita — mantenha reserva de caixa.')
+  }
+
+  if (input.inativadosCount > 0) {
+    const base = input.matriculadosCount + input.inativadosCount
+    const taxa = base > 0 ? input.inativadosCount / base : 0
+    if (taxa > 0.08) score -= 12
+    else if (taxa > 0.04) score -= 6
+    sugestoes.push(
+      ano
+        ? `${input.inativadosCount} inativação(ões) no ano — receita estimada perdida: R$ ${formatMoney(input.valorPerdido)}.`
+        : `${input.inativadosCount} aluno(s) inativado(s) neste mês — receita estimada perdida: R$ ${formatMoney(input.valorPerdido)}.`
+    )
+  }
+
+  if (input.matriculadosCount > 0 && input.valorPerdido > 0 && input.matriculadosValorTotal > 0) {
+    // No ano, matriculadosValorTotal é média mensal — comparar com perda anual usando base anualizada
+    const baseMensalidades = ano ? input.matriculadosValorTotal * 12 : input.matriculadosValorTotal
+    const impacto = input.valorPerdido / (baseMensalidades + input.valorPerdido)
+    if (impacto > 0.15) {
+      score -= 5
+      sugestoes.push('Churn com impacto relevante na receita — acompanhe motivos de saída e retenção.')
+    }
+  }
+
+  if (input.saldo > 0 && input.inativadosCount === 0 && input.receita >= input.totalDespesas * 1.1) {
+    sugestoes.push(
+      ano
+        ? 'Bom equilíbrio no ano: considere reinvestir parte do saldo em captação ou material.'
+        : 'Bom equilíbrio no mês: considere reinvestir parte do saldo em captação ou material.'
+    )
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)))
+  const label = score >= 72 ? 'Boa' : score >= 48 ? 'Atenção' : 'Crítico'
+  const cor = score >= 72 ? 'green' : score >= 48 ? 'amber' : 'red'
+  if (sugestoes.length === 0) {
+    sugestoes.push(
+      ano
+        ? 'Continue monitorando receitas e despesas ao longo do ano para manter a previsibilidade.'
+        : 'Continue monitorando receitas e despesas mês a mês para manter a previsibilidade.'
+    )
+  }
+  return { score, label, cor, sugestoes: [...new Set(sugestoes)].slice(0, 6) }
+}
+
 function formatMoney(v: number): string {
   return (Math.round(v * 100) / 100).toFixed(2)
 }
@@ -203,10 +395,38 @@ function toCsv(type: CsvType, data: unknown, month: number | undefined): string 
       ].join(sep))
     }
   } else if (type === 'geral') {
-    const d = data as { items?: Array<{ mes: number; ano: number; receita: number; despesaProfessores: number; despesaAdmin: number; despesaOutras: number; totalDespesas: number; saldo: number }> }
-    rows.push(['Mês', 'Ano', 'Receita', 'Despesa Professores', 'Despesa Admin', 'Despesa Outras', 'Total Despesas', 'Saldo'].join(sep))
+    const d = data as {
+      items?: Array<{ mes: number; ano: number; receita: number; despesaProfessores: number; despesaAdmin: number; despesaOutras: number; totalDespesas: number; saldo: number }>
+      matriculadosCount?: number
+      matriculadosValorTotal?: number
+      inativadosCount?: number
+      valorPerdidoInativos?: number
+      kpisPorMes?: Array<{
+        month: number
+        matriculadosCount: number
+        matriculadosValorTotal: number
+        inativadosCount: number
+        valorPerdidoInativos: number
+      }>
+      resumoAnual?: {
+        mediaMatriculados: number
+        mediaValorMensalidades: number
+        totalInativadosAno: number
+        valorPerdidoAno: number
+      }
+    }
+    const extraMes = month != null && d.matriculadosCount != null
+    const kpisPorMes = d.kpisPorMes ?? []
+    const extraAno = month == null && kpisPorMes.length > 0
+    rows.push(
+      extraMes
+        ? ['Mês', 'Ano', 'Receita', 'Despesa Professores', 'Despesa Admin', 'Despesa Outras', 'Total Despesas', 'Saldo', 'Matriculados (qtd)', 'Valor mensalidades', 'Inativados (qtd)', 'Valor perdido (inativos)'].join(sep)
+        : extraAno
+          ? ['Mês', 'Ano', 'Receita', 'Despesa Professores', 'Despesa Admin', 'Despesa Outras', 'Total Despesas', 'Saldo', 'Matriculados (qtd)', 'Valor mensalidades', 'Inativados (qtd)', 'Valor perdido (inativos)'].join(sep)
+          : ['Mês', 'Ano', 'Receita', 'Despesa Professores', 'Despesa Admin', 'Despesa Outras', 'Total Despesas', 'Saldo'].join(sep)
+    )
     for (const r of d.items ?? []) {
-      rows.push([
+      const base = [
         String(r.mes),
         String(r.ano),
         formatMoney(r.receita),
@@ -215,7 +435,43 @@ function toCsv(type: CsvType, data: unknown, month: number | undefined): string 
         formatMoney(r.despesaOutras),
         formatMoney(r.totalDespesas),
         formatMoney(r.saldo),
-      ].join(sep))
+      ]
+      if (extraMes) {
+        base.push(
+          String(d.matriculadosCount ?? ''),
+          formatMoney(d.matriculadosValorTotal ?? 0),
+          String(d.inativadosCount ?? ''),
+          formatMoney(d.valorPerdidoInativos ?? 0)
+        )
+      } else if (extraAno) {
+        const kp = kpisPorMes.find((k) => k.month === r.mes)
+        base.push(
+          String(kp?.matriculadosCount ?? ''),
+          formatMoney(kp?.matriculadosValorTotal ?? 0),
+          String(kp?.inativadosCount ?? ''),
+          formatMoney(kp?.valorPerdidoInativos ?? 0)
+        )
+      }
+      rows.push(base.join(sep))
+    }
+    if (extraAno && d.resumoAnual) {
+      const ra = d.resumoAnual
+      rows.push(
+        [
+          'Resumo ano',
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          String(ra.mediaMatriculados),
+          formatMoney(ra.mediaValorMensalidades),
+          String(ra.totalInativadosAno),
+          formatMoney(ra.valorPerdidoAno),
+        ].join(sep)
+      )
     }
   }
 
@@ -658,6 +914,67 @@ async function buildGeralReport(
       saldo: Math.round(saldo * 100) / 100,
     }
   })
+
+  if (month != null && items.length === 1) {
+    const row = items[0]
+    const kpis = await computeMatriculaKpis(year, month)
+    const escolaSaude = buildEscolaSaude(
+      {
+        saldo: row.saldo,
+        receita: row.receita,
+        totalDespesas: row.totalDespesas,
+        matriculadosCount: kpis.matriculadosCount,
+        matriculadosValorTotal: kpis.matriculadosValorTotal,
+        inativadosCount: kpis.inativadosCount,
+        valorPerdido: kpis.valorPerdidoInativos,
+      },
+      'mes'
+    )
+    return {
+      items,
+      matriculadosCount: kpis.matriculadosCount,
+      matriculadosValorTotal: kpis.matriculadosValorTotal,
+      inativadosCount: kpis.inativadosCount,
+      valorPerdidoInativos: kpis.valorPerdidoInativos,
+      escolaSaude,
+    }
+  }
+
+  if (month == null && items.length > 0) {
+    const kpisYear = await computeMatriculaKpisYear(year)
+    const receitaAno = items.reduce((s, i) => s + i.receita, 0)
+    const totalDespAno = items.reduce((s, i) => s + i.totalDespesas, 0)
+    const saldoAno = items.reduce((s, i) => s + i.saldo, 0)
+    const escolaSaude = buildEscolaSaude(
+      {
+        saldo: saldoAno,
+        receita: receitaAno,
+        totalDespesas: totalDespAno,
+        matriculadosCount: Math.round(kpisYear.mediaMatriculados),
+        matriculadosValorTotal: kpisYear.mediaValorMensalidades,
+        inativadosCount: kpisYear.totalInativadosAno,
+        valorPerdido: kpisYear.valorPerdidoAno,
+      },
+      'ano'
+    )
+    return {
+      items,
+      kpisPorMes: kpisYear.porMes.map((p) => ({
+        month: p.month,
+        matriculadosCount: p.matriculadosCount,
+        matriculadosValorTotal: p.matriculadosValorTotal,
+        inativadosCount: p.inativadosCount,
+        valorPerdidoInativos: p.valorPerdidoInativos,
+      })),
+      resumoAnual: {
+        mediaMatriculados: kpisYear.mediaMatriculados,
+        mediaValorMensalidades: kpisYear.mediaValorMensalidades,
+        totalInativadosAno: kpisYear.totalInativadosAno,
+        valorPerdidoAno: kpisYear.valorPerdidoAno,
+      },
+      escolaSaude,
+    }
+  }
 
   return { items }
 }

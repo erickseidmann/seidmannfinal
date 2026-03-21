@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
+import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -64,6 +65,7 @@ function buildUpdateData(body: Record<string, unknown>) {
     faturamentoEmail,
     faturamentoEndereco,
     faturamentoDescricaoNfse,
+    bolsista,
   } = body
 
   const update: Record<string, unknown> = {}
@@ -93,7 +95,9 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (complemento !== undefined) update.complemento = complemento ? String(complemento).trim() : null
   if (moraNoExterior !== undefined) update.moraNoExterior = Boolean(moraNoExterior)
   if (enderecoExterior !== undefined) update.enderecoExterior = enderecoExterior ? String(enderecoExterior).trim() : null
+  if (bolsista !== undefined) update.bolsista = Boolean(bolsista)
   if (valorMensalidade !== undefined && valorMensalidade !== '') update.valorMensalidade = Number(String(valorMensalidade).replace(',', '.'))
+  if (Boolean(bolsista)) update.valorMensalidade = 0
   if (metodoPagamento !== undefined) update.metodoPagamento = metodoPagamento ? String(metodoPagamento).trim() : null
   if (diaPagamento !== undefined && diaPagamento !== '') update.diaPagamento = Math.min(31, Math.max(1, Number(diaPagamento)))
   if (melhoresHorarios !== undefined) update.melhoresHorarios = melhoresHorarios ? String(melhoresHorarios).trim() : null
@@ -247,6 +251,8 @@ export async function PATCH(
       if (newStatus === 'PAUSED') {
         updateData.pausedAt = new Date()
         updateData.inactiveAt = null
+        ;(updateData as Record<string, unknown>).inactiveReason = null
+        ;(updateData as Record<string, unknown>).inactiveReasonOther = null
         if (body.activationDate) {
           updateData.activationDate = new Date(body.activationDate)
         } else {
@@ -260,10 +266,26 @@ export async function PATCH(
         updateData.inactiveAt = new Date()
         updateData.pausedAt = null
         updateData.activationDate = null
+        if (oldStatus !== 'INACTIVE') {
+          const v = validateInactiveReasonPayload(body.inactiveReason, body.inactiveReasonOther)
+          if (!v.ok) {
+            return NextResponse.json({ ok: false, message: v.message }, { status: 400 })
+          }
+          ;(updateData as Record<string, unknown>).inactiveByUserId = auth.session?.sub ?? null
+          ;(updateData as Record<string, unknown>).inactiveReason = v.inactiveReason
+          ;(updateData as Record<string, unknown>).inactiveReasonOther = v.inactiveReasonOther
+        }
       } else if (newStatus !== oldStatus) {
         updateData.inactiveAt = null
         updateData.pausedAt = null
         updateData.activationDate = null
+        ;(updateData as Record<string, unknown>).inactiveByUserId = null
+        ;(updateData as Record<string, unknown>).inactiveReason = null
+        ;(updateData as Record<string, unknown>).inactiveReasonOther = null
+      }
+
+      if (newStatus === 'PAUSED') {
+        ;(updateData as Record<string, unknown>).inactiveByUserId = null
       }
 
       updatedEnrollment = await prisma.enrollment.update({

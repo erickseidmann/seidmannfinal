@@ -15,9 +15,15 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
+import {
+  INACTIVE_REASON_LABELS,
+  INACTIVE_REASON_VALUES,
+  type InactiveReasonValue,
+  validateInactiveReasonPayload,
+} from '@/lib/inactive-reason'
 
 interface StudentAlertItem {
   id: string
@@ -79,7 +85,10 @@ interface Student {
   faturamentoEmail?: string | null
   faturamentoEndereco?: string | null
   faturamentoDescricaoNfse?: string | null
+  bolsista?: boolean
   user?: { id: string; nome: string; email: string; whatsapp: string | null } | null
+  inactiveReason?: string | null
+  inactiveReasonOther?: string | null
 }
 
 const TEMPO_AULA_OPCOES = [
@@ -258,6 +267,9 @@ const initialForm = {
   faturamentoEmail: '',
   faturamentoEndereco: '',
   faturamentoDescricaoNfse: '',
+  bolsista: false,
+  inactiveReason: '' as InactiveReasonValue | '',
+  inactiveReasonOther: '',
 }
 
 export default function AdminAlunosPage() {
@@ -310,6 +322,14 @@ export default function AdminAlunosPage() {
   const [inactivateStudentModal, setInactivateStudentModal] = useState<{
     student: Student
     inactiveFrom: string
+    inactiveReason: InactiveReasonValue | ''
+    inactiveReasonOther: string
+  } | null>(null)
+  const [bulkInactivateModal, setBulkInactivateModal] = useState<{
+    ids: string[]
+    inactiveFrom: string
+    inactiveReason: InactiveReasonValue | ''
+    inactiveReasonOther: string
   } | null>(null)
   const [designarAulaStudent, setDesignarAulaStudent] = useState<Student | null>(null)
   const [passwordForm, setPasswordForm] = useState({ novaSenha: '123456', obrigarAlteracao: true })
@@ -320,6 +340,7 @@ export default function AdminAlunosPage() {
     semProfessor: number
     semProfessorProximaSemana: number
     repetitionEndingSoon?: number
+    bolsistas?: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
   const [listModal, setListModal] = useState<{ title: string; type: string } | null>(null)
@@ -584,16 +605,31 @@ export default function AdminAlunosPage() {
       faturamentoEmail: s.faturamentoEmail ?? '',
       faturamentoEndereco: s.faturamentoEndereco ?? '',
       faturamentoDescricaoNfse: s.faturamentoDescricaoNfse ?? '',
+      bolsista: Boolean(s.bolsista),
+      inactiveReason: (s.inactiveReason && INACTIVE_REASON_VALUES.includes(s.inactiveReason as InactiveReasonValue)
+        ? s.inactiveReason
+        : '') as InactiveReasonValue | '',
+      inactiveReasonOther: s.inactiveReasonOther ?? '',
     })
     setIsModalOpen(true)
   }, [])
 
   const handleStatusChange = useCallback(
-    async (s: Student, newStatus: string, inactiveFrom?: string) => {
+    async (
+      s: Student,
+      newStatus: string,
+      opts?: { inactiveFrom?: string; inactiveReason?: InactiveReasonValue; inactiveReasonOther?: string }
+    ) => {
       try {
         const body =
           newStatus === 'INACTIVE'
-            ? { status: newStatus, inactiveFrom }
+            ? {
+                status: newStatus,
+                inactiveFrom: opts?.inactiveFrom,
+                inactiveReason: opts?.inactiveReason,
+                inactiveReasonOther:
+                  opts?.inactiveReason === 'OUTRO' ? opts?.inactiveReasonOther : undefined,
+              }
             : { status: newStatus }
 
         const res = await fetch(`/api/admin/enrollments/${s.id}/status`, {
@@ -1015,6 +1051,16 @@ export default function AdminAlunosPage() {
         return
       }
 
+      const precisaMotivoInativo =
+        formData.status === 'INACTIVE' && (editingStudent ? editingStudent.status !== 'INACTIVE' : true)
+      if (precisaMotivoInativo) {
+        const v = validateInactiveReasonPayload(formData.inactiveReason, formData.inactiveReasonOther)
+        if (!v.ok) {
+          setToast({ message: v.message, type: 'error' })
+          return
+        }
+      }
+
       const payload = {
         nome: formData.nome.trim(),
         email: emailTrim,
@@ -1043,7 +1089,7 @@ export default function AdminAlunosPage() {
         complemento: formData.moraNoExterior ? null : (formData.complemento.trim() || null),
         moraNoExterior: formData.moraNoExterior,
         enderecoExterior: formData.moraNoExterior ? (formData.enderecoExterior.trim() || null) : null,
-        valorMensalidade: formData.valorMensalidade ? String(formData.valorMensalidade).replace(',', '.') : null,
+        valorMensalidade: formData.bolsista ? '0' : (formData.valorMensalidade ? String(formData.valorMensalidade).replace(',', '.') : null),
         metodoPagamento: formData.metodoPagamento.trim() || null,
         diaPagamento: formData.diaPagamento ? Number(formData.diaPagamento) : null,
         melhoresHorarios: formData.melhoresHorarios.trim() || null,
@@ -1062,6 +1108,14 @@ export default function AdminAlunosPage() {
         faturamentoEmail: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoEmail.trim() || null : null,
         faturamentoEndereco: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoEndereco.trim() || null : null,
         faturamentoDescricaoNfse: formData.faturamentoTipo === 'EMPRESA' ? formData.faturamentoDescricaoNfse.trim() || null : null,
+        bolsista: !!formData.bolsista,
+        ...(precisaMotivoInativo && formData.inactiveReason
+          ? {
+              inactiveReason: formData.inactiveReason,
+              inactiveReasonOther:
+                formData.inactiveReason === 'OUTRO' ? formData.inactiveReasonOther.trim() : null,
+            }
+          : {}),
       }
       if (editingStudent) {
         const res = await fetch(`/api/admin/enrollments/${editingStudent.id}`, {
@@ -1257,51 +1311,14 @@ export default function AdminAlunosPage() {
       message: `Deseja marcar ${ids.length} aluno(s) selecionado(s) como Inativo? Essa ação vai excluir todas as aulas na agenda a partir da data de inativação que você informar.`,
       variant: 'danger',
       confirmLabel: 'Sim, marcar como Inativo',
-      onConfirm: async () => {
-        const answer = window.prompt(
-          'A partir de que data você quer inativar os alunos selecionados? (formato AAAA-MM-DD)',
-          todayIso
-        )
-        if (answer === null) {
-          return
-        }
-        const trimmed = answer.trim()
-        let inactiveFrom: string
-        if (!trimmed) {
-          inactiveFrom = todayIso
-        } else {
-          const d = new Date(trimmed)
-          if (Number.isNaN(d.getTime())) {
-            setToast({
-              message: 'Data inválida. Use o formato AAAA-MM-DD.',
-              type: 'error',
-            })
-            return
-          }
-          inactiveFrom = trimmed
-        }
-        setBulkActionLoading(true)
-        try {
-          let ok = 0
-          for (const id of ids) {
-            const res = await fetch(`/api/admin/enrollments/${id}/status`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ status: 'INACTIVE', inactiveFrom }),
-            })
-            const json = await res.json()
-            if (res.ok && json.ok) ok++
-          }
-          fetchStudents()
-          setSelectedStudentIds(new Set())
-          setToast({ message: `${ok} aluno(s) marcado(s) como Inativo.`, type: 'success' })
-        } catch {
-          setToast({ message: 'Erro ao alterar status', type: 'error' })
-        } finally {
-          setBulkActionLoading(false)
-          setConfirmModal(null)
-        }
+      onConfirm: () => {
+        setBulkInactivateModal({
+          ids,
+          inactiveFrom: todayIso,
+          inactiveReason: '',
+          inactiveReasonOther: '',
+        })
+        setConfirmModal(null)
       },
     })
   }
@@ -1499,6 +1516,8 @@ export default function AdminAlunosPage() {
               setInactivateStudentModal({
                 student: s,
                 inactiveFrom: todayIso,
+                inactiveReason: '',
+                inactiveReasonOther: '',
               })
             } else {
               handleStatusChange(s, newStatus)
@@ -1699,6 +1718,22 @@ export default function AdminAlunosPage() {
               value={statsLoading ? '...' : (stats?.porStatus.pausados ?? 0)}
               icon={<Users className="w-5 h-5" />}
               color="orange"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openListModal('studentsBolsistas', 'Alunos bolsistas')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('studentsBolsistas', 'Alunos bolsistas')}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Total de alunos bolsista"
+              value={statsLoading ? '...' : (stats?.bolsistas ?? 0)}
+              icon={<Award className="w-5 h-5" />}
+              color="purple"
+              subtitle="Clique para ver nome e escola"
             />
           </div>
           <div
@@ -2126,7 +2161,19 @@ export default function AdminAlunosPage() {
                     })
                     return
                   }
-                  await handleStatusChange(inactivateStudentModal.student, 'INACTIVE', trimmed)
+                  const v = validateInactiveReasonPayload(
+                    inactivateStudentModal.inactiveReason,
+                    inactivateStudentModal.inactiveReasonOther
+                  )
+                  if (!v.ok) {
+                    setToast({ message: v.message, type: 'error' })
+                    return
+                  }
+                  await handleStatusChange(inactivateStudentModal.student, 'INACTIVE', {
+                    inactiveFrom: trimmed,
+                    inactiveReason: v.inactiveReason,
+                    inactiveReasonOther: v.inactiveReasonOther ?? undefined,
+                  })
                   setInactivateStudentModal(null)
                 }}
               >
@@ -2161,6 +2208,188 @@ export default function AdminAlunosPage() {
                 />
                 <p className="text-xs text-gray-500 mt-1">Use o formato AAAA-MM-DD.</p>
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Motivo da inativação <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={inactivateStudentModal.inactiveReason}
+                  onChange={(e) =>
+                    setInactivateStudentModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            inactiveReason: e.target.value as InactiveReasonValue | '',
+                            inactiveReasonOther:
+                              e.target.value === 'OUTRO' ? prev.inactiveReasonOther : '',
+                          }
+                        : prev
+                    )
+                  }
+                  className="input w-full"
+                >
+                  <option value="">Selecione o motivo</option>
+                  {INACTIVE_REASON_VALUES.map((key) => (
+                    <option key={key} value={key}>
+                      {INACTIVE_REASON_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {inactivateStudentModal.inactiveReason === 'OUTRO' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    Descreva o motivo <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={inactivateStudentModal.inactiveReasonOther}
+                    onChange={(e) =>
+                      setInactivateStudentModal((prev) =>
+                        prev ? { ...prev, inactiveReasonOther: e.target.value } : prev
+                      )
+                    }
+                    className="input w-full min-h-[80px]"
+                    placeholder="Ex.: mudança de cidade, horário incompatível..."
+                    rows={3}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
+
+        {/* Modal Inativar alunos em massa (data + motivo) */}
+        <Modal
+          isOpen={!!bulkInactivateModal}
+          onClose={() => setBulkInactivateModal(null)}
+          title="Inativar alunos selecionados"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setBulkInactivateModal(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  if (!bulkInactivateModal) return
+                  const trimmed = bulkInactivateModal.inactiveFrom.trim()
+                  const d = new Date(trimmed)
+                  if (Number.isNaN(d.getTime())) {
+                    setToast({
+                      message: 'Data inválida. Use o formato AAAA-MM-DD.',
+                      type: 'error',
+                    })
+                    return
+                  }
+                  const v = validateInactiveReasonPayload(
+                    bulkInactivateModal.inactiveReason,
+                    bulkInactivateModal.inactiveReasonOther
+                  )
+                  if (!v.ok) {
+                    setToast({ message: v.message, type: 'error' })
+                    return
+                  }
+                  setBulkActionLoading(true)
+                  try {
+                    let ok = 0
+                    for (const id of bulkInactivateModal.ids) {
+                      const res = await fetch(`/api/admin/enrollments/${id}/status`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                          status: 'INACTIVE',
+                          inactiveFrom: trimmed,
+                          inactiveReason: v.inactiveReason,
+                          inactiveReasonOther: v.inactiveReasonOther,
+                        }),
+                      })
+                      const json = await res.json()
+                      if (res.ok && json.ok) ok++
+                    }
+                    fetchStudents()
+                    setSelectedStudentIds(new Set())
+                    setToast({ message: `${ok} aluno(s) marcado(s) como Inativo.`, type: 'success' })
+                    setBulkInactivateModal(null)
+                  } catch {
+                    setToast({ message: 'Erro ao alterar status', type: 'error' })
+                  } finally {
+                    setBulkActionLoading(false)
+                  }
+                }}
+                disabled={bulkActionLoading}
+              >
+                {bulkActionLoading ? 'Processando...' : 'Confirmar inativação'}
+              </Button>
+            </>
+          }
+        >
+          {bulkInactivateModal && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Você vai marcar <strong>{bulkInactivateModal.ids.length}</strong> aluno(s) como{' '}
+                <strong>Inativo</strong> a partir da data abaixo, com o mesmo motivo para todos.
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  A partir de que data inativar?
+                </label>
+                <input
+                  type="date"
+                  value={bulkInactivateModal.inactiveFrom}
+                  onChange={(e) =>
+                    setBulkInactivateModal((prev) =>
+                      prev ? { ...prev, inactiveFrom: e.target.value } : prev
+                    )
+                  }
+                  className="input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Motivo da inativação <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={bulkInactivateModal.inactiveReason}
+                  onChange={(e) =>
+                    setBulkInactivateModal((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            inactiveReason: e.target.value as InactiveReasonValue | '',
+                            inactiveReasonOther:
+                              e.target.value === 'OUTRO' ? prev.inactiveReasonOther : '',
+                          }
+                        : prev
+                    )
+                  }
+                  className="input w-full"
+                >
+                  <option value="">Selecione o motivo</option>
+                  {INACTIVE_REASON_VALUES.map((key) => (
+                    <option key={key} value={key}>
+                      {INACTIVE_REASON_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {bulkInactivateModal.inactiveReason === 'OUTRO' && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    Descreva o motivo <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={bulkInactivateModal.inactiveReasonOther}
+                    onChange={(e) =>
+                      setBulkInactivateModal((prev) =>
+                        prev ? { ...prev, inactiveReasonOther: e.target.value } : prev
+                      )
+                    }
+                    className="input w-full min-h-[80px]"
+                    rows={3}
+                  />
+                </div>
+              )}
             </div>
           )}
         </Modal>
@@ -2334,14 +2563,26 @@ export default function AdminAlunosPage() {
                           title: `Confirmar status ${statusLabel}`,
                           message: mensagem,
                           onConfirm: () => {
-                            setFormData({ ...formData, status: newStatus })
+                            setFormData({
+                              ...formData,
+                              status: newStatus,
+                              ...(newStatus !== 'INACTIVE'
+                                ? { inactiveReason: '' as InactiveReasonValue | '', inactiveReasonOther: '' }
+                                : {}),
+                            })
                             setConfirmModal(null)
                           },
                           variant: 'danger',
                           confirmLabel: `Sim, marcar como ${statusLabel}`,
                         })
                       } else {
-                        setFormData({ ...formData, status: newStatus })
+                        setFormData({
+                          ...formData,
+                          status: newStatus,
+                          ...(newStatus !== 'INACTIVE'
+                            ? { inactiveReason: '' as InactiveReasonValue | '', inactiveReasonOther: '' }
+                            : {}),
+                        })
                       }
                     }}
                     className="input w-full"
@@ -2366,6 +2607,55 @@ export default function AdminAlunosPage() {
                       required
                     />
                     <p className="text-xs text-gray-500 mt-1">A partir desta data, o aluno voltará automaticamente para &quot;Ativo&quot;</p>
+                  </div>
+                )}
+                {formData.status === 'INACTIVE' && (
+                  <div className="md:col-span-2 space-y-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                    <p className="text-sm text-amber-900">
+                      Ao salvar como <strong>Inativo</strong>, informe o motivo (obrigatório ao inativar pela primeira vez nesta edição).
+                    </p>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Motivo da inativação <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={formData.inactiveReason}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            inactiveReason: e.target.value as InactiveReasonValue | '',
+                            inactiveReasonOther:
+                              e.target.value === 'OUTRO' ? formData.inactiveReasonOther : '',
+                          })
+                        }
+                        className="input w-full"
+                        required={
+                          formData.status === 'INACTIVE' &&
+                          (!editingStudent || editingStudent.status !== 'INACTIVE')
+                        }
+                      >
+                        <option value="">Selecione o motivo</option>
+                        {INACTIVE_REASON_VALUES.map((key) => (
+                          <option key={key} value={key}>
+                            {INACTIVE_REASON_LABELS[key]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {formData.inactiveReason === 'OUTRO' && (
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Descreva o motivo <span className="text-red-500">*</span>
+                        </label>
+                        <textarea
+                          value={formData.inactiveReasonOther}
+                          onChange={(e) => setFormData({ ...formData, inactiveReasonOther: e.target.value })}
+                          className="input w-full min-h-[80px]"
+                          rows={3}
+                          placeholder="Obrigatório quando o motivo for &quot;Outro&quot;"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
                 <div>
@@ -2746,6 +3036,26 @@ export default function AdminAlunosPage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
+                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.bolsista}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          bolsista: e.target.checked,
+                          valorMensalidade: e.target.checked ? '0' : formData.valorMensalidade,
+                        })
+                      }
+                      className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
+                    />
+                    Este aluno é bolsista
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    Quando marcado, o valor da mensalidade fica R$ 0,00 e não emite boleto/NF.
+                  </p>
+                </div>
+                <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Valor mensalidade (R$) <span className="text-red-500">*</span>
                   </label>
@@ -2758,7 +3068,8 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="0,00"
-                    required
+                    required={!formData.bolsista}
+                    disabled={!!formData.bolsista}
                   />
                 </div>
                 <div>
@@ -3262,7 +3573,7 @@ export default function AdminAlunosPage() {
             </div>
           ) : listData.length === 0 ? (
             <p className="text-gray-500">Nenhum registro.</p>
-          ) : listModal?.type === 'studentsOutros' ? (
+          ) : listModal?.type === 'studentsOutros' || listModal?.type === 'studentsBolsistas' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>

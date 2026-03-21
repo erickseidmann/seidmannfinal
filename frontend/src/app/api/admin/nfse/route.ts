@@ -173,6 +173,12 @@ export async function POST(request: NextRequest) {
             { status: 404 }
           )
         }
+        if ((enrollment as { bolsista?: boolean | null }).bolsista) {
+          return NextResponse.json(
+            { ok: false, message: 'Aluno bolsista não deve emitir nota fiscal.' },
+            { status: 400 }
+          )
+        }
 
         const finance = getEnrollmentFinanceData(enrollment)
         let valorMensalidade: number | null =
@@ -336,6 +342,9 @@ export async function POST(request: NextRequest) {
     for (const pagamento of pagamentosSemNota) {
       const enrollment = pagamento.enrollment
       if (!enrollment) continue
+      if ((enrollment as { bolsista?: boolean | null }).bolsista) {
+        continue
+      }
 
       const finance = getEnrollmentFinanceData(enrollment)
       const valorMensalidade =
