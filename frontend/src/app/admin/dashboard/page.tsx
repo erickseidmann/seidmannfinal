@@ -802,7 +802,7 @@ export default function AdminDashboardPage() {
               value={metrics?.teachersWithLateLessonRecords ?? 0}
               icon={<FileClock className="w-5 h-5" />}
               color="indigo"
-              subtitle="Sem registro após término; exclui períodos já pagos ao prof. (60 dias)"
+              subtitle="Só períodos em aberto no financeiro; aulas encerradas sem registro (60 dias)"
             />
           </div>
           <div
@@ -1097,8 +1097,9 @@ export default function AdminDashboardPage() {
                 fim) e ainda <strong>não tem registro de aula</strong> (livro/páginas/presença). Considera apenas aulas
                 nos últimos{' '}
                 {(listData[0] as ListItemTeachersLateRecords | undefined)?.janelaDias ?? 60} dias e matrículas ativas
-                ou em curso. <strong>Não entram</strong> aulas cujo início cai em um período já marcado como{' '}
-                <strong>PAGO</strong> ao professor (financeiro, com início e fim do período definidos).
+                ou em curso. Só entram aulas cujo início cai em um período de pagamento do professor{' '}
+                <strong>em aberto</strong> (financeiro, com início e fim definidos; períodos já{' '}
+                <strong>PAGO</strong> não contam).
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">

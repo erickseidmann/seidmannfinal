@@ -1,12 +1,13 @@
 /**
  * Aulas já encerradas (horário de término no passado) sem LessonRecord,
  * com professor designado e matrícula em status “em curso”.
- * Não inclui aulas cujo início cai em período já pago ao professor (TeacherPaymentMonth PAGO + datas).
+ * Só entram aulas cujo início cai em período de pagamento **em aberto** ao professor
+ * (TeacherPaymentMonth com periodoInicio/Termino e status ≠ PAGO).
  * Usado no dashboard admin (cubo + lista “registros atrasados”).
  */
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
+import { isLessonStartWithinTeacherPeriodRanges } from '@/lib/teacher-paid-period'
 
 /** Só considera aulas agendadas nos últimos N dias (evita lixo antigo) */
 export const PENDING_RECORD_LOOKBACK_DAYS = 60
@@ -50,29 +51,31 @@ export async function findLessonsPendingRecord(now: Date = new Date()) {
   ]
   if (teacherIds.length === 0) return []
 
-  const paidMonths = await prisma.teacherPaymentMonth.findMany({
+  /** Períodos ainda em aberto (não PAGO), com datas explícitas — só esses geram alerta de registro */
+  const openMonths = await prisma.teacherPaymentMonth.findMany({
     where: {
       teacherId: { in: teacherIds },
-      paymentStatus: 'PAGO',
       periodoInicio: { not: null },
       periodoTermino: { not: null },
+      OR: [{ paymentStatus: 'EM_ABERTO' }, { paymentStatus: null }],
     },
     select: { teacherId: true, periodoInicio: true, periodoTermino: true },
   })
 
-  const paidByTeacher = new Map<string, { periodoInicio: Date; periodoTermino: Date }[]>()
-  for (const pm of paidMonths) {
+  const openByTeacher = new Map<string, { periodoInicio: Date; periodoTermino: Date }[]>()
+  for (const pm of openMonths) {
     if (!pm.periodoInicio || !pm.periodoTermino) continue
-    const list = paidByTeacher.get(pm.teacherId) ?? []
+    const list = openByTeacher.get(pm.teacherId) ?? []
     list.push({ periodoInicio: pm.periodoInicio, periodoTermino: pm.periodoTermino })
-    paidByTeacher.set(pm.teacherId, list)
+    openByTeacher.set(pm.teacherId, list)
   }
 
   return endedNoRecord.filter((l) => {
     const tid = l.teacherId
-    if (!tid) return true
-    const periods = paidByTeacher.get(tid) ?? []
-    return !isLessonStartInTeacherPaidPeriod(l.startAt, periods)
+    if (!tid) return false
+    const periods = openByTeacher.get(tid) ?? []
+    if (periods.length === 0) return false
+    return isLessonStartWithinTeacherPeriodRanges(l.startAt, periods)
   })
 }
 
