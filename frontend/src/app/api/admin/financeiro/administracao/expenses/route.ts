@@ -4,6 +4,7 @@
  * Body: name, description?, valor, repeatMonthly (boolean), repeatMonths (number), startYear?, startMonth?
  */
 
+import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest) {
     const now = new Date()
     const startY = data.startYear ?? now.getFullYear()
     const startM = data.startMonth ?? now.getMonth() + 1
+    const recurringFixed = data.recurringFixed === true
 
     if (!prisma.adminExpense) {
       return NextResponse.json(
@@ -44,25 +46,57 @@ export async function POST(request: NextRequest) {
     }
 
     const created: { id: string; year: number; month: number }[] = []
-    for (let i = 0; i < repeatMonths; i++) {
-      let y = startY
-      let m = startM + i
-      while (m > 12) {
-        m -= 12
-        y += 1
-      }
+
+    /** Despesa fixa que se repete todo mês: uma série; linhas dos outros meses ao visualizar o período */
+    if (recurringFixed) {
+      const seriesId = randomUUID()
       const expense = await prisma.adminExpense.create({
         data: {
           name: nameTrim,
           description: data.description?.trim() || null,
           valor: valorNum,
-          year: y,
-          month: m,
+          year: startY,
+          month: startM,
           paymentStatus: 'EM_ABERTO',
-          isFixed: repeat,
+          isFixed: true,
+          fixedSeriesId: seriesId,
         },
       })
-      created.push({ id: expense.id, year: y, month: m })
+      created.push({ id: expense.id, year: startY, month: startM })
+    } else if (repeat) {
+      for (let i = 0; i < repeatMonths; i++) {
+        let y = startY
+        let m = startM + i
+        while (m > 12) {
+          m -= 12
+          y += 1
+        }
+        const expense = await prisma.adminExpense.create({
+          data: {
+            name: nameTrim,
+            description: data.description?.trim() || null,
+            valor: valorNum,
+            year: y,
+            month: m,
+            paymentStatus: 'EM_ABERTO',
+            isFixed: false,
+          },
+        })
+        created.push({ id: expense.id, year: y, month: m })
+      }
+    } else {
+      const expense = await prisma.adminExpense.create({
+        data: {
+          name: nameTrim,
+          description: data.description?.trim() || null,
+          valor: valorNum,
+          year: startY,
+          month: startM,
+          paymentStatus: 'EM_ABERTO',
+          isFixed: false,
+        },
+      })
+      created.push({ id: expense.id, year: startY, month: startM })
     }
 
     return NextResponse.json({

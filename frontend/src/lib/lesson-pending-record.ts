@@ -21,13 +21,22 @@ export function lessonEndTime(startAt: Date, durationMinutes: number | null): nu
   return startAt.getTime() + dur * 60 * 1000
 }
 
+export type FindLessonsPendingRecordOptions = {
+  /** Se informado, só aulas deste professor */
+  teacherId?: string
+}
+
 /** Retorna aulas que já terminaram, sem registro, elegíveis para o alerta. */
-export async function findLessonsPendingRecord(now: Date = new Date()) {
+export async function findLessonsPendingRecord(
+  now: Date = new Date(),
+  options?: FindLessonsPendingRecordOptions
+) {
   const cutoff = new Date(now.getTime() - PENDING_RECORD_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
+  const tid = options?.teacherId
 
   const rows = await prisma.lesson.findMany({
     where: {
-      teacherId: { not: null },
+      ...(tid ? { teacherId: tid } : { teacherId: { not: null } }),
       status: { in: ['CONFIRMED', 'REPOSICAO'] },
       record: null,
       startAt: { lte: now, gte: cutoff },
@@ -38,7 +47,9 @@ export async function findLessonsPendingRecord(now: Date = new Date()) {
       startAt: true,
       durationMinutes: true,
       teacherId: true,
+      enrollmentId: true,
       teacher: { select: { id: true, nome: true } },
+      enrollment: { select: { id: true, nome: true } },
     },
   })
 
@@ -46,9 +57,9 @@ export async function findLessonsPendingRecord(now: Date = new Date()) {
     (l) => lessonEndTime(l.startAt, l.durationMinutes) <= now.getTime()
   )
 
-  const teacherIds = [
-    ...new Set(endedNoRecord.map((l) => l.teacherId).filter((id): id is string => !!id)),
-  ]
+  const teacherIds = tid
+    ? [tid]
+    : [...new Set(endedNoRecord.map((l) => l.teacherId).filter((id): id is string => !!id))]
   if (teacherIds.length === 0) return []
 
   /** Períodos ainda em aberto (não PAGO), com datas explícitas — só esses geram alerta de registro */

@@ -29,6 +29,7 @@ import {
   Download,
   Copy,
   ChevronDown,
+  ChevronLeft,
 } from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
@@ -202,6 +203,15 @@ interface ListItemTeachersLateRecords extends ListItemBase {
   aulaMaisAntiga?: string | null
   janelaDias?: number
 }
+/** Linha da API ?teacherId= (aulas sem registro de um professor) */
+interface LateRecordLessonDetail {
+  lessonId: string
+  enrollmentId: string
+  alunoNome: string
+  startAt: string
+  durationMinutes: number | null
+  janelaDias?: number
+}
 
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
@@ -234,6 +244,9 @@ export default function AdminDashboardPage() {
     )[]
   >([])
   const [listLoading, setListLoading] = useState(false)
+  const [lateRecordsTeacherDetail, setLateRecordsTeacherDetail] = useState<{ id: string; nome: string } | null>(null)
+  const [lateRecordsLessonRows, setLateRecordsLessonRows] = useState<LateRecordLessonDetail[]>([])
+  const [lateRecordsDetailLoading, setLateRecordsDetailLoading] = useState(false)
   const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
   const [calendarStatsLoading, setCalendarStatsLoading] = useState(true)
   const [weeklyFrequencyEntries, setWeeklyFrequencyEntries] = useState<WeeklyFrequencyEntry[]>([])
@@ -412,6 +425,8 @@ export default function AdminDashboardPage() {
   const openListModal = useCallback(
     async (type: ListType) => {
       setModalType(type)
+      setLateRecordsTeacherDetail(null)
+      setLateRecordsLessonRows([])
       setListData([])
       setListLoading(true)
       try {
@@ -433,7 +448,38 @@ export default function AdminDashboardPage() {
     []
   )
 
-  const closeModal = useCallback(() => setModalType(null), [])
+  const closeModal = useCallback(() => {
+    setModalType(null)
+    setLateRecordsTeacherDetail(null)
+    setLateRecordsLessonRows([])
+  }, [])
+
+  const openTeachersLateDetail = useCallback(async (teacherId: string, teacherNome: string) => {
+    setLateRecordsTeacherDetail({ id: teacherId, nome: teacherNome })
+    setLateRecordsDetailLoading(true)
+    setLateRecordsLessonRows([])
+    try {
+      const res = await fetch(
+        `/api/admin/dashboard-lists?type=teachersWithLateLessonRecords&teacherId=${encodeURIComponent(teacherId)}`,
+        { credentials: 'include' }
+      )
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data)) {
+        setLateRecordsLessonRows(json.data as LateRecordLessonDetail[])
+      } else {
+        setLateRecordsLessonRows([])
+      }
+    } catch {
+      setLateRecordsLessonRows([])
+    } finally {
+      setLateRecordsDetailLoading(false)
+    }
+  }, [])
+
+  const backToTeachersLateList = useCallback(() => {
+    setLateRecordsTeacherDetail(null)
+    setLateRecordsLessonRows([])
+  }, [])
 
   const openAuditModal = useCallback(async () => {
     setShowAuditModal(true)
@@ -851,7 +897,13 @@ export default function AdminDashboardPage() {
         <Modal
           isOpen={modalType !== null}
           onClose={closeModal}
-          title={modalType ? LIST_TITLES[modalType] : ''}
+          title={
+            modalType
+              ? modalType === 'teachersWithLateLessonRecords' && lateRecordsTeacherDetail
+                ? `Aulas sem registro — ${lateRecordsTeacherDetail.nome}`
+                : LIST_TITLES[modalType]
+              : ''
+          }
           size="xl"
         >
           {listLoading ? (
@@ -1091,44 +1143,98 @@ export default function AdminDashboardPage() {
               </div>
             </div>
           ) : modalType === 'teachersWithLateLessonRecords' ? (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">
-                Professores com pelo menos uma aula <strong>confirmada ou reposição</strong> que já terminou (horário de
-                fim) e ainda <strong>não tem registro de aula</strong> (livro/páginas/presença). Considera apenas aulas
-                nos últimos{' '}
-                {(listData[0] as ListItemTeachersLateRecords | undefined)?.janelaDias ?? 60} dias e matrículas ativas
-                ou em curso. Só entram aulas cujo início cai em um período de pagamento do professor{' '}
-                <strong>em aberto</strong> (financeiro, com início e fim definidos; períodos já{' '}
-                <strong>PAGO</strong> não contam).
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Professor</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Aulas sem registro</th>
-                      <th className="py-2 font-semibold text-gray-700">Início da aula mais antiga (pendente)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {listData.map((item) => {
-                      const row = item as ListItemTeachersLateRecords
-                      const maisAntiga =
-                        row.aulaMaisAntiga != null
-                          ? formatDateTime(row.aulaMaisAntiga)
-                          : '—'
-                      return (
-                        <tr key={row.id} className="border-b border-gray-100">
-                          <td className="py-2 pr-4 font-medium">{row.nome}</td>
-                          <td className="py-2 pr-4">{row.aulasSemRegistro ?? '—'}</td>
-                          <td className="py-2 text-gray-700 text-sm">{maisAntiga}</td>
+            lateRecordsTeacherDetail ? (
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={backToTeachersLateList}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-brand-orange hover:underline"
+                >
+                  <ChevronLeft className="w-4 h-4" aria-hidden />
+                  Voltar à lista de professores
+                </button>
+                <p className="text-sm text-gray-600">
+                  Aulas já encerradas, sem registro de aula, dentro de período em aberto no financeiro (mesma regra da
+                  lista geral).
+                </p>
+                {lateRecordsDetailLoading ? (
+                  <p className="text-gray-500">Carregando aulas...</p>
+                ) : lateRecordsLessonRows.length === 0 ? (
+                  <p className="text-gray-500">Nenhuma aula pendente para este professor.</p>
+                ) : (
+                  <div className="overflow-x-auto max-h-[min(60vh,480px)] overflow-y-auto border border-gray-100 rounded-lg">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="sticky top-0 bg-white border-b border-gray-200 z-10">
+                        <tr>
+                          <th className="py-2 pr-4 pl-3 font-semibold text-gray-700">Data e hora da aula</th>
+                          <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                          <th className="py-2 pr-3 font-semibold text-gray-700">Duração</th>
                         </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {lateRecordsLessonRows.map((row) => (
+                          <tr key={row.lessonId} className="border-b border-gray-100">
+                            <td className="py-2 pr-4 pl-3 text-gray-900">{formatDateTime(row.startAt)}</td>
+                            <td className="py-2 pr-4">{row.alunoNome}</td>
+                            <td className="py-2 pr-3 text-gray-600 text-sm">
+                              {row.durationMinutes != null ? `${row.durationMinutes} min` : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-600">
+                  Professores com pelo menos uma aula <strong>confirmada ou reposição</strong> que já terminou (horário de
+                  fim) e ainda <strong>não tem registro de aula</strong> (livro/páginas/presença). Considera apenas aulas
+                  nos últimos{' '}
+                  {(listData[0] as ListItemTeachersLateRecords | undefined)?.janelaDias ?? 60} dias e matrículas ativas
+                  ou em curso. Só entram aulas cujo início cai em um período de pagamento do professor{' '}
+                  <strong>em aberto</strong> (financeiro, com início e fim definidos; períodos já{' '}
+                  <strong>PAGO</strong> não contam). <strong>Clique no nome do professor</strong> para ver cada aula
+                  pendente.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="py-2 pr-4 font-semibold text-gray-700">Professor</th>
+                        <th className="py-2 pr-4 font-semibold text-gray-700">Aulas sem registro</th>
+                        <th className="py-2 font-semibold text-gray-700">Início da aula mais antiga (pendente)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {listData.map((item) => {
+                        const row = item as ListItemTeachersLateRecords
+                        const maisAntiga =
+                          row.aulaMaisAntiga != null
+                            ? formatDateTime(row.aulaMaisAntiga)
+                            : '—'
+                        return (
+                          <tr key={row.id} className="border-b border-gray-100">
+                            <td className="py-2 pr-4">
+                              <button
+                                type="button"
+                                onClick={() => openTeachersLateDetail(row.id, row.nome)}
+                                className="font-medium text-left text-brand-orange hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange rounded"
+                              >
+                                {row.nome}
+                              </button>
+                            </td>
+                            <td className="py-2 pr-4">{row.aulasSemRegistro ?? '—'}</td>
+                            <td className="py-2 text-gray-700 text-sm">{maisAntiga}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
           ) : modalType === 'inactiveStudents' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">

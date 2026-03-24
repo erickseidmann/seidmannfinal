@@ -32,10 +32,19 @@ interface ExpenseRow {
   month: number
   paymentStatus: string | null
   isFixed?: boolean
+  paidAt?: string | null
+  receiptUrl?: string | null
+  fixedSeriesId?: string | null
 }
 
 function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
+}
+
+function formatDateIso(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 export default function FinanceiroSaidasPage() {
@@ -55,6 +64,12 @@ export default function FinanceiroSaidasPage() {
   const [despesaRepeteMensal, setDespesaRepeteMensal] = useState(false)
   const [despesaMeses, setDespesaMeses] = useState('1')
   const [savingDespesa, setSavingDespesa] = useState(false)
+  const [modalIsFixedExpense, setModalIsFixedExpense] = useState(false)
+
+  const [modalMarkPaid, setModalMarkPaid] = useState<ExpenseRow | null>(null)
+  const [markPaidData, setMarkPaidData] = useState('')
+  const [markPaidFile, setMarkPaidFile] = useState<File | null>(null)
+  const [markPaidSaving, setMarkPaidSaving] = useState(false)
 
   const [showPeriodo, setShowPeriodo] = useState(true)
   const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(10)
@@ -81,6 +96,16 @@ export default function FinanceiroSaidasPage() {
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
 
+  useEffect(() => {
+    if (modalMarkPaid) {
+      const t = new Date()
+      setMarkPaidData(
+        `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+      )
+      setMarkPaidFile(null)
+    }
+  }, [modalMarkPaid])
+
   const fixedExpenses = expenses.filter((e) => e.isFixed === true)
   const otherExpenses = expenses.filter((e) => e.isFixed !== true)
   const totalDespesas = expenses.reduce((s, e) => s + e.valor, 0)
@@ -91,11 +116,12 @@ export default function FinanceiroSaidasPage() {
   const displayedOtherExpenses = otherExpenses.slice(0, itemsPerPageExpenses)
 
   const openModalDespesa = (asFixed = false) => {
+    setModalIsFixedExpense(asFixed)
     setDespesaNome('')
     setDespesaDescricao('')
     setDespesaValor('')
     setDespesaRepeteMensal(asFixed)
-    setDespesaMeses(asFixed ? '12' : '1')
+    setDespesaMeses(asFixed ? '1' : '1')
     setModalDespesa(true)
   }
 
@@ -125,6 +151,7 @@ export default function FinanceiroSaidasPage() {
           repeatMonths: meses,
           startYear: selectedAno,
           startMonth: selectedMes,
+          recurringFixed: modalIsFixedExpense,
         }),
       })
       const json = await res.json()
@@ -142,18 +169,72 @@ export default function FinanceiroSaidasPage() {
     }
   }
 
-  const updateExpensePaymentStatus = async (expenseId: string, paymentStatus: 'PAGO' | 'EM_ABERTO') => {
+  const setExpenseEmAberto = async (expenseId: string) => {
     try {
       const res = await fetch(`/api/admin/financeiro/administracao/expenses/${expenseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentStatus }),
+        body: JSON.stringify({ paymentStatus: 'EM_ABERTO' }),
       })
       const json = await res.json()
-      if (!res.ok || !json.ok) return
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao atualizar.', type: 'error' })
+        return
+      }
       await fetchData(selectedAno, selectedMes)
     } catch {
-      // silencioso
+      setToast({ message: 'Erro ao atualizar.', type: 'error' })
+    }
+  }
+
+  const submitMarcarPago = async () => {
+    if (!modalMarkPaid) return
+    if (!markPaidData.trim()) {
+      setToast({ message: 'Informe a data do pagamento.', type: 'error' })
+      return
+    }
+    if (!markPaidFile) {
+      setToast({ message: 'Anexe o comprovante (PDF ou imagem).', type: 'error' })
+      return
+    }
+    setMarkPaidSaving(true)
+    setToast(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', markPaidFile)
+      const up = await fetch('/api/admin/financeiro/administracao/expenses/upload-receipt', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      })
+      const upJson = await up.json()
+      if (!up.ok || !upJson.ok || !upJson.data?.url) {
+        setToast({ message: upJson.message || 'Falha ao enviar comprovante.', type: 'error' })
+        return
+      }
+      const res = await fetch(`/api/admin/financeiro/administracao/expenses/${modalMarkPaid.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentStatus: 'PAGO',
+          paidAt: markPaidData,
+          receiptUrl: upJson.data.url as string,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao registrar pagamento.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Pagamento registrado.', type: 'success' })
+      setModalMarkPaid(null)
+      setMarkPaidFile(null)
+      setMarkPaidData('')
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao registrar pagamento.', type: 'error' })
+    } finally {
+      setMarkPaidSaving(false)
     }
   }
 
@@ -182,18 +263,40 @@ export default function FinanceiroSaidasPage() {
     {
       key: 'paymentStatus',
       label: 'Pagamento',
-      render: (row) => (
-        <select
-          value={row.paymentStatus ?? 'EM_ABERTO'}
-          onChange={(e) =>
-            updateExpensePaymentStatus(row.id, e.target.value === 'PAGO' ? 'PAGO' : 'EM_ABERTO')
-          }
-          className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-        >
-          <option value="EM_ABERTO">Em aberto</option>
-          <option value="PAGO">Pago</option>
-        </select>
-      ),
+      render: (row) => {
+        if (row.paymentStatus === 'PAGO' && row.paidAt) {
+          return (
+            <div className="flex flex-col gap-1 text-sm max-w-[220px]">
+              <span className="text-green-800 font-medium">Pago em {formatDateIso(row.paidAt)}</span>
+              {row.receiptUrl ? (
+                <a
+                  href={row.receiptUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-orange hover:underline"
+                >
+                  Ver comprovante
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void setExpenseEmAberto(row.id)}
+                className="text-left text-xs text-gray-600 hover:text-gray-900 underline"
+              >
+                Voltar para em aberto
+              </button>
+            </div>
+          )
+        }
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-amber-800">Em aberto</span>
+            <Button variant="primary" size="sm" onClick={() => setModalMarkPaid(row)}>
+              Marcar pago
+            </Button>
+          </div>
+        )
+      },
     },
     {
       key: 'acoes',
@@ -315,7 +418,7 @@ export default function FinanceiroSaidasPage() {
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
               </Button>
@@ -326,7 +429,9 @@ export default function FinanceiroSaidasPage() {
             </div>
           </div>
           <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
-            Despesas recorrentes (internet, aluguel etc.). Marque &quot;Repete mensalmente&quot; ao adicionar para cadastrar como fixa.
+            Despesas que se repetem <strong>todo mês</strong> (internet, aluguel etc.). Ao adicionar, a linha é criada no mês atual e
+            replicada automaticamente nos demais meses ao selecionar o período. Para marcar como pago é obrigatório informar a data e
+            anexar o comprovante.
           </div>
           <Table<ExpenseRow>
             columns={expenseColumns}
@@ -355,7 +460,7 @@ export default function FinanceiroSaidasPage() {
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
               </Button>
@@ -382,6 +487,53 @@ export default function FinanceiroSaidasPage() {
       </div>
 
       <Modal
+        isOpen={!!modalMarkPaid}
+        onClose={() => {
+          setModalMarkPaid(null)
+          setMarkPaidFile(null)
+        }}
+        title="Marcar despesa como paga"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setModalMarkPaid(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void submitMarcarPago()} disabled={markPaidSaving}>
+              {markPaidSaving ? 'Salvando...' : 'Confirmar pagamento'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700">
+            <strong>{modalMarkPaid?.name}</strong> — {modalMarkPaid ? `${formatMoney(modalMarkPaid.valor)}` : ''}
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Data em que foi pago *</label>
+            <input
+              type="date"
+              value={markPaidData}
+              onChange={(e) => setMarkPaidData(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Comprovante (PDF ou imagem) *</label>
+            <input
+              type="file"
+              accept=".pdf,image/png,image/jpeg,image/webp"
+              onChange={(e) => setMarkPaidFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-gray-600"
+            />
+            {markPaidFile ? (
+              <p className="text-xs text-gray-500 mt-1">Arquivo: {markPaidFile.name}</p>
+            ) : null}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={modalDespesa}
         onClose={() => setModalDespesa(false)}
         title="Adicionar despesa"
@@ -399,8 +551,18 @@ export default function FinanceiroSaidasPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            A despesa será registrada a partir de {MESES_LABELS[selectedMes]} de {selectedAno}.
-            {despesaRepeteMensal && ' Se repetir mensalmente, serão criadas várias entradas (uma por mês).'}
+            {modalIsFixedExpense ? (
+              <>
+                A despesa fixa começa em <strong>{MESES_LABELS[selectedMes]} de {selectedAno}</strong> e será gerada
+                automaticamente em <strong>todos os meses</strong> ao navegar no calendário (mesmo valor e nome; copiados do último
+                registro da série).
+              </>
+            ) : (
+              <>
+                A despesa será registrada a partir de {MESES_LABELS[selectedMes]} de {selectedAno}.
+                {despesaRepeteMensal && ' Se repetir por vários meses, serão criadas várias entradas (uma por mês), avulsas.'}
+              </>
+            )}
           </p>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Nome da despesa *</label>
@@ -436,21 +598,28 @@ export default function FinanceiroSaidasPage() {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="repete-mensal"
-              checked={despesaRepeteMensal}
-              onChange={(e) => setDespesaRepeteMensal(e.target.checked)}
-              className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-            />
-            <label htmlFor="repete-mensal" className="text-sm font-medium text-gray-700">
-              Repete mensalmente
-            </label>
-          </div>
-          {despesaRepeteMensal && (
+          {!modalIsFixedExpense && (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="repete-mensal"
+                checked={despesaRepeteMensal}
+                onChange={(e) => setDespesaRepeteMensal(e.target.checked)}
+                className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+              />
+              <label htmlFor="repete-mensal" className="text-sm font-medium text-gray-700">
+                Repetir em vários meses (parcelas avulsas)
+              </label>
+            </div>
+          )}
+          {modalIsFixedExpense && (
+            <p className="text-sm text-sky-800 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
+              Despesa fixa: repetição mensal automática (não é necessário informar quantidade de meses).
+            </p>
+          )}
+          {despesaRepeteMensal && !modalIsFixedExpense && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de meses que se repete</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de meses</label>
               <input
                 type="number"
                 min={1}
@@ -459,7 +628,7 @@ export default function FinanceiroSaidasPage() {
                 onChange={(e) => setDespesaMeses(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               />
-              <p className="text-xs text-gray-500 mt-0.5">Serão criadas várias despesas (uma por mês), até o número informado.</p>
+              <p className="text-xs text-gray-500 mt-0.5">Uma entrada por mês, apenas para despesas avulsas.</p>
             </div>
           )}
         </div>

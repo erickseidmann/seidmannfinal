@@ -31,6 +31,9 @@ interface AdminUserRow {
   emailPessoal: string | null
   valor: number | null
   paymentStatus: string | null
+  paidAt: string | null
+  receiptUrl: string | null
+  notificationSentAt: string | null
   valorPendente: number | null
   valorPendenteRequestedAt: string | null
   valorRepetido: number | null
@@ -38,6 +41,12 @@ interface AdminUserRow {
 
 function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
+}
+
+function formatDateIso(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('pt-BR')
 }
 
 export default function FinanceiroAdministracaoPage() {
@@ -183,6 +192,10 @@ export default function FinanceiroAdministracaoPage() {
     }
   }
 
+  const setUserEmAberto = async (userId: string) => {
+    await updateUserPaymentStatus(userId, 'EM_ABERTO')
+  }
+
   const openEditValorModal = (row: AdminUserRow) => {
     setEditValorUser(row)
     const valorAtual = row.valor ?? row.valorRepetido
@@ -302,7 +315,22 @@ Equipe Seidmann Institute`
         setToast({ message: json.message || 'Erro ao enviar arquivo.', type: 'error' })
         return
       }
-      setToast({ message: json.message || 'Arquivo enviado para o Drive.', type: 'success' })
+      const notifyFd = new FormData()
+      notifyFd.set('year', String(selectedAno))
+      notifyFd.set('month', String(selectedMes))
+      notifyFd.set('receiptUrl', String(json.data?.url || ''))
+      notifyFd.set('attachment', file)
+      const notifyRes = await fetch(`/api/admin/financeiro/administracao/users/${row.id}/notify-payment`, {
+        method: 'POST',
+        body: notifyFd,
+      })
+      const notifyJson = await notifyRes.json()
+      if (!notifyRes.ok || !notifyJson.ok) {
+        setToast({ message: notifyJson.message || 'Arquivo salvo, mas não foi possível notificar o pagamento.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Comprovante anexado, pagamento marcado como pago e notificação enviada.', type: 'success' })
+      await fetchData(selectedAno, selectedMes)
     } catch {
       setToast({ message: 'Erro ao enviar arquivo.', type: 'error' })
     } finally {
@@ -362,18 +390,44 @@ Equipe Seidmann Institute`
     {
       key: 'paymentStatus',
       label: 'Pagamento',
-      render: (row) => (
-        <select
-          value={row.paymentStatus ?? 'EM_ABERTO'}
-          onChange={(e) =>
-            updateUserPaymentStatus(row.id, e.target.value === 'PAGO' ? 'PAGO' : 'EM_ABERTO')
-          }
-          className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-        >
-          <option value="EM_ABERTO">Em aberto</option>
-          <option value="PAGO">Pago</option>
-        </select>
-      ),
+      render: (row) => {
+        if (row.paymentStatus === 'PAGO' && row.paidAt) {
+          return (
+            <div className="flex flex-col gap-1 text-sm max-w-[220px]">
+              <span className="text-green-800 font-medium">Pago em {formatDateIso(row.paidAt)}</span>
+              {row.receiptUrl ? (
+                <a
+                  href={row.receiptUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-orange hover:underline"
+                >
+                  Ver comprovante
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void setUserEmAberto(row.id)}
+                className="text-left text-xs text-gray-600 hover:text-gray-900 underline"
+              >
+                Voltar para em aberto
+              </button>
+            </div>
+          )
+        }
+        return (
+          <select
+            value={row.paymentStatus ?? 'EM_ABERTO'}
+            onChange={(e) =>
+              updateUserPaymentStatus(row.id, e.target.value === 'PAGO' ? 'PAGO' : 'EM_ABERTO')
+            }
+            className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+          >
+            <option value="EM_ABERTO">Em aberto</option>
+            <option value="PAGO">Pago</option>
+          </select>
+        )
+      },
     },
     {
       key: 'anexarNf',
@@ -384,7 +438,7 @@ Equipe Seidmann Institute`
           onClick={() => triggerReceiptUpload(row)}
           disabled={uploadingReceiptUserId === row.id}
           className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-sky-700 hover:bg-sky-50 disabled:opacity-50"
-          title="Selecionar arquivo para enviar à pasta do Drive (notas fiscais prestadores)"
+          title="Selecionar arquivo para salvar no sistema"
         >
           {uploadingReceiptUserId === row.id ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -398,7 +452,15 @@ Equipe Seidmann Institute`
     {
       key: 'acoes',
       label: '',
-      render: (row) => (
+      render: (row) => row.notificationSentAt ? (
+        <span
+          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-emerald-700 bg-emerald-50"
+          title={`Notificação enviada em ${formatDateIso(row.notificationSentAt)}`}
+        >
+          <Bell className="w-4 h-4" />
+          Notificação enviada
+        </span>
+      ) : (
         <button
           type="button"
           onClick={() => openNotifyModal(row)}
@@ -530,7 +592,7 @@ Equipe Seidmann Institute`
             </Button>
           </div>
           <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
-            Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui. Use &quot;Anexar NF ou recibo&quot; para enviar o arquivo à pasta do Drive (notas fiscais prestadores).
+            Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui. Use &quot;Anexar NF ou recibo&quot; para salvar o arquivo diretamente no sistema.
           </div>
           <input
             ref={fileInputRef}

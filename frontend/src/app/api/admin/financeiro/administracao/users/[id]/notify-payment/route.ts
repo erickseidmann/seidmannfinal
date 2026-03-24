@@ -2,7 +2,7 @@
  * POST /api/admin/financeiro/administracao/users/[id]/notify-payment
  * Mostra preview e envia e-mail de notificação de pagamento (com anexo opcional),
  * marca pagamento como PAGO e cria notificação in-app.
- * Body: FormData com year, month, message? (texto da mensagem), attachment? (arquivo)
+ * Body: FormData com year, month, message? (texto da mensagem), attachment? (arquivo), receiptUrl? (url salva no sistema)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -67,7 +67,13 @@ export async function POST(
     const yearParam = formData.get('year')
     const monthParam = formData.get('month')
     const messageParam = formData.get('message')
+    const receiptUrlParam = formData.get('receiptUrl')
     const attachment = formData.get('attachment') as File | null
+    const receiptUrlVal =
+      typeof receiptUrlParam === 'string' && receiptUrlParam.trim().startsWith('/uploads/')
+        ? receiptUrlParam.trim()
+        : null
+
 
     const year = yearParam != null ? Number(yearParam) : null
     const month = monthParam != null ? Number(monthParam) : null
@@ -119,8 +125,22 @@ export async function POST(
 
     await prisma.adminUserPaymentMonth.upsert({
       where: { userId_year_month: { userId, year, month } },
-      create: { userId, year, month, valor: null, paymentStatus: 'PAGO' },
-      update: { paymentStatus: 'PAGO' },
+      create: {
+        userId,
+        year,
+        month,
+        valor: null,
+        paymentStatus: 'PAGO',
+        paidAt: new Date(),
+        receiptUrl: receiptUrlVal,
+        notificationSentAt: new Date(),
+      },
+      update: {
+        paymentStatus: 'PAGO',
+        paidAt: new Date(),
+        notificationSentAt: new Date(),
+        ...(receiptUrlVal ? { receiptUrl: receiptUrlVal } : {}),
+      },
     })
 
     if (prisma.adminNotification) {

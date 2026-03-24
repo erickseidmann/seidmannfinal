@@ -520,7 +520,11 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
             <p className="text-2xl font-bold text-blue-900 mt-1">{md.matriculadosCount ?? '—'}</p>
             <p className="text-sm text-blue-800 mt-2">
               Valor total mensalidades: <span className="font-semibold">{formatMoney(md.matriculadosValorTotal)}</span>
-              <span className="block text-xs font-normal text-blue-700/90 mt-1">Soma das mensalidades dos alunos ativos no financeiro (bolsistas contam na quantidade, R$ 0 no valor).</span>
+              <span className="block text-xs font-normal text-blue-700/90 mt-1">
+                Novos alunos no financeiro (formulário, cadastro manual, etc.).{' '}
+                <strong>Não inclui</strong> quem entrou por importação de planilha (CSV). Bolsistas contam na quantidade;
+                R$ 0 no valor.
+              </span>
             </p>
           </div>
           <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4">
@@ -586,12 +590,13 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
-            <p className="text-xs font-semibold text-blue-800 uppercase">Média mensal — alunos no financeiro</p>
+            <p className="text-xs font-semibold text-blue-800 uppercase">Média mensal — novos alunos (financeiro)</p>
             <p className="text-2xl font-bold text-blue-900 mt-1">{ra.mediaMatriculados}</p>
             <p className="text-sm text-blue-800 mt-2">
               Média do valor mensalidades: <span className="font-semibold">{formatMoney(ra.mediaValorMensalidades)}</span>
               <span className="block text-xs font-normal text-blue-700/90 mt-1">
-                Média aritmética dos 12 meses (bolsistas contam na quantidade; R$ 0 no valor).
+                Média dos 12 meses; conta só matrículas que <strong>não</strong> vieram de importação em lista (CSV).
+                Bolsistas na quantidade; R$ 0 no valor.
               </span>
             </p>
           </div>

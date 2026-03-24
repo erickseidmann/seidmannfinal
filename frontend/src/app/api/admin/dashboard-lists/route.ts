@@ -1,5 +1,6 @@
 /**
- * GET /api/admin/dashboard-lists?type=activeStudents|teachersWithLateLessonRecords|studentsWithoutLesson|inactiveStudents|totalUsers|activeTeachers|...
+ * GET /api/admin/dashboard-lists?type=activeStudents|teachersWithLateLessonRecords|studentsWithoutLesson|...
+ * teachersWithLateLessonRecords: agregado por professor; com &teacherId=id lista cada aula sem registro daquele professor.
  * Retorna lista de nomes (e dados extras quando aplicável) para os cubos do dashboard admin.
  */
 
@@ -380,6 +381,22 @@ export async function GET(request: NextRequest) {
 
     // Professores com aulas já encerradas sem registro (últimos N dias)
     if (type === 'teachersWithLateLessonRecords') {
+      const teacherId = searchParams.get('teacherId')?.trim() || ''
+      if (teacherId) {
+        const pending = await findLessonsPendingRecord(new Date(), { teacherId })
+        const data = pending
+          .map((l) => ({
+            lessonId: l.id,
+            enrollmentId: l.enrollmentId,
+            alunoNome: l.enrollment?.nome?.trim() || 'Aluno',
+            startAt: l.startAt.toISOString(),
+            durationMinutes: l.durationMinutes,
+            janelaDias: PENDING_RECORD_LOOKBACK_DAYS,
+          }))
+          .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+        return NextResponse.json({ ok: true, data })
+      }
+
       const pending = await findLessonsPendingRecord(new Date())
       const byTeacher = new Map<
         string,

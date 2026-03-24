@@ -104,6 +104,7 @@ async function computeMatriculaKpis(year: number, month: number) {
   let matriculadosCount = 0
   let matriculadosValorTotal = 0
   for (const e of enrollments) {
+    if ((e as { cadastroViaImportacaoLista?: boolean }).cadastroViaImportacaoLista) continue
     if (!enrollmentVisibleInFinanceiroMonth(e, year, month)) continue
     matriculadosCount += 1
     const v = valorMensalAluno(e)

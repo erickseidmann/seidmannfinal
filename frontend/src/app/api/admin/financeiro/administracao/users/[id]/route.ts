@@ -1,7 +1,7 @@
 /**
  * PATCH /api/admin/financeiro/administracao/users/[id]
  * - Valor: alterações viram proposta (valorPendente) até o admin aprovar. Só super admin pode aprovar.
- * - Body: year, month, valor? (proposta), paymentStatus?, applyToAllMonthsInYear?, approveValorPendente? (true = aprovar proposta; só super admin)
+ * - Body: year, month, valor? (proposta), paymentStatus?, receiptUrl?, applyToAllMonthsInYear?, approveValorPendente? (true = aprovar proposta; só super admin)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -39,7 +39,7 @@ export async function PATCH(
     }
 
     const body = await request.json().catch(() => ({}))
-    const { year: bodyYear, month: bodyMonth, valor, paymentStatus, applyToAllMonthsInYear, approveValorPendente } = body
+    const { year: bodyYear, month: bodyMonth, valor, paymentStatus, receiptUrl, applyToAllMonthsInYear, approveValorPendente } = body
     const year = bodyYear != null ? Number(bodyYear) : null
     const month = bodyMonth != null ? Number(bodyMonth) : null
     if (year == null || month == null || month < 1 || month > 12) {
@@ -138,6 +138,11 @@ export async function PATCH(
     }
 
     if (paymentStatusVal !== undefined) {
+      const receiptUrlVal =
+        typeof receiptUrl === 'string' && receiptUrl.trim().startsWith('/uploads/')
+          ? receiptUrl.trim()
+          : null
+      const paidAtVal = paymentStatusVal === 'PAGO' ? new Date() : null
       await prisma.adminUserPaymentMonth.upsert({
         where: { userId_year_month: { userId, year, month } },
         create: {
@@ -146,10 +151,40 @@ export async function PATCH(
           month,
           valor: null,
           paymentStatus: paymentStatusVal,
+          paidAt: paidAtVal,
+          receiptUrl: paymentStatusVal === 'PAGO' ? receiptUrlVal : null,
         },
-        update: { paymentStatus: paymentStatusVal },
+        update: {
+          paymentStatus: paymentStatusVal,
+          paidAt: paidAtVal,
+          receiptUrl: paymentStatusVal === 'PAGO' ? receiptUrlVal : null,
+        },
       })
       return NextResponse.json({ ok: true, message: 'Status de pagamento atualizado.' })
+    }
+
+    // Atualizar apenas comprovante (sem alterar status)
+    if (typeof receiptUrl === 'string' && receiptUrl.trim()) {
+      const receiptUrlVal = receiptUrl.trim()
+      if (!receiptUrlVal.startsWith('/uploads/')) {
+        return NextResponse.json(
+          { ok: false, message: 'Comprovante inválido.' },
+          { status: 400 }
+        )
+      }
+      await prisma.adminUserPaymentMonth.upsert({
+        where: { userId_year_month: { userId, year, month } },
+        create: {
+          userId,
+          year,
+          month,
+          valor: null,
+          paymentStatus: 'EM_ABERTO',
+          receiptUrl: receiptUrlVal,
+        },
+        update: { receiptUrl: receiptUrlVal },
+      })
+      return NextResponse.json({ ok: true, message: 'Comprovante anexado.' })
     }
 
     return NextResponse.json({ ok: true, message: 'Nada a atualizar' })

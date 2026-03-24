@@ -9,6 +9,40 @@ import { requireAdmin, isSuperAdminEmail } from '@/lib/auth'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
+/** Gera linha do mês para cada despesa fixa (série) ainda sem registro em year/month */
+async function ensureFixedExpenseRowsForMonth(year: number, month: number) {
+  if (!prisma.adminExpense) return
+  const groups = await prisma.adminExpense.groupBy({
+    by: ['fixedSeriesId'],
+    where: { isFixed: true, fixedSeriesId: { not: null } },
+  })
+  for (const g of groups) {
+    const sid = g.fixedSeriesId
+    if (!sid) continue
+    const exists = await prisma.adminExpense.findFirst({
+      where: { year, month, fixedSeriesId: sid },
+    })
+    if (exists) continue
+    const template = await prisma.adminExpense.findFirst({
+      where: { fixedSeriesId: sid, isFixed: true },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    })
+    if (!template) continue
+    await prisma.adminExpense.create({
+      data: {
+        name: template.name,
+        description: template.description,
+        valor: template.valor,
+        year,
+        month,
+        paymentStatus: 'EM_ABERTO',
+        isFixed: true,
+        fixedSeriesId: sid,
+      },
+    })
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
@@ -57,6 +91,9 @@ export async function GET(request: NextRequest) {
       emailPessoal: string | null
       valor: number | null
       paymentStatus: string | null
+      paidAt: string | null
+      receiptUrl: string | null
+      notificationSentAt: string | null
       valorPendente: number | null
       valorPendenteRequestedAt: string | null
       valorRepetido: number | null
@@ -68,6 +105,9 @@ export async function GET(request: NextRequest) {
       emailPessoal: u.emailPessoal ?? null,
       valor: null,
       paymentStatus: null,
+      paidAt: null,
+      receiptUrl: null,
+      notificationSentAt: null,
       valorPendente: null,
       valorPendenteRequestedAt: null,
       valorRepetido: null,
@@ -115,6 +155,9 @@ export async function GET(request: NextRequest) {
           emailPessoal: u.emailPessoal ?? null,
           valor,
           paymentStatus: pm?.paymentStatus ?? null,
+          paidAt: pm?.paidAt?.toISOString() ?? null,
+          receiptUrl: pm?.receiptUrl ?? null,
+          notificationSentAt: pm?.notificationSentAt?.toISOString() ?? null,
           valorPendente: pm?.valorPendente != null ? Number(pm.valorPendente) : null,
           valorPendenteRequestedAt: pm?.valorPendenteRequestedAt?.toISOString() ?? null,
           valorRepetido,
@@ -122,8 +165,21 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    let expenses: { id: string; name: string; description: string | null; valor: number; year: number; month: number; paymentStatus: string | null; isFixed: boolean }[] = []
+    let expenses: {
+      id: string
+      name: string
+      description: string | null
+      valor: number
+      year: number
+      month: number
+      paymentStatus: string | null
+      isFixed: boolean
+      paidAt: string | null
+      receiptUrl: string | null
+      fixedSeriesId: string | null
+    }[] = []
     if (prisma.adminExpense) {
+      await ensureFixedExpenseRowsForMonth(year, month)
       const rows = await prisma.adminExpense.findMany({
         where: { year, month },
         orderBy: { criadoEm: 'asc' },
@@ -137,6 +193,9 @@ export async function GET(request: NextRequest) {
         month: e.month,
         paymentStatus: e.paymentStatus ?? null,
         isFixed: e.isFixed ?? false,
+        paidAt: e.paidAt?.toISOString() ?? null,
+        receiptUrl: e.receiptUrl ?? null,
+        fixedSeriesId: e.fixedSeriesId ?? null,
       }))
     }
 

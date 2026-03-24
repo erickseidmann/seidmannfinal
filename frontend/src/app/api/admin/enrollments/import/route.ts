@@ -324,6 +324,7 @@ export async function POST(request: NextRequest) {
             escolaMatricula,
             escolaMatriculaOutro,
             pendenteAdicionarAulas: true,
+            cadastroViaImportacaoLista: true,
           },
         })
         const existingUser = await prisma.user.findUnique({

@@ -56,15 +56,69 @@ export async function GET(request: NextRequest) {
     const month = monthParam ? parseInt(monthParam, 10) : null
     const hasMonthFilter = year != null && month != null && month >= 1 && month <= 12
 
+    /**
+     * select explícito: evita SELECT * em enrollments. Se o banco estiver atrás do schema.prisma
+     * (colunas novas ainda não migradas), findMany com include padrão quebra com "column does not exist".
+     */
     const enrollments = await prisma.enrollment.findMany({
       orderBy: { nome: 'asc' },
-      include: {
-        paymentInfo: true,
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        status: true,
+        inactiveAt: true,
+        dataInicio: true,
+        valorMensalidade: true,
+        frequenciaSemanal: true,
+        tempoAulaMinutos: true,
+        tipoAula: true,
+        nomeGrupo: true,
+        nomeResponsavel: true,
+        diaPagamento: true,
+        metodoPagamento: true,
+        bolsista: true,
+        moraNoExterior: true,
+        enderecoExterior: true,
+        rua: true,
+        numero: true,
+        complemento: true,
+        cidade: true,
+        estado: true,
+        cep: true,
+        faturamentoTipo: true,
+        faturamentoRazaoSocial: true,
+        faturamentoCnpj: true,
+        faturamentoEmail: true,
+        faturamentoEndereco: true,
+        faturamentoDescricaoNfse: true,
+        cpf: true,
+        escolaMatricula: true,
+        paymentInfo: {
+          select: {
+            id: true,
+            valorMensal: true,
+            quemPaga: true,
+            dueDay: true,
+            dueDate: true,
+            paymentStatus: true,
+            paidAt: true,
+            dataPagamento: true,
+            metodo: true,
+            banco: true,
+            periodoPagamento: true,
+            ultimaCobrancaManualAt: true,
+          },
+        },
         paymentMonths: hasMonthFilter
-          ? { where: { year, month }, take: 1 }
+          ? {
+              where: { year: year!, month: month! },
+              take: 1,
+              select: { paymentStatus: true, paidAt: true, notaFiscalEmitida: true },
+            }
           : false,
         _count: { select: { financeObservations: true } },
-        coraInvoices: { orderBy: { criadoEm: 'desc' }, take: 1 },
+        coraInvoices: { orderBy: { criadoEm: 'desc' }, take: 1, select: { criadoEm: true } },
       },
     })
 
@@ -368,8 +422,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, data: { alunos: rows, removidosNesteMes: removedWithReasons } })
   } catch (error) {
     console.error('[api/admin/financeiro/alunos GET]', error)
+    const detail = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { ok: false, message: 'Erro ao listar alunos financeiro' },
+      {
+        ok: false,
+        message: 'Erro ao listar alunos financeiro',
+        ...(process.env.NODE_ENV === 'development' ? { detail } : {}),
+      },
       { status: 500 }
     )
   }

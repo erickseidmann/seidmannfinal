@@ -144,6 +144,9 @@ model AdminUserPaymentMonth {
   month          Int       // 1-12
   valor          Decimal?  @db.Decimal(10, 2)   // valor aprovado (fixo)
   paymentStatus  String?   @map("payment_status") // PAGO, EM_ABERTO
+  paidAt         DateTime? @map("paid_at") // data em que foi marcado como pago
+  receiptUrl     String?   @db.Text @map("receipt_url") // comprovante salvo no sistema (/uploads/...)
+  notificationSentAt DateTime? @map("notification_sent_at") // quando a notificação de pagamento foi enviada
   valorPendente  Decimal?  @map("valor_pendente") @db.Decimal(10, 2)  // altera├º├úo aguardando aprova├º├úo
   valorPendenteRequestedAt DateTime? @map("valor_pendente_requested_at")
   criadoEm       DateTime  @default(now()) @map("created_at")
@@ -166,10 +169,15 @@ model AdminExpense {
   month          Int       // 1-12
   paymentStatus  String?   @map("payment_status") // PAGO, EM_ABERTO
   isFixed        Boolean   @default(false) @map("is_fixed") // Despesa fixa (ex: internet, aluguel)
+  /** Mesma série = mesma despesa fixa em meses diferentes (gerada automaticamente ao trocar o mês) */
+  fixedSeriesId  String?   @map("fixed_series_id")
+  paidAt         DateTime? @map("paid_at") // Data em que foi pago (quando PAGO)
+  receiptUrl     String?   @db.Text @map("receipt_url") // Caminho público do comprovante (/uploads/...)
   criadoEm       DateTime  @default(now()) @map("created_at")
   atualizadoEm   DateTime  @updatedAt @map("updated_at")
 
   @@index([year, month])
+  @@index([fixedSeriesId])
   @@map("admin_expenses")
 }
 
@@ -314,6 +322,8 @@ model Enrollment {
   cancelamentoAntecedenciaHoras Int? @map("cancelamento_antecedencia_horas") // Tempo m├¡nimo de anteced├¬ncia para cancelamento (em horas). Padr├úo: 6h para n├úo-YOUBECOME, 24h para YOUBECOME
   observacoes       String?      @db.Text
   pendenteAdicionarAulas Boolean @default(false) @map("pendente_adicionar_aulas") // true = novo matrículado (formulário), ainda na lista até admin marcar «tudo feito»
+  /** true = criado pelo import CSV em massa (não entra na média de «novos» no relatório financeiro) */
+  cadastroViaImportacaoLista Boolean @default(false) @map("cadastro_via_importacao_lista")
   linkPagamentoEnviadoAt DateTime? @map("link_pagamento_enviado_at") // data em que o admin marcou "enviei link pag"
 
   // Dados de faturamento para NFSe em nome de empresa

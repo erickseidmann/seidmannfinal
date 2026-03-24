@@ -31,9 +31,30 @@ export async function PATCH(
       )
     }
     const data = parsed.data
-    const updateData: { valor?: number; paymentStatus?: string } = {}
+    const updateData: {
+      valor?: number
+      paymentStatus?: string
+      paidAt?: Date | null
+      receiptUrl?: string | null
+    } = {}
     if (data.valor !== undefined) updateData.valor = data.valor
-    if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus
+    if (data.paymentStatus === 'EM_ABERTO') {
+      updateData.paymentStatus = 'EM_ABERTO'
+      updateData.paidAt = null
+      updateData.receiptUrl = null
+    } else if (data.paymentStatus === 'PAGO') {
+      updateData.paymentStatus = 'PAGO'
+      if (data.paidAt) {
+        const parts = data.paidAt.trim().split('-').map(Number)
+        const [y, mo, d] = parts
+        if (y && mo && d) {
+          updateData.paidAt = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0))
+        }
+      }
+      updateData.receiptUrl = data.receiptUrl?.trim() ?? null
+    } else if (data.paymentStatus !== undefined) {
+      updateData.paymentStatus = data.paymentStatus
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ ok: true, message: 'Nada a atualizar' })

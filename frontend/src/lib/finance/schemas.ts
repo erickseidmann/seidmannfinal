@@ -72,6 +72,8 @@ export const createExpenseSchema = z.object({
   repeatMonths: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(1).max(120).optional()),
   startYear: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(2020).max(2030).optional()),
   startMonth: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().int().min(1).max(12).optional()),
+  /** Despesa fixa que se repete todo mês (uma série; linhas dos outros meses são criadas ao visualizar o mês) */
+  recurringFixed: z.boolean().optional(),
 })
 
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>
@@ -83,9 +85,25 @@ export type CreateExpenseInput = z.infer<typeof createExpenseSchema>
 export const updateExpenseSchema = z.object({
   valor: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().min(0).max(500000).optional()),
   paymentStatus: z.enum(['PAGO', 'EM_ABERTO']).optional(),
-}).refine(
-  (data) => data.valor !== undefined || data.paymentStatus !== undefined,
-  { message: 'Envie ao menos um campo: valor ou paymentStatus' }
-)
+  /** Data do pagamento (YYYY-MM-DD) — obrigatória com paymentStatus PAGO */
+  paidAt: z.string().max(32).optional(),
+  /** URL/caminho do comprovante — obrigatório com paymentStatus PAGO */
+  receiptUrl: z.string().max(2000).optional(),
+})
+  .refine(
+    (data) =>
+      data.valor !== undefined ||
+      data.paymentStatus !== undefined ||
+      data.paidAt !== undefined ||
+      data.receiptUrl !== undefined,
+    { message: 'Nada a atualizar' }
+  )
+  .refine(
+    (data) => {
+      if (data.paymentStatus !== 'PAGO') return true
+      return Boolean(data.paidAt?.trim()) && Boolean(data.receiptUrl?.trim())
+    },
+    { message: 'Para marcar como pago, informe a data do pagamento e anexe o comprovante.' }
+  )
 
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>
