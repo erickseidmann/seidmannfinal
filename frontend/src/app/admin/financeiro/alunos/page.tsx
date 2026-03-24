@@ -115,11 +115,25 @@ const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 
 const DEFAULT_DESCRICAO_NF_EMPRESA =
   'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'
 
+/** Indica se o campo livre "quem paga" (PaymentInfo) diz que o pagador é o responsável. */
+function quemPagaExplicitoResponsavel(quemPaga: string | null): boolean {
+  const q = (quemPaga ?? '').trim().toLowerCase()
+  if (!q) return false
+  return (
+    q.includes('respons') ||
+    q.includes('pai') ||
+    q.includes('mãe') ||
+    q.includes('mae') ||
+    q.includes('genitor') ||
+    q.includes('tutor')
+  )
+}
+
 function getQuemPagaLabel(a: AlunoFinanceiro): string {
   if (a.faturamentoTipo === 'EMPRESA') {
     return 'Empresa'
   }
-  if (a.nomeResponsavel && a.nomeResponsavel.trim()) {
+  if (quemPagaExplicitoResponsavel(a.quemPaga)) {
     return 'Responsável'
   }
   return 'Aluno'

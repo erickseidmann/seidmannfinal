@@ -1,7 +1,8 @@
 /**
  * Dados financeiros do aluno: para cobrança, NFSe e validação.
- * Se for menor de idade (tem responsável cadastrado), usa nome/CPF/email do responsável.
- * Se faturamentoTipo === "EMPRESA", usa dados da empresa para NFSe.
+ * Se faturamentoTipo === "EMPRESA" e dados da empresa completos, usa CNPJ/razão social para NFSe.
+ * Se faturamentoTipo === "ALUNO" (padrão), usa sempre nome/CPF/e-mail do aluno — mesmo que exista
+ * responsável na matrícula (nome/CPF do responsável é informativo, não define o tomador da NF).
  */
 
 export type EnrollmentForFinance = {
@@ -29,12 +30,13 @@ export interface EnrollmentFinanceData {
 
 /**
  * Retorna nome, CPF/CNPJ e e-mail a serem usados para fins financeiros (cobrança, NFSe).
- * Se faturamentoTipo === "EMPRESA", retorna dados da empresa para NFSe (nome=razão social, cnpj, email).
- * Se houver responsável (menor de idade), usa os dados do responsável (aluno).
+ * EMPRESA com CNPJ válido → tomador empresa; caso contrário (ALUNO ou empresa incompleta) → aluno.
  */
 export function getEnrollmentFinanceData(enrollment: EnrollmentForFinance): EnrollmentFinanceData {
+  const tipo = enrollment.faturamentoTipo ?? 'ALUNO'
+
   // NFSe em nome de empresa: usa dados de faturamento
-  if (enrollment.faturamentoTipo === 'EMPRESA' && enrollment.faturamentoRazaoSocial?.trim() && enrollment.faturamentoCnpj?.trim()) {
+  if (tipo === 'EMPRESA' && enrollment.faturamentoRazaoSocial?.trim() && enrollment.faturamentoCnpj?.trim()) {
     const cnpjDigits = enrollment.faturamentoCnpj.replace(/\D/g, '')
     if (cnpjDigits.length === 14) {
       return {
@@ -46,24 +48,7 @@ export function getEnrollmentFinanceData(enrollment: EnrollmentForFinance): Enro
     }
   }
 
-  // Cobrança/NFSe em nome do aluno (ou responsável se menor)
-  const temResponsavel =
-    (enrollment.nomeResponsavel && enrollment.nomeResponsavel.trim()) ||
-    (enrollment.cpfResponsavel && enrollment.cpfResponsavel.trim()) ||
-    (enrollment.emailResponsavel && enrollment.emailResponsavel.trim())
-
-  if (temResponsavel) {
-    return {
-      nome: (enrollment.nomeResponsavel && enrollment.nomeResponsavel.trim()) || enrollment.nome,
-      cpf: enrollment.cpfResponsavel?.trim() || null,
-      email:
-        (enrollment.emailResponsavel && enrollment.emailResponsavel.trim()) ||
-        enrollment.user?.email?.trim() ||
-        enrollment.email?.trim() ||
-        null,
-    }
-  }
-
+  // Faturamento no aluno (inclui ALUNO explícito e EMPRESA sem dados de empresa completos)
   return {
     nome: enrollment.nome,
     cpf: enrollment.cpf?.trim() || null,
