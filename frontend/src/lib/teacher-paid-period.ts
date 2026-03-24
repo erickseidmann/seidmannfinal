@@ -7,7 +7,7 @@ export type TeacherPaidPeriodRow = {
   periodoTermino: Date | null
 }
 
-/** true se o instante de início da aula está dentro de algum intervalo [início 00:00 UTC, fim 23:59:59.999 UTC] */
+/** true se o instante de início da aula está dentro de algum intervalo [início 00:00 UTC, fim 00:00 UTC exclusivo] */
 export function isLessonStartWithinTeacherPeriodRanges(
   lessonStart: Date,
   periods: TeacherPaidPeriodRow[]
@@ -18,10 +18,11 @@ export function isLessonStartWithinTeacherPeriodRanges(
     const s = new Date(pm.periodoInicio)
     s.setUTCHours(0, 0, 0, 0)
     const e = new Date(pm.periodoTermino)
-    e.setUTCHours(23, 59, 59, 999)
+    // fim exclusivo: o dia de periodoTermino já pertence ao próximo ciclo de pagamento
+    e.setUTCHours(0, 0, 0, 0)
     const start = s.getTime()
     const end = e.getTime()
-    return lessonTime >= start && lessonTime <= end
+    return lessonTime >= start && lessonTime < end
   })
 }
 
