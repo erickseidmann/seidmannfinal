@@ -7,12 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import {
-  toDateKey,
-  filterRecordsByPausedEnrollment,
-  computeValorAPagar,
-  type PaymentRecord,
-} from '@/lib/finance'
+import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
+import { calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
 
 const querySchema = z.object({
   type: z.enum(['receitas', 'despesas', 'inadimplencia', 'professores', 'geral']),
@@ -573,10 +569,11 @@ async function buildDespesasReport(
 
   for (let i = 0; i < monthsToProcess.length; i++) {
     const { year: y, month: m } = monthsToProcess[i]
-    const periodStart = firstDayOfMonth(y, m)
-    const periodEnd = lastDayOfMonth(y, m)
+    const { startMs, endExclusiveMs } = calendarMonthBoundsUtc(y, m)
+    const periodStart = new Date(startMs)
+    const periodEndExclusive = new Date(endExclusiveMs)
     const startKey = toDateKey(periodStart)
-    const endKey = toDateKey(periodEnd)
+    const endKey = toDateKey(new Date(endExclusiveMs - 1))
     const holidayRows = await prisma.holiday.findMany({
       where: { dateKey: { gte: startKey, lte: endKey } },
       select: { dateKey: true },
@@ -628,7 +625,7 @@ async function buildDespesasReport(
         where: {
           lesson: {
             teacherId: { in: teachers.map((t) => t.id) },
-            startAt: { gte: periodStart, lte: periodEnd },
+            startAt: { gte: periodStart, lt: periodEndExclusive },
             status: 'CONFIRMED',
             enrollment: {
               OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
@@ -658,8 +655,8 @@ async function buildDespesasReport(
         const { totalHorasRegistradas, valorAPagar } = computeValorAPagar({
           records: filteredRecords,
           teacherId: t.id,
-          periodStart: periodStart.getTime(),
-          periodEnd: periodEnd.getTime(),
+          periodStart: startMs,
+          periodEndExclusive: endExclusiveMs,
           holidaySet,
           valorPorHora,
           valorPorPeriodo,
@@ -781,10 +778,11 @@ async function buildProfessoresReport(
   const target = month != null ? { year, month } : monthsToProcess[0]
   const y = target.year
   const m = target.month
-  const periodStart = firstDayOfMonth(y, m)
-  const periodEnd = lastDayOfMonth(y, m)
+  const { startMs, endExclusiveMs } = calendarMonthBoundsUtc(y, m)
+  const periodStart = new Date(startMs)
+  const periodEndExclusive = new Date(endExclusiveMs)
   const startKey = toDateKey(periodStart)
-  const endKey = toDateKey(periodEnd)
+  const endKey = toDateKey(new Date(endExclusiveMs - 1))
   const holidayRows = await prisma.holiday.findMany({
     where: { dateKey: { gte: startKey, lte: endKey } },
     select: { dateKey: true },
@@ -810,7 +808,7 @@ async function buildProfessoresReport(
       where: {
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
-          startAt: { gte: periodStart, lte: periodEnd },
+          startAt: { gte: periodStart, lt: periodEndExclusive },
           status: 'CONFIRMED',
           enrollment: {
             OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
@@ -843,8 +841,8 @@ async function buildProfessoresReport(
     const { totalHorasRegistradas, valorAPagar } = computeValorAPagar({
       records: filteredRecords,
       teacherId: t.id,
-      periodStart: periodStart.getTime(),
-      periodEnd: periodEnd.getTime(),
+      periodStart: startMs,
+      periodEndExclusive: endExclusiveMs,
       holidaySet,
       valorPorHora,
       valorPorPeriodo,

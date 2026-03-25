@@ -4,6 +4,8 @@
  * Regra: professor recebe por HORAS REGISTRADAS (LessonRecord), nunca por horas estimadas (Lesson).
  * Fórmula: valorAPagar = (horasRegistradas × valorPorHora) + valorPorPeriodo + valorExtra
  *
+ * Período: [periodStart, periodEndExclusive) — alinhado a teacher-paid-period.ts (fim exclusivo).
+ *
  * Exclusões: feriados (Holiday), aulas canceladas, alunos pausados
  * (enrollment.status === 'PAUSED' com aula em data >= pausedAt).
  */
@@ -51,8 +53,10 @@ export function filterRecordsByPausedEnrollment<T extends PaymentRecord>(records
 export interface ComputeValorAPagarParams {
   records: PaymentRecord[]
   teacherId: string
+  /** Início do período (inclusivo), em ms desde epoch. */
   periodStart: number
-  periodEnd: number
+  /** Fim do período (exclusivo): aulas com startAt >= este instante ficam de fora. */
+  periodEndExclusive: number
   holidaySet: Set<string>
   valorPorHora: number
   valorPorPeriodo: number
@@ -74,7 +78,7 @@ export function computeValorAPagar(params: ComputeValorAPagarParams): ComputeVal
     records,
     teacherId,
     periodStart,
-    periodEnd,
+    periodEndExclusive,
     holidaySet,
     valorPorHora,
     valorPorPeriodo,
@@ -85,7 +89,7 @@ export function computeValorAPagar(params: ComputeValorAPagarParams): ComputeVal
   for (const r of records) {
     if (r.lesson.teacherId !== teacherId) continue
     const startAt = new Date(r.lesson.startAt).getTime()
-    if (startAt < periodStart || startAt > periodEnd) continue
+    if (startAt < periodStart || startAt >= periodEndExclusive) continue
     if (holidaySet.has(toDateKey(r.lesson.startAt))) continue
     const mins = r.tempoAulaMinutos ?? r.lesson.durationMinutes ?? 60
     totalMinutos += mins

@@ -8,12 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import {
-  toDateKey,
-  filterRecordsByPausedEnrollment,
-  computeValorAPagar,
-  type PaymentRecord,
-} from '@/lib/finance'
+import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
+import { calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -167,10 +163,11 @@ export async function GET(request: NextRequest) {
       })
 
       for (let month = 1; month <= 12; month++) {
-        const periodStart = firstDayOfMonth(year, month)
-        const periodEnd = lastDayOfMonth(year, month)
+        const { startMs, endExclusiveMs } = calendarMonthBoundsUtc(year, month)
+        const periodStart = new Date(startMs)
+        const periodEndExclusive = new Date(endExclusiveMs)
         const startKey = toDateKey(periodStart)
-        const endKey = toDateKey(periodEnd)
+        const endKey = toDateKey(new Date(endExclusiveMs - 1))
         const holidayRows = await prisma.holiday.findMany({
           where: { dateKey: { gte: startKey, lte: endKey } },
           select: { dateKey: true },
@@ -193,7 +190,7 @@ export async function GET(request: NextRequest) {
           where: {
             lesson: {
               teacherId: { in: teachers.map((t) => t.id) },
-              startAt: { gte: periodStart, lte: periodEnd },
+              startAt: { gte: periodStart, lt: periodEndExclusive },
               status: { in: ['CONFIRMED', 'REPOSICAO'] },
               enrollment: {
                 OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
@@ -230,8 +227,8 @@ export async function GET(request: NextRequest) {
           const { valorAPagar } = computeValorAPagar({
             records: filteredRecords,
             teacherId: t.id,
-            periodStart: periodStart.getTime(),
-            periodEnd: periodEnd.getTime(),
+            periodStart: startMs,
+            periodEndExclusive: endExclusiveMs,
             holidaySet,
             valorPorHora,
             valorPorPeriodo,

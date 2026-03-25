@@ -3,37 +3,15 @@
  * Dados financeiros do professor logado (somente leitura). Mesma lógica do admin mas para um único professor.
  *
  * Regra: o professor recebe por HORAS REGISTRADAS (registros de aula), nunca pela estimativa (aulas agendadas).
+ * Período: [início, fim exclusivo), igual a teacher-paid-period.ts (ex.: dia do vencimento não entra no ciclo).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
-import {
-  toDateKey,
-  filterRecordsByPausedEnrollment,
-  computeValorAPagar,
-  type PaymentRecord,
-} from '@/lib/finance'
-
-function startOfDay(d: Date): Date {
-  const x = new Date(d)
-  x.setUTCHours(0, 0, 0, 0)
-  return x
-}
-
-function endOfDay(d: Date): Date {
-  const x = new Date(d)
-  x.setUTCHours(23, 59, 59, 999)
-  return x
-}
-
-function firstDayOfMonth(d: Date): Date {
-  return startOfDay(new Date(d.getFullYear(), d.getMonth(), 1))
-}
-
-function lastDayOfMonth(d: Date): Date {
-  return endOfDay(new Date(d.getFullYear(), d.getMonth() + 1, 0))
-}
+import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
+import { teacherPaymentPeriodBoundsUtc, calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
+import { ymdInTZ } from '@/lib/datetime'
 
 export async function GET(request: NextRequest) {
   try {
@@ -75,11 +53,10 @@ export async function GET(request: NextRequest) {
     const useMonthMode = year != null && month != null && month >= 1 && month <= 12
 
     const now = new Date()
-    const defaultStart = firstDayOfMonth(now)
-    const defaultEnd = lastDayOfMonth(now)
+    const defaultBounds = calendarMonthBoundsUtc(now.getFullYear(), now.getMonth() + 1)
 
-    let periodStart = defaultStart
-    let periodEnd = defaultEnd
+    let periodStartMs = defaultBounds.startMs
+    let periodEndExclusiveMs = defaultBounds.endExclusiveMs
     let valorPorPeriodo = teacher.valorPorPeriodo != null ? Number(teacher.valorPorPeriodo) : 0
     let valorExtra = teacher.valorExtra != null ? Number(teacher.valorExtra) : 0
     let statusPagamento: 'PAGO' | 'EM_ABERTO' = teacher.periodoPagamentoPago ? 'PAGO' : 'EM_ABERTO'
@@ -87,29 +64,41 @@ export async function GET(request: NextRequest) {
     let teacherConfirmedAt: string | null = null
     let proofSentAt: string | null = null
     if (useMonthMode) {
-      periodStart = startOfDay(new Date(year!, month! - 1, 1))
-      periodEnd = lastDayOfMonth(new Date(year!, month! - 1, 1))
       const pm = await prisma.teacherPaymentMonth.findUnique({
         where: { teacherId_year_month: { teacherId: teacher.id, year: year!, month: month! } },
       })
       if (pm) {
-        if (pm.periodoInicio) periodStart = startOfDay(pm.periodoInicio)
-        if (pm.periodoTermino) periodEnd = endOfDay(pm.periodoTermino)
+        const b = teacherPaymentPeriodBoundsUtc(pm.periodoInicio, pm.periodoTermino)
+        if (b) {
+          periodStartMs = b.startMs
+          periodEndExclusiveMs = b.endExclusiveMs
+        } else {
+          const cal = calendarMonthBoundsUtc(year!, month!)
+          periodStartMs = cal.startMs
+          periodEndExclusiveMs = cal.endExclusiveMs
+        }
         if (pm.valorPorPeriodo != null) valorPorPeriodo = Number(pm.valorPorPeriodo)
         if (pm.valorExtra != null) valorExtra = Number(pm.valorExtra)
         statusPagamento = pm.paymentStatus === 'PAGO' ? 'PAGO' : 'EM_ABERTO'
         if (pm.teacherConfirmedAt) teacherConfirmedAt = pm.teacherConfirmedAt.toISOString()
         if (pm.proofSentAt) proofSentAt = pm.proofSentAt.toISOString()
+      } else {
+        const cal = calendarMonthBoundsUtc(year!, month!)
+        periodStartMs = cal.startMs
+        periodEndExclusiveMs = cal.endExclusiveMs
       }
     } else {
-      if (teacher.periodoPagamentoInicio) periodStart = startOfDay(teacher.periodoPagamentoInicio)
-      if (teacher.periodoPagamentoTermino) periodEnd = endOfDay(teacher.periodoPagamentoTermino)
+      const b = teacherPaymentPeriodBoundsUtc(teacher.periodoPagamentoInicio ?? null, teacher.periodoPagamentoTermino ?? null)
+      if (b) {
+        periodStartMs = b.startMs
+        periodEndExclusiveMs = b.endExclusiveMs
+      }
     }
 
-    const periodStartTime = periodStart.getTime()
-    const periodEndTime = periodEnd.getTime()
+    const periodStart = new Date(periodStartMs)
+    const periodEndExclusive = new Date(periodEndExclusiveMs)
     const startKey = toDateKey(periodStart)
-    const endKey = toDateKey(periodEnd)
+    const endKey = toDateKey(new Date(periodEndExclusiveMs - 1))
 
     const holidayRows = await prisma.holiday.findMany({
       where: { dateKey: { gte: startKey, lte: endKey } },
@@ -120,7 +109,7 @@ export async function GET(request: NextRequest) {
     const lessonsInRange = await prisma.lesson.findMany({
       where: {
         teacherId: teacher.id,
-        startAt: { gte: periodStart, lte: periodEnd },
+        startAt: { gte: periodStart, lt: periodEndExclusive },
         status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
       select: { id: true, startAt: true, durationMinutes: true },
@@ -142,7 +131,7 @@ export async function GET(request: NextRequest) {
         where: {
           lesson: {
             teacherId: teacher.id,
-            startAt: { gte: periodStart, lte: periodEnd },
+            startAt: { gte: periodStart, lt: periodEndExclusive },
             enrollment: {
               OR: [
                 { status: { not: 'PAUSED' } },
@@ -180,8 +169,8 @@ export async function GET(request: NextRequest) {
     const { totalHorasRegistradas, valorAPagar } = computeValorAPagar({
       records: filteredRecords,
       teacherId: teacher.id,
-      periodStart: periodStartTime,
-      periodEnd: periodEndTime,
+      periodStart: periodStartMs,
+      periodEndExclusive: periodEndExclusiveMs,
       holidaySet,
       valorPorHora,
       valorPorPeriodo,
@@ -189,7 +178,6 @@ export async function GET(request: NextRequest) {
     })
     const valorPorHoras = Math.round(totalHorasRegistradas * valorPorHora * 100) / 100
 
-    // Detalhamento: aulas registradas com valor por aula (professor recebe valor completo mesmo em "não compareceu")
     const registrosDetalhados: {
       startAt: string
       alunoNome: string
@@ -199,9 +187,9 @@ export async function GET(request: NextRequest) {
     }[] = []
     for (const rec of recordsInRange) {
       if (rec.lesson.teacherId !== teacher.id) continue
-      const startAt = new Date(rec.lesson.startAt)
-      if (startAt.getTime() < periodStartTime || startAt.getTime() > periodEndTime) continue
-      if (holidaySet.has(toDateKey(startAt))) continue
+      const t0 = new Date(rec.lesson.startAt).getTime()
+      if (t0 < periodStartMs || t0 >= periodEndExclusiveMs) continue
+      if (holidaySet.has(toDateKey(rec.lesson.startAt))) continue
       const asPayment: PaymentRecord = {
         tempoAulaMinutos: rec.tempoAulaMinutos,
         lesson: {
@@ -229,18 +217,21 @@ export async function GET(request: NextRequest) {
     let totalRegistrosEsperados = 0
     for (const l of lessonsInRange) {
       const startAt = new Date(l.startAt).getTime()
-      if (startAt < periodStartTime || startAt > periodEndTime) continue
+      if (startAt < periodStartMs || startAt >= periodEndExclusiveMs) continue
       if (holidaySet.has(toDateKey(l.startAt))) continue
       totalRegistrosEsperados += 1
       totalMinutosEstimados += l.durationMinutes ?? 60
     }
     const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
 
+    const dataInicioStr = ymdInTZ(periodStart)
+    const dataTerminoStr = ymdInTZ(new Date(periodEndExclusiveMs - 1))
+
     const data = {
       professorNome: teacher.nome,
       valorPorHora,
-      dataInicio: periodStart.toISOString().slice(0, 10),
-      dataTermino: periodEnd.toISOString().slice(0, 10),
+      dataInicio: dataInicioStr,
+      dataTermino: dataTerminoStr,
       totalHorasEstimadas,
       totalHorasRegistradas,
       totalRegistrosEsperados,

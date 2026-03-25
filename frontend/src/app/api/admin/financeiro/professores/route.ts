@@ -8,12 +8,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import {
-  toDateKey,
-  filterRecordsByPausedEnrollment,
-  computeValorAPagar,
-  type PaymentRecord,
-} from '@/lib/finance'
+import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
+import { teacherPaymentPeriodBoundsUtc, calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
+import { ymdInTZ } from '@/lib/datetime'
 
 function startOfDay(d: Date): Date {
   const x = new Date(d)
@@ -126,42 +123,43 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    let globalStart = periodStart.getTime()
-    let globalEnd = periodEnd.getTime()
-    const teacherPeriods: { id: string; start: number; end: number }[] = []
-    const savedGlobalStart = globalStart
-    const savedGlobalEnd = globalEnd
+    const defCal = calendarMonthBoundsUtc(now.getFullYear(), now.getMonth() + 1)
+    const selCal =
+      useMonthMode && year != null && month != null ? calendarMonthBoundsUtc(year, month) : defCal
+    let globalStart = selCal.startMs
+    let globalEndExclusive = selCal.endExclusiveMs
+    const teacherPeriods: { id: string; startMs: number; endExclusiveMs: number }[] = []
 
     if (!useMonthMode) {
       for (const t of teachers) {
-        const start = t.periodoPagamentoInicio ? startOfDay(t.periodoPagamentoInicio).getTime() : savedGlobalStart
-        const end = t.periodoPagamentoTermino ? endOfDay(t.periodoPagamentoTermino).getTime() : savedGlobalEnd
-        if (start < globalStart) globalStart = start
-        if (end > globalEnd) globalEnd = end
-        teacherPeriods.push({ id: t.id, start, end })
+        const b =
+          teacherPaymentPeriodBoundsUtc(t.periodoPagamentoInicio ?? null, t.periodoPagamentoTermino ?? null) ?? defCal
+        if (b.startMs < globalStart) globalStart = b.startMs
+        if (b.endExclusiveMs > globalEndExclusive) globalEndExclusive = b.endExclusiveMs
+        teacherPeriods.push({ id: t.id, startMs: b.startMs, endExclusiveMs: b.endExclusiveMs })
       }
     } else {
-      globalStart = periodStart.getTime()
-      globalEnd = periodEnd.getTime()
+      globalStart = selCal.startMs
+      globalEndExclusive = selCal.endExclusiveMs
       for (const t of teachers) {
         const rowEndsInMonth = periodEndsInMonthMap.get(t.id)
         const pmFallback = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
           ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
           : null
         const source = rowEndsInMonth ?? pmFallback
-        const start = source?.periodoInicio ? startOfDay(source.periodoInicio).getTime() : savedGlobalStart
-        const end = source?.periodoTermino ? endOfDay(source.periodoTermino).getTime() : savedGlobalEnd
-        if (start < globalStart) globalStart = start
-        if (end > globalEnd) globalEnd = end
-        teacherPeriods.push({ id: t.id, start, end })
+        const b =
+          teacherPaymentPeriodBoundsUtc(source?.periodoInicio ?? null, source?.periodoTermino ?? null) ?? selCal
+        if (b.startMs < globalStart) globalStart = b.startMs
+        if (b.endExclusiveMs > globalEndExclusive) globalEndExclusive = b.endExclusiveMs
+        teacherPeriods.push({ id: t.id, startMs: b.startMs, endExclusiveMs: b.endExclusiveMs })
       }
     }
 
     const globalStartDate = new Date(globalStart)
-    const globalEndDate = new Date(globalEnd)
+    const globalEndExclusiveDate = new Date(globalEndExclusive)
 
     const startKey = toDateKey(globalStartDate)
-    const endKey = toDateKey(globalEndDate)
+    const endKey = toDateKey(new Date(globalEndExclusive - 1))
     const holidayRows = await prisma.holiday.findMany({
       where: { dateKey: { gte: startKey, lte: endKey } },
       select: { dateKey: true },
@@ -171,7 +169,7 @@ export async function GET(request: NextRequest) {
     // Aulas canceladas não entram no cálculo de pagamento (apenas CONFIRMED)
     const lessonsInRange = await prisma.lesson.findMany({
       where: {
-        startAt: { gte: globalStartDate, lte: globalEndDate },
+        startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
         status: 'CONFIRMED',
       },
       select: {
@@ -188,7 +186,7 @@ export async function GET(request: NextRequest) {
       where: {
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
-          startAt: { gte: globalStartDate, lte: globalEndDate },
+          startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
           enrollment: {
             OR: [
               { status: { not: 'PAUSED' } },
@@ -240,8 +238,8 @@ export async function GET(request: NextRequest) {
       const { totalHorasRegistradas, valorAPagar } = computeValorAPagar({
         records: filteredRecords,
         teacherId: t.id,
-        periodStart: period.start,
-        periodEnd: period.end,
+        periodStart: period.startMs,
+        periodEndExclusive: period.endExclusiveMs,
         holidaySet,
         valorPorHora,
         valorPorPeriodo,
@@ -254,15 +252,15 @@ export async function GET(request: NextRequest) {
       for (const l of lessonsInRange) {
         if (l.teacherId !== t.id) continue
         const startAt = new Date(l.startAt).getTime()
-        if (startAt < period.start || startAt > period.end) continue
+        if (startAt < period.startMs || startAt >= period.endExclusiveMs) continue
         if (holidaySet.has(toDateKey(l.startAt))) continue
         totalRegistrosEsperados += 1
         totalMinutosEstimados += l.durationMinutes ?? 60
       }
       const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
 
-      const dataInicioISO = new Date(period.start).toISOString().slice(0, 10)
-      const dataTerminoISO = new Date(period.end).toISOString().slice(0, 10)
+      const dataInicioISO = ymdInTZ(new Date(period.startMs))
+      const dataTerminoISO = ymdInTZ(new Date(period.endExclusiveMs - 1))
 
       return {
         id: t.id,
@@ -296,7 +294,7 @@ export async function GET(request: NextRequest) {
         const period = teacherPeriods.find((tp) => tp.id === p.id)
         if (!period) return false
         // Período sobrepõe o mês se: início do período <= fim do mês E fim do período >= início do mês
-        return period.start <= ultimoDia && period.end >= primeiroDia
+        return period.startMs <= ultimoDia && period.endExclusiveMs > primeiroDia
       })
     }
 
