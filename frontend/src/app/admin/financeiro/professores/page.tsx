@@ -56,7 +56,7 @@ function getDiaPagamento(p: ProfessorFinanceiro): number {
   if (typeof p.diaPagamento === 'number' && p.diaPagamento >= 1 && p.diaPagamento <= 31) {
     return p.diaPagamento
   }
-  return new Date(p.dataTermino + 'T12:00:00').getDate()
+  return new Date(p.dataInicio + 'T12:00:00').getDate()
 }
 
 function nextDueDateFromDay(day: number, afterDate: Date): Date {
@@ -365,7 +365,7 @@ export default function FinanceiroProfessoresPage() {
 
   const openEditPeriodo = (row: ProfessorFinanceiro) => {
     setEditPeriodo(row)
-    setDueDay(String(new Date(row.dataTermino + 'T12:00:00').getDate()))
+    setDueDay(String(new Date(row.dataInicio + 'T12:00:00').getDate()))
     setValorPorPeriodo(row.valorPorPeriodo ? String(row.valorPorPeriodo) : '')
     setValorExtra(row.valorExtra ? String(row.valorExtra) : '')
     setMetodoPagamento(row.metodoPagamento ?? '')
@@ -700,7 +700,7 @@ Equipe Seidmann Institute`
       key: 'diaPagamento',
       label: 'Dia pagto.',
       render: (row) => (
-        <CellWithCopy value={String(new Date(row.dataTermino + 'T12:00:00').getDate())} onCopy={handleCopy} />
+        <CellWithCopy value={String(new Date(row.dataInicio + 'T12:00:00').getDate())} onCopy={handleCopy} />
       ),
     },
     {
