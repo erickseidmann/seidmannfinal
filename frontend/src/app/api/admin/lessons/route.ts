@@ -242,6 +242,59 @@ export async function POST(request: NextRequest) {
     const duration = Number(durationMinutes) || 60
     const notesTrim = notes?.trim() || null
 
+    // Regra de negócio: reposição só pode ser agendada a partir de uma aula cancelada.
+    if (validStatus === 'REPOSICAO') {
+      const canceledStartAtStr =
+        canceledLessonInfo && typeof canceledLessonInfo.startAt === 'string'
+          ? canceledLessonInfo.startAt
+          : ''
+      const canceledTeacherId =
+        canceledLessonInfo && typeof canceledLessonInfo.teacherId === 'string'
+          ? canceledLessonInfo.teacherId
+          : ''
+
+      if (!canceledStartAtStr || !canceledTeacherId) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: 'Reposição só pode ser agendada a partir de uma aula cancelada.',
+          },
+          { status: 400 }
+        )
+      }
+
+      const canceledStartAt = new Date(canceledStartAtStr)
+      if (Number.isNaN(canceledStartAt.getTime())) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: 'Dados da aula cancelada inválidos para agendar reposição.',
+          },
+          { status: 400 }
+        )
+      }
+
+      const canceledLesson = await prisma.lesson.findFirst({
+        where: {
+          enrollmentId,
+          teacherId: canceledTeacherId,
+          startAt: canceledStartAt,
+          status: 'CANCELLED',
+        },
+        select: { id: true },
+      })
+
+      if (!canceledLesson) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: 'Não foi encontrada a aula cancelada de origem para esta reposição.',
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
     const repeatFrequencyWeeks = repeatFrequencyEnabled ? Math.min(52, Math.max(1, Number(repeatFrequencyWeeksParam) || 1)) : 0
 

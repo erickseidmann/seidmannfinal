@@ -159,6 +159,14 @@ export async function PATCH(
       return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
     }
 
+    // Regra de negócio: reposição só pode nascer de uma aula cancelada.
+    if (status === 'REPOSICAO' && lessonBefore.status !== 'CANCELLED' && lessonBefore.status !== 'REPOSICAO') {
+      return NextResponse.json(
+        { ok: false, message: 'Reposição só pode ser agendada a partir de uma aula cancelada.' },
+        { status: 400 }
+      )
+    }
+
     const effectiveEnrollmentId = updateData.enrollmentId ?? lessonBefore.enrollmentId
     const effectiveTeacherId = updateData.teacherId ?? lessonBefore.teacherId
     const effectiveStartAt = updateData.startAt ?? lessonBefore.startAt

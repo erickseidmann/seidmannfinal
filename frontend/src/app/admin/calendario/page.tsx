@@ -48,7 +48,15 @@ interface Stats {
   reposicao: number
   wrongFrequencyCount: number
   confirmedList: { id: string; studentName: string; teacherName: string; startAt: string }[]
-  cancelledList: { id: string; studentName: string; teacherName: string; startAt: string }[]
+  cancelledList: {
+    id: string
+    studentName: string
+    teacherName: string
+    startAt: string
+    rescheduledLessonId?: string | null
+    rescheduledAt?: string | null
+    rescheduledTeacherName?: string | null
+  }[]
   reposicaoList: { id: string; studentName: string; teacherName: string; startAt: string }[]
   wrongFrequencyList: {
     enrollmentId: string
@@ -352,6 +360,7 @@ export default function AdminCalendarioPage() {
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
   const [marcandoRedirectId, setMarcandoRedirectId] = useState<string | null>(null)
+  const [reagendarCanceladaLoadingId, setReagendarCanceladaLoadingId] = useState<string | null>(null)
   const [holidays, setHolidays] = useState<Set<string>>(new Set())
   const [holidayLoading, setHolidayLoading] = useState<string | null>(null)
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
@@ -1266,6 +1275,53 @@ export default function AdminCalendarioPage() {
     setLessonModalOpen(true)
   }
 
+  const abrirReagendamentoDaCancelada = useCallback(async (lessonId: string) => {
+    setReagendarCanceladaLoadingId(lessonId)
+    try {
+      const res = await fetch(`/api/admin/lessons/${lessonId}`, { credentials: 'include' })
+      if (res.status === 401 || res.status === 403) {
+        router.push('/login?tab=admin')
+        return
+      }
+      const json = await res.json()
+      if (!json?.ok || !json?.data?.lesson) {
+        setToast({ message: json?.message || 'Não foi possível abrir a aula cancelada', type: 'error' })
+        return
+      }
+
+      const raw = json.data.lesson
+      if (!raw.teacherId || !raw.teacher?.id) {
+        setToast({ message: 'Aula sem professor definido. Ajuste o professor antes de reagendar.', type: 'error' })
+        return
+      }
+
+      const lessonToEdit: Lesson = {
+        id: raw.id,
+        enrollmentId: raw.enrollmentId,
+        teacherId: raw.teacherId,
+        status: (raw.status === 'CANCELLED' || raw.status === 'REPOSICAO' ? raw.status : 'CONFIRMED') as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
+        startAt: raw.startAt,
+        durationMinutes: raw.durationMinutes ?? 30,
+        notes: raw.notes ?? null,
+        createdByName: raw.createdByName ?? null,
+        enrollment: {
+          id: raw.enrollment.id,
+          nome: raw.enrollment.nome,
+          frequenciaSemanal: raw.enrollment.frequenciaSemanal ?? null,
+        },
+        teacher: { id: raw.teacher.id, nome: raw.teacher.nome },
+      }
+
+      setListModal(null)
+      openEditLesson(lessonToEdit)
+      setAgendarReposicao(true)
+    } catch {
+      setToast({ message: 'Erro ao abrir aula cancelada para reagendar', type: 'error' })
+    } finally {
+      setReagendarCanceladaLoadingId(null)
+    }
+  }, [router])
+
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!lessonForm.enrollmentId || !lessonForm.teacherId) {
@@ -1417,10 +1473,13 @@ export default function AdminCalendarioPage() {
                 status: 'REPOSICAO',
                 startAt: reposicaoStartAt.toISOString(),
                 durationMinutes: reposicaoForm.durationMinutes || lessonForm.durationMinutes,
-                notes: `Reposição da aula cancelada em ${startAt.toLocaleDateString('pt-BR')}`,
+                notes: `Reposição da aula cancelada em ${startAt.toLocaleDateString('pt-BR')}${
+                  editingLesson ? ` [cancelledLessonId:${editingLesson.id}]` : ''
+                }`,
                 canceledLessonInfo: {
                   startAt: startAt.toISOString(),
                   teacherId: lessonForm.teacherId,
+                  lessonId: editingLesson?.id ?? null,
                 },
               }),
             })
@@ -2620,7 +2679,6 @@ export default function AdminCalendarioPage() {
               const STATUS_OPCOES = [
                 { value: 'CONFIRMED' as const, label: 'Confirmada' },
                 { value: 'CANCELLED' as const, label: 'Cancelada' },
-                { value: 'REPOSICAO' as const, label: 'Reposição' },
               ]
               const filteredStatus = !lessonStatusSearch.trim()
                 ? STATUS_OPCOES
@@ -3175,12 +3233,36 @@ export default function AdminCalendarioPage() {
               {listModal.type === 'cancelled' &&
                 stats.cancelledList.map((item) => (
                   <div key={item.id} className="p-3 rounded-lg border border-red-200 bg-red-50 text-sm">
-                    <span className="font-medium">{item.studentName}</span> – {item.teacherName} –{' '}
-                    {formatTime(item.startAt)}
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="font-medium">{item.studentName}</span> – {item.teacherName} –{' '}
+                        {formatTime(item.startAt)}
+                        {item.rescheduledAt ? (
+                          <p className="mt-1 text-xs text-emerald-700">
+                            Reagendada para {new Date(item.rescheduledAt).toLocaleDateString('pt-BR')} às {formatTime(item.rescheduledAt)}
+                            {item.rescheduledTeacherName ? ` com ${item.rescheduledTeacherName}` : ''}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-red-700">Sem reagendamento</p>
+                        )}
+                      </div>
+                      {!item.rescheduledAt && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="primary"
+                          onClick={() => void abrirReagendamentoDaCancelada(item.id)}
+                          disabled={reagendarCanceladaLoadingId === item.id}
+                          className="shrink-0"
+                        >
+                          {reagendarCanceladaLoadingId === item.id ? 'Abrindo...' : 'Reagendar'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               {listModal.type === 'cancelled' && stats.cancelledList.length === 0 && (
-                <p className="text-gray-500 text-sm">Nenhuma aula cancelada nesta semana.</p>
+                <p className="text-gray-500 text-sm">Nenhuma aula cancelada neste mês.</p>
               )}
               {listModal.type === 'reposicao' &&
                 stats.reposicaoList.map((item) => (

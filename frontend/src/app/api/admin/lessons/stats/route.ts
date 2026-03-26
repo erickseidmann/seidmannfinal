@@ -24,6 +24,12 @@ function getSaturdayEnd(monday: Date): Date {
   return sat
 }
 
+function getMonthRange(d: Date): { monthStart: Date; monthEnd: Date } {
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0)
+  const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
+  return { monthStart, monthEnd }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
@@ -47,6 +53,7 @@ export async function GET(request: NextRequest) {
       ? getMonday(new Date(weekStartParam))
       : getMonday(new Date())
     const saturdayEnd = getSaturdayEnd(monday)
+    const { monthStart, monthEnd } = getMonthRange(monday)
 
     const lessons = await prisma.lesson.findMany({
       where: {
@@ -69,7 +76,6 @@ export async function GET(request: NextRequest) {
     })
 
     const confirmedList: { id: string; studentName: string; teacherName: string; startAt: string }[] = []
-    const cancelledList: { id: string; studentName: string; teacherName: string; startAt: string }[] = []
     const reposicaoList: { id: string; studentName: string; teacherName: string; startAt: string }[] = []
 
     for (const l of lessons) {
@@ -80,9 +86,74 @@ export async function GET(request: NextRequest) {
         startAt: l.startAt.toISOString(),
       }
       if (l.status === 'CONFIRMED') confirmedList.push(item)
-      else if (l.status === 'CANCELLED') cancelledList.push(item)
       else if (l.status === 'REPOSICAO') reposicaoList.push(item)
     }
+
+    // Canceladas: cubo/lista mensal (todas as aulas canceladas do mês selecionado)
+    const cancelledLessonsInMonth = await prisma.lesson.findMany({
+      where: {
+        status: 'CANCELLED',
+        startAt: { gte: monthStart, lte: monthEnd },
+        enrollment: {
+          status: { not: 'INACTIVE' },
+        },
+      },
+      include: {
+        enrollment: {
+          select: {
+            nome: true,
+          },
+        },
+        teacher: { select: { nome: true } },
+      },
+      orderBy: { startAt: 'asc' },
+    })
+
+    const cancelledEnrollmentIds = Array.from(new Set(cancelledLessonsInMonth.map((l) => l.enrollmentId)))
+    const reposicaoSearchEnd = new Date(monthEnd)
+    reposicaoSearchEnd.setDate(reposicaoSearchEnd.getDate() + 62)
+    const reposicoesByEnrollment = await prisma.lesson.findMany({
+      where: {
+        status: 'REPOSICAO',
+        enrollmentId: { in: cancelledEnrollmentIds },
+        startAt: { gte: monthStart, lte: reposicaoSearchEnd },
+      },
+      include: {
+        teacher: { select: { nome: true } },
+      },
+      orderBy: { startAt: 'asc' },
+    })
+
+    const cancelledList: {
+      id: string
+      studentName: string
+      teacherName: string
+      startAt: string
+      rescheduledLessonId: string | null
+      rescheduledAt: string | null
+      rescheduledTeacherName: string | null
+    }[] = cancelledLessonsInMonth.map((l) => {
+      const candidates = reposicoesByEnrollment.filter((r) => r.enrollmentId === l.enrollmentId)
+      const marker = `[cancelledLessonId:${l.id}]`
+      const exactByMarker = candidates.find((r) => (r.notes ?? '').includes(marker))
+      const dateToken = l.startAt.toLocaleDateString('pt-BR')
+      const fallbackByDateInNote = candidates.find(
+        (r) =>
+          r.startAt >= l.startAt &&
+          (r.notes ?? '').includes(`aula cancelada em ${dateToken}`)
+      )
+      const matched = exactByMarker ?? fallbackByDateInNote ?? null
+
+      return {
+        id: l.id,
+        studentName: l.enrollment.nome,
+        teacherName: l.teacher?.nome ?? 'N/A',
+        startAt: l.startAt.toISOString(),
+        rescheduledLessonId: matched?.id ?? null,
+        rescheduledAt: matched?.startAt?.toISOString() ?? null,
+        rescheduledTeacherName: matched?.teacher?.nome ?? null,
+      }
+    })
 
     // Frequência: sempre relativo à semana exibida (seg–sáb).
     // Grupos: cada slot de aula conta como UMA pessoa (não soma tempo dos integrantes). Um grupo com 2 alunos de 30min = 1 slot de 30min.
@@ -365,6 +436,8 @@ export async function GET(request: NextRequest) {
       data: {
         weekStart: monday.toISOString(),
         weekEnd: saturdayEnd.toISOString(),
+        monthStart: monthStart.toISOString(),
+        monthEnd: monthEnd.toISOString(),
         confirmed: confirmedList.length,
         cancelled: cancelledList.length,
         reposicao: reposicaoList.length,
