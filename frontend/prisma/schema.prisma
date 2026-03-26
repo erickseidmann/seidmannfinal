@@ -77,6 +77,11 @@ enum AnnouncementStatus {
   CANCELED
 }
 
+enum AdminDashboardTodoCategory {
+  GESTAO
+  FINANCEIRO
+}
+
 // Model: User (Usu├írio)
 // Representa um usu├írio cadastrado no sistema
 model User {
@@ -105,7 +110,6 @@ model User {
   studentAlertsCreated StudentAlert[]
   adminNotifications AdminNotification[]
   adminPaymentMonths AdminUserPaymentMonth[]
-  kanbanCardsAssigned KanbanCard[]
   conversationParticipants ConversationParticipant[]
   chatMessagesSent ChatMessage[]
   lessonsCreated Lesson[]
@@ -113,12 +117,37 @@ model User {
   lessonRequestsProcessed LessonRequest[] @relation("LessonRequestsProcessed")
   passwordResetTokens   PasswordResetToken[]
   availabilityLogsChanged TeacherAvailabilityLog[]
+  adminDashboardTodosCreated   AdminDashboardTodo[] @relation("AdminDashboardTodoCreatedBy")
+  adminDashboardTodosCompleted AdminDashboardTodo[] @relation("AdminDashboardTodoCompletedBy")
 
   // ├ìndices
   @@index([email])
   @@index([role])
   @@index([status])
   @@map("users")
+}
+
+/** Tarefas do dashboard admin (por dia; pendentes de dias anteriores viram para o dia atual ao abrir "hoje") */
+model AdminDashboardTodo {
+  id                String    @id @default(cuid())
+  text              String    @db.VarChar(500)
+  category          AdminDashboardTodoCategory @default(GESTAO)
+  isUrgent          Boolean   @default(false) @map("is_urgent")
+  dayKey            String    @map("day_key") @db.VarChar(10)
+  status            String    @default("OPEN") @db.VarChar(20)
+  criadoEm          DateTime  @default(now()) @map("created_at")
+  createdByUserId   String    @map("created_by_user_id")
+  resolutionNote    String?   @db.VarChar(2000) @map("resolution_note")
+  completedAt       DateTime? @map("completed_at")
+  completedByUserId String?   @map("completed_by_user_id")
+
+  createdBy   User  @relation("AdminDashboardTodoCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  completedBy User? @relation("AdminDashboardTodoCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([dayKey])
+  @@index([status, dayKey])
+  @@index([isUrgent])
+  @@map("admin_dashboard_todos")
 }
 
 // Token para recuperação de senha (alunos e professores)
@@ -211,24 +240,6 @@ model AdminNotification {
   @@index([userId])
   @@index([readAt])
   @@map("admin_notifications")
-}
-
-// Kanban: blocos em colunas Para fazer, Fazendo, Feito (admin)
-model KanbanCard {
-  id              String   @id @default(cuid())
-  title           String   @db.VarChar(500)
-  setor           String?  @db.VarChar(100)   // setor
-  assignedToId    String?  @map("assigned_to_id") // User (admin) que far├í
-  column          String   @db.VarChar(20)   // TODO | DOING | DONE
-  orderIndex      Int      @default(0) @map("order_index")
-  prioridade      String?  @db.VarChar(20)  // EMERGENCIA | PODE_ESPERAR | FIQUE_ATENTO
-  criadoEm        DateTime @default(now()) @map("created_at")
-  atualizadoEm    DateTime @updatedAt @map("updated_at")
-
-  assignedTo      User?    @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
-  @@index([column])
-  @@index([assignedToId])
-  @@map("kanban_cards")
 }
 
 // Chat interno: conversas entre funcion├írios, professores e alunos

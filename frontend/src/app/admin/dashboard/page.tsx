@@ -30,6 +30,7 @@ import {
   Copy,
   ChevronDown,
   ChevronLeft,
+  ListTodo,
 } from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
@@ -133,6 +134,9 @@ interface Metrics {
   /** Professores com pelo menos uma aula já encerrada sem registro (últimos 60 dias) */
   teachersWithLateLessonRecords: number
   studentsWith3ConsecutiveAbsences: number
+  /** To do list: tarefas abertas até hoje; urgentOpen = marcadas com fogo */
+  todoOpenCount: number
+  todoUrgentOpenCount: number
   absences: {
     studentsWeek: number
     studentsMonth: number
@@ -865,6 +869,26 @@ export default function AdminDashboardPage() {
               icon={<History className="w-5 h-5" />}
               color="purple"
               subtitle="Clique para ver ações dos admins (últimas 48h)"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => router.push('/admin/todos')}
+            onKeyDown={(e) => e.key === 'Enter' && router.push('/admin/todos')}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.todoOpenCount ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
+          >
+            <StatCard
+              variant="finance"
+              title="To do — a fazer"
+              value={metrics?.todoOpenCount ?? 0}
+              icon={<ListTodo className="w-5 h-5" />}
+              color="teal"
+              subtitle={
+                (metrics?.todoUrgentOpenCount ?? 0) > 0
+                  ? `${metrics?.todoUrgentOpenCount} urgente(s) · clique para abrir a lista`
+                  : 'Tarefas abertas até hoje · clique para abrir'
+              }
             />
           </div>
         </div>

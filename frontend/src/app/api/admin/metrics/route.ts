@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { findLessonsPendingRecord } from '@/lib/lesson-pending-record'
+import { ymdInTZ } from '@/lib/datetime'
 
 export async function GET(request: NextRequest) {
   try {
@@ -265,6 +266,20 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar alunos com 3+ ausências no mesmo mês:', err)
     }
 
+    // To do list admin: pendentes com data até hoje (fuso Brasil); urgentes = isUrgent
+    let todoOpenCount = 0
+    let todoUrgentOpenCount = 0
+    try {
+      const todayKey = ymdInTZ(new Date())
+      const openBase = { status: 'OPEN' as const, dayKey: { lte: todayKey } }
+      ;[todoOpenCount, todoUrgentOpenCount] = await Promise.all([
+        prisma.adminDashboardTodo.count({ where: openBase }),
+        prisma.adminDashboardTodo.count({ where: { ...openBase, isUrgent: true } }),
+      ])
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar tarefas do To do list:', err)
+    }
+
     // Calcular faltas (últimos 7 dias e 30 dias)
     // Verificar se o model existe antes de usar
     let studentsAbsencesWeek = 0
@@ -343,6 +358,8 @@ export async function GET(request: NextRequest) {
         teachersWithProblems,
         teachersWithLateLessonRecords,
         studentsWith3ConsecutiveAbsences,
+        todoOpenCount,
+        todoUrgentOpenCount,
         absences: {
           studentsWeek: studentsAbsencesWeek,
           studentsMonth: studentsAbsencesMonth,

@@ -13,7 +13,7 @@ function removeDir(name) {
   const dir = path.join(root, name)
   if (fs.existsSync(dir)) {
     try {
-      fs.rmSync(dir, { recursive: true, maxRetries: 3, retryDelay: 200 })
+      fs.rmSync(dir, { recursive: true, maxRetries: 8, retryDelay: 400 })
       console.log(`Pasta ${name} removida com sucesso.`)
       return true
     } catch (err) {

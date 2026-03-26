@@ -27,7 +27,7 @@ import {
   MessageCircle,
   Menu,
   X,
-  Columns3,
+  ListTodo,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -68,7 +68,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/notificacoes': 'financeiro-notificacoes',
   '/admin/financeiro/cobrancas': 'financeiro-cobrancas',
   '/admin/chat': 'chat',
-  '/admin/kanban': 'kanban',
+  '/admin/todos': 'todos',
 }
 
 const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
@@ -91,7 +91,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
   { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
   { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
-  { href: '/admin/kanban', labelKey: 'admin.kanban', icon: Columns3 },
+  { href: '/admin/todos', labelKey: 'admin.todos', icon: ListTodo },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -166,8 +166,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       }
       return
     }
-    // Kanban: disponível para todos os usuários admin
-    if (pageKey === 'kanban') {
+    // To do list: disponível para todos os usuários admin
+    if (pageKey === 'todos') {
       return
     }
     if (!adminPages.includes(pageKey)) {
@@ -206,8 +206,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    // Kanban: disponível para todos os usuários admin
-    if (pageKey === 'kanban') return true
+    // To do list: disponível para todos os usuários admin
+    if (pageKey === 'todos') return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
 

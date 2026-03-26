@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/ensure-admin.js && next dev",
+    "dev:turbo": "node scripts/ensure-admin.js && next dev --turbo",
     "clean": "node scripts/clean-next.js",
     "dev:clean": "node scripts/clean-next.js && node scripts/ensure-admin.js && next dev",
+    "dev:clean:turbo": "node scripts/clean-next.js && node scripts/ensure-admin.js && next dev --turbo",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
