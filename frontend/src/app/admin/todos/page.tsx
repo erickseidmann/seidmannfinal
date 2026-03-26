@@ -257,6 +257,20 @@ export default function AdminTodosPage() {
     return item.category === todoFilter
   })
 
+  // Ordenação para exibir primeiro o que está em aberto.
+  // Mantém a ordem original dentro de cada grupo (por ser return 0 nos empates).
+  const visibleTodosSorted = [...visibleTodos].sort((a, b) => {
+    const aDone = a.status === 'DONE'
+    const bDone = b.status === 'DONE'
+    if (aDone !== bDone) return aDone ? 1 : -1
+
+    const aUrgentOpen = a.isUrgent && !aDone
+    const bUrgentOpen = b.isUrgent && !bDone
+    if (aUrgentOpen !== bUrgentOpen) return aUrgentOpen ? -1 : 1
+
+    return 0
+  })
+
   return (
     <AdminLayout>
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -416,7 +430,7 @@ export default function AdminTodosPage() {
             </p>
           ) : (
             <ul className="space-y-2" aria-label="Lista de tarefas">
-              {visibleTodos.map((item) => {
+              {visibleTodosSorted.map((item) => {
                 const isDone = item.status === 'DONE'
                 const isFin = item.category === 'FINANCEIRO'
                 const urgentOpen = item.isUrgent && !isDone
