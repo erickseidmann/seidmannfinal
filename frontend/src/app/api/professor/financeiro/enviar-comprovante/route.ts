@@ -10,7 +10,10 @@ import { requireTeacher } from '@/lib/auth'
 import { sendEmail, mensagemNotaFiscalRecibo } from '@/lib/email'
 import { logFinanceAction } from '@/lib/finance'
 
-const EMAIL_FINANCEIRO = 'financeiro@seidmanninstitute.com'
+const EMAIL_FINANCEIRO_PADRAO = 'financeiro@seidmanninstitute.com'
+const EMAIL_FINANCEIRO =
+  process.env.FINANCEIRO_EMAIL?.trim() ||
+  EMAIL_FINANCEIRO_PADRAO
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = [
   'application/pdf',
