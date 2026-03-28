@@ -380,6 +380,7 @@ model Enrollment {
   lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
   adminRedirectHandled AdminRedirectHandled[]
+  teacherAlerts      TeacherAlert[]
 
   @@index([email])
   @@index([whatsapp])
@@ -554,6 +555,8 @@ model Teacher {
   userId          String?      @unique @map("user_id") // Opcional: link com User se tiver conta
   periodoPagamentoInicio  DateTime? @map("periodo_pagamento_inicio") // Data in├¡cio do per├¡odo de pagamento (por professor)
   periodoPagamentoTermino DateTime? @map("periodo_pagamento_termino") // Data t├®rmino do per├¡odo de pagamento (por professor)
+  /** Dia de vencimento (1–31) fixo para todos os ciclos; evita inferir 31 num mês e 28 noutro. Preenchido ao salvar dueDay no admin. */
+  paymentDueDay         Int?      @map("payment_due_day")
   periodoPagamentoPago    Boolean   @default(false) @map("periodo_pagamento_pago") // Pagamento do per├¡odo: true = Pago, false = Em aberto
   valorPorPeriodo         Decimal?  @db.Decimal(10, 2) @map("valor_por_periodo") // Valor fixo por per├¡odo (opcional)
   valorExtra              Decimal?  @db.Decimal(10, 2) @map("valor_extra") // Valores extras do per├¡odo (opcional)
@@ -632,13 +635,14 @@ model TeacherPaymentMonth {
   teacherId           String    @map("teacher_id")
   year                Int
   month               Int       // 1-12
-  paymentStatus       String?   @map("payment_status") // PAGO, EM_ABERTO
+  paymentStatus       String?   @map("payment_status") // PAGO, EM_ABERTO, NF_OK_AGUARDANDO, AGUARDANDO_REENVIO
   valorPorPeriodo     Decimal?  @db.Decimal(10, 2) @map("valor_por_periodo")
   valorExtra          Decimal?  @db.Decimal(10, 2) @map("valor_extra")
   periodoInicio       DateTime? @map("periodo_inicio") // Ex.: 15/01 para per├¡odo 15 jan a 15 fev
   periodoTermino      DateTime? @map("periodo_termino")
   teacherConfirmedAt  DateTime? @map("teacher_confirmed_at") // Professor clicou "Confirmar valor a receber" ÔåÆ admin v├¬ "pagamento pronto para fazer"
   proofSentAt         DateTime? @map("proof_sent_at") // Professor enviou nota fiscal/recibo para financeiro@
+  paymentMarkedPaidAt DateTime? @map("payment_marked_paid_at") // Quando o admin marcou este m├¬s como PAGO (painel professor: "valor pago no dia ...")
   criadoEm            DateTime  @default(now()) @map("created_at")
   atualizadoEm        DateTime  @updatedAt @map("updated_at")
 
@@ -740,8 +744,10 @@ model Announcement {
 model TeacherAlert {
   id           String    @id @default(cuid())
   teacherId    String    @map("teacher_id")
+  /** Matrícula (novo aluno); permite recalcular livro/página na leitura */
+  enrollmentId String?   @map("enrollment_id")
   message      String
-  type         String?   @db.VarChar(32) // PAYMENT_DONE, NEW_ANNOUNCEMENT, NEW_STUDENT (notifica├º├Áes exibidas no In├¡cio)
+  type         String?   @db.VarChar(32) // PAYMENT_DONE, NEW_ANNOUNCEMENT, NEW_STUDENT, PROOF_RESEND_NEEDED (In├¡cio)
   level        String?   // "INFO", "WARN", "ERROR"
   isActive     Boolean   @default(true) @map("is_active")
   readAt       DateTime? @map("read_at") // quando o professor leu (null = n├úo lido)
@@ -750,13 +756,15 @@ model TeacherAlert {
   createdById  String?   @map("created_by_id") // Admin que criou o alerta
   
   // Relacionamentos
-  teacher      Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher      Teacher    @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  enrollment   Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
   createdBy    User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
   
   // ├ìndices
   @@index([teacherId])
   @@index([isActive])
   @@index([type])
+  @@index([enrollmentId])
   @@map("teacher_alerts")
 }
 

@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import {
+  announcementWhereProfessorVisible,
+  cutoffDateProfessorHomeFeed,
+} from '@/lib/professor-home-feed'
 import { requireTeacher } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -25,9 +29,7 @@ export async function GET(request: NextRequest) {
     }
 
     const announcements = await prisma.announcement.findMany({
-      where: {
-        audience: { in: ['TEACHERS', 'ALL'] },
-      },
+      where: announcementWhereProfessorVisible(cutoffDateProfessorHomeFeed()),
       orderBy: { criadoEm: 'desc' },
       take: 50,
     })

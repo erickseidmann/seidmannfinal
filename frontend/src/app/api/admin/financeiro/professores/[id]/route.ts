@@ -11,35 +11,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateTeacherPaymentSchema } from '@/lib/finance'
-
-/** Adiciona um mês à data mantendo o dia (ex.: 25/02 → 25/03). Usa UTC para não mudar o dia por causa do fuso. */
-function addMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()))
-}
-
-function addDaysUtc(d: Date, days: number): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days))
-}
+import {
+  inferDueDayUtcFromSavedPeriod,
+  teacherPaymentBoundsFromDueDay,
+} from '@/lib/teacher-paid-period'
+import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
 
 /** Retorna (year, month) do próximo mês. */
 function nextYearMonth(year: number, month: number): { year: number; month: number } {
   if (month === 12) return { year: year + 1, month: 1 }
   return { year, month: month + 1 }
-}
-
-function lastDayOfMonthUtc(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
-}
-
-function buildPeriodFromDueDay(year: number, month: number, dueDay: number): { inicio: Date; termino: Date } {
-  const safeDueCurrent = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(year, month))
-  // Pagamento no dia X fecha o período no dia X-1 do mês selecionado.
-  const pagamentoDate = new Date(Date.UTC(year, month - 1, safeDueCurrent))
-  const termino = addDaysUtc(pagamentoDate, -1)
-  const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
-  const safeDuePrev = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(prev.year, prev.month))
-  const inicio = new Date(Date.UTC(prev.year, prev.month - 1, safeDuePrev))
-  return { inicio, termino }
 }
 
 export async function PATCH(
@@ -112,7 +93,10 @@ export async function PATCH(
       periodoTermino?: Date | null
     } = {}
     if (paymentStatus !== undefined) {
-      updateData.paymentStatus = paymentStatus === 'PAGO' ? 'PAGO' : 'EM_ABERTO'
+      if (paymentStatus === 'PAGO') updateData.paymentStatus = 'PAGO'
+      else if (paymentStatus === 'NF_OK_AGUARDANDO') updateData.paymentStatus = 'NF_OK_AGUARDANDO'
+      else if (paymentStatus === 'AGUARDANDO_REENVIO') updateData.paymentStatus = 'AGUARDANDO_REENVIO'
+      else updateData.paymentStatus = 'EM_ABERTO'
     }
     if (valorPorPeriodo !== undefined) {
       updateData.valorPorPeriodo = valorPorPeriodo ?? null
@@ -127,9 +111,15 @@ export async function PATCH(
       updateData.periodoTermino = periodoTermino ? new Date(periodoTermino) : null
     }
     if (dueDay !== undefined) {
-      const p = buildPeriodFromDueDay(year, month, dueDay)
+      const p = teacherPaymentBoundsFromDueDay(year, month, dueDay)
       updateData.periodoInicio = p.inicio
       updateData.periodoTermino = p.termino
+      if (dueDay >= 1 && dueDay <= 31) {
+        await prisma.teacher.update({
+          where: { id: teacherId },
+          data: { paymentDueDay: dueDay },
+        })
+      }
     }
 
     if (Object.keys(updateData).length === 0 && (metodoPagamento === undefined && infosPagamento === undefined)) {
@@ -177,23 +167,30 @@ export async function PATCH(
         update: updateData,
       })
 
-      // Propagação em cascata: ao alterar período deste mês, atualizar os próximos meses (ex.: fev 25/01–25/02 → mar 25/02–25/03)
+      await syncTeacherPaymentMarkedPaidAt(
+        teacherId,
+        keyYear,
+        keyMonth,
+        previousStatus,
+        updateData.paymentStatus
+      )
+
+      // Propagação em cascata: mesmos limites que teacherPaymentBoundsFromDueDay para os meses seguintes.
       const updatedPeriod =
         updateData.periodoInicio !== undefined || updateData.periodoTermino !== undefined
       if (updatedPeriod) {
         const current = await prisma.teacherPaymentMonth.findUnique({
           where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
         })
-        const terminoDate = current?.periodoTermino
-        if (terminoDate) {
-          let lastTermino = new Date(terminoDate)
+        const cascadeDue =
+          dueDay ??
+          (current?.periodoInicio && current?.periodoTermino
+            ? inferDueDayUtcFromSavedPeriod(current.periodoInicio, current.periodoTermino)
+            : null)
+        if (cascadeDue != null && cascadeDue >= 1 && cascadeDue <= 31) {
           let nextYm = nextYearMonth(keyYear, keyMonth)
-          const maxMonths = 12
-          for (let i = 0; i < maxMonths; i++) {
-            // Próximo período começa no dia seguinte ao término atual
-            // e termina um mês depois menos 1 dia (ex.: 25/03–24/04).
-            const nextInicio = addDaysUtc(lastTermino, 1)
-            const nextTermino = addDaysUtc(addMonth(nextInicio), -1)
+          for (let i = 0; i < 12; i++) {
+            const p = teacherPaymentBoundsFromDueDay(nextYm.year, nextYm.month, cascadeDue)
             await prisma.teacherPaymentMonth.upsert({
               where: {
                 teacherId_year_month: {
@@ -209,15 +206,14 @@ export async function PATCH(
                 paymentStatus: null,
                 valorPorPeriodo: null,
                 valorExtra: null,
-                periodoInicio: nextInicio,
-                periodoTermino: nextTermino,
+                periodoInicio: p.inicio,
+                periodoTermino: p.termino,
               },
               update: {
-                periodoInicio: nextInicio,
-                periodoTermino: nextTermino,
+                periodoInicio: p.inicio,
+                periodoTermino: p.termino,
               },
             })
-            lastTermino = nextTermino
             nextYm = nextYearMonth(nextYm.year, nextYm.month)
           }
         }

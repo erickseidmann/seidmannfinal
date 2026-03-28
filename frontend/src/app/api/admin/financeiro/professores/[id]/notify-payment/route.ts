@@ -1,14 +1,15 @@
 /**
  * POST /api/admin/financeiro/professores/[id]/notify-payment
  * Mostra preview e envia e-mail de notificação de pagamento (com anexo opcional),
- * marca pagamento como PAGO e cria notificação in-app.
- * Body: FormData com year, month, message? (texto da mensagem), attachment? (arquivo)
+ * Opcionalmente marca pagamento como PAGO e cria notificação in-app (quando markPaid=true).
+ * Body: FormData com year, month, message?, attachment?, markPaid? ('true' | 'false', padrão false)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
+import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -63,6 +64,8 @@ export async function POST(
     const monthParam = formData.get('month')
     const messageParam = formData.get('message')
     const attachment = formData.get('attachment') as File | null
+    const markPaidParam = formData.get('markPaid')
+    const markPaid = markPaidParam === 'true' || markPaidParam === '1'
 
     const year = yearParam != null ? Number(yearParam) : null
     const month = monthParam != null ? Number(monthParam) : null
@@ -121,54 +124,70 @@ export async function POST(
       attachments: attachments.length ? attachments : undefined,
     })
 
-    // Marcar pagamento como PAGO
-    // Preferir o registro cujo período TERMINA no mês/ano selecionado (mesma regra da listagem).
-    const rangeStart = new Date(Date.UTC(year, month - 1, 1))
-    const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
-    const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
-      where: {
-        teacherId,
-        periodoTermino: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-      },
-    })
-    const keyYear = existingByEnd?.year ?? year
-    const keyMonth = existingByEnd?.month ?? month
-
-    await prisma.teacherPaymentMonth.upsert({
-      where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
-      create: {
-        teacherId,
-        year: keyYear,
-        month: keyMonth,
-        paymentStatus: 'PAGO',
-      },
-      update: {
-        paymentStatus: 'PAGO',
-      },
-    })
-
-    // Criar notificação in-app para o professor
-    if (prisma.teacherAlert) {
-      await prisma.teacherAlert.create({
-        data: {
+    if (markPaid) {
+      // Preferir o registro cujo período TERMINA no mês/ano selecionado (mesma regra da listagem).
+      const rangeStart = new Date(Date.UTC(year, month - 1, 1))
+      const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+      const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
+        where: {
           teacherId,
-          message: `Seu pagamento referente a ${mesNome} de ${year} foi confirmado.`,
-          type: 'PAYMENT_DONE',
-          level: 'INFO',
-          createdById: auth.session?.sub ?? null,
+          periodoTermino: {
+            gte: rangeStart,
+            lte: rangeEnd,
+          },
         },
       })
+      const keyYear = existingByEnd?.year ?? year
+      const keyMonth = existingByEnd?.month ?? month
+
+      const pmExisting = await prisma.teacherPaymentMonth.findUnique({
+        where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
+        select: { paymentStatus: true },
+      })
+      await prisma.teacherPaymentMonth.upsert({
+        where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
+        create: {
+          teacherId,
+          year: keyYear,
+          month: keyMonth,
+          paymentStatus: 'PAGO',
+        },
+        update: {
+          paymentStatus: 'PAGO',
+        },
+      })
+      await syncTeacherPaymentMarkedPaidAt(
+        teacherId,
+        keyYear,
+        keyMonth,
+        pmExisting?.paymentStatus ?? null,
+        'PAGO'
+      )
+
+      if (prisma.teacherAlert) {
+        await prisma.teacherAlert.create({
+          data: {
+            teacherId,
+            message: `Seu pagamento referente a ${mesNome} de ${year} foi confirmado.`,
+            type: 'PAYMENT_DONE',
+            level: 'INFO',
+            createdById: auth.session?.sub ?? null,
+          },
+        })
+      }
     }
 
     return NextResponse.json({
       ok: true,
-      message: emailSent
-        ? 'E-mail enviado, pagamento marcado como pago e notificação registrada.'
-        : 'E-mail não enviado (SMTP não configurado ou falha). Pagamento marcado como pago e notificação registrada.',
+      message: markPaid
+        ? emailSent
+          ? 'E-mail enviado, pagamento marcado como pago e notificação registrada.'
+          : 'E-mail não enviado (SMTP não configurado ou falha). Pagamento marcado como pago e notificação registrada.'
+        : emailSent
+          ? 'E-mail enviado. Status de pagamento não foi alterado.'
+          : 'E-mail não enviado (SMTP não configurado ou falha). Status de pagamento não foi alterado.',
       emailSent,
+      markPaid,
     })
   } catch (error) {
     console.error('[api/admin/financeiro/professores/[id]/notify-payment POST]', error)

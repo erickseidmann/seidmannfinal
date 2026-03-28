@@ -52,6 +52,19 @@ export function ymdInTZ(date: Date | string, tz: string = BRAZIL_TZ): string {
 }
 
 /**
+ * YYYY-MM-DD pelos componentes UTC (sem conversão para Brasil).
+ * Use em períodos de pagamento do professor: limites são `Date.UTC(dia D, …)`;
+ * `ymdInTZ` deslocaria 00:00 UTC para o dia civil anterior no fuso BR (ex.: 28 vira 27).
+ */
+export function ymdUtc(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
  * Checks if two dates are the same day in Brazil timezone
  */
 export function isSameDayInTZ(a: Date | string, b: Date | string, tz: string = BRAZIL_TZ): boolean {

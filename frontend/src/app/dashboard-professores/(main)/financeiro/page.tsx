@@ -6,7 +6,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp, Loader2, FileText, Printer } from 'lucide-react'
+import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp, Loader2, FileText, Printer, FileCheck, RotateCcw } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
@@ -40,9 +40,13 @@ interface FinanceiroData {
   registrosDetalhados?: RegistroDetalhado[]
   metodoPagamento: string | null
   infosPagamento: string | null
-  statusPagamento: 'PAGO' | 'EM_ABERTO'
+  statusPagamento: 'PAGO' | 'EM_ABERTO' | 'NF_OK_AGUARDANDO' | 'AGUARDANDO_REENVIO'
+  pagamentoProntoParaFazer?: boolean
+  paymentMarkedPaidAt?: string | null
+  valorPago?: number | null
   teacherConfirmedAt: string | null
   proofSentAt: string | null
+  proofFileUrl?: string | null
   year: number | null
   month: number | null
 }
@@ -123,6 +127,47 @@ function openPrintExtrato(data: FinanceiroData) {
   }, 250)
 }
 
+function statusPagamentoProfessorDisplay(data: FinanceiroData) {
+  if (data.statusPagamento === 'PAGO') {
+    return {
+      label: 'Pago',
+      boxClass: 'bg-green-100',
+      Icon: CheckCircle,
+      iconClass: 'text-green-600',
+    }
+  }
+  if (data.statusPagamento === 'AGUARDANDO_REENVIO') {
+    return {
+      label: 'Aguardando reenvio do comprovante',
+      boxClass: 'bg-orange-100',
+      Icon: RotateCcw,
+      iconClass: 'text-orange-700',
+    }
+  }
+  if (data.statusPagamento === 'NF_OK_AGUARDANDO') {
+    return {
+      label: 'NF conferida — aguardando pagamento',
+      boxClass: 'bg-sky-100',
+      Icon: FileCheck,
+      iconClass: 'text-sky-700',
+    }
+  }
+  if (data.pagamentoProntoParaFazer) {
+    return {
+      label: 'Pronto para pagamento',
+      boxClass: 'bg-green-100',
+      Icon: CheckCircle,
+      iconClass: 'text-green-700',
+    }
+  }
+  return {
+    label: 'Em aberto',
+    boxClass: 'bg-amber-100',
+    Icon: AlertCircle,
+    iconClass: 'text-amber-600',
+  }
+}
+
 export default function FinanceiroPage() {
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
@@ -135,6 +180,9 @@ export default function FinanceiroPage() {
   const [confirming, setConfirming] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [comprovanteModalOpen, setComprovanteModalOpen] = useState(false)
+  const [confirmacaoStep, setConfirmacaoStep] = useState<1 | 2>(1)
+  const [comprovanteMode, setComprovanteMode] = useState<'confirmar' | 'reenviar'>('confirmar')
+  const [valorConfirmadoDigitado, setValorConfirmadoDigitado] = useState('')
   const [comprovanteFile, setComprovanteFile] = useState<File | null>(null)
   const [comprovanteMensagem, setComprovanteMensagem] = useState('')
   const [sendingComprovante, setSendingComprovante] = useState(false)
@@ -163,7 +211,96 @@ export default function FinanceiroPage() {
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
 
-  const handleEnviarComprovante = async (e?: React.FormEvent) => {
+  const parseMoedaDigitada = (raw: string): number | null => {
+    const normalized = raw.replace(/\s/g, '').replace('R$', '').replace(/\./g, '').replace(',', '.')
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  const abrirFluxoConfirmacao = () => {
+    setComprovanteModalOpen(true)
+    setComprovanteMode('confirmar')
+    setConfirmacaoStep(1)
+    setValorConfirmadoDigitado('')
+    setComprovanteFile(null)
+    setComprovanteMensagem(`Segue em anexo a nota fiscal/recibo referente a ${MESES_LABELS[selectedMes]} de ${selectedAno}, referente à prestação de serviços para a Seidmann Institute.`)
+  }
+
+  const abrirFluxoReenvio = () => {
+    setComprovanteModalOpen(true)
+    setComprovanteMode('reenviar')
+    setConfirmacaoStep(2)
+    setComprovanteFile(null)
+    setComprovanteMensagem(`Reenvio do comprovante referente a ${MESES_LABELS[selectedMes]} de ${selectedAno}.`)
+  }
+
+  const handleEnviarComprovanteEConfirmar = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!data) return
+
+    const valorDigitado = parseMoedaDigitada(valorConfirmadoDigitado)
+    if (valorDigitado == null) {
+      setToast({ message: 'Digite o valor a receber para confirmar.', type: 'error' })
+      setConfirmacaoStep(1)
+      return
+    }
+    if (Math.abs(valorDigitado - Number(data.valorAPagar)) > 0.009) {
+      setToast({ message: `O valor digitado deve ser exatamente ${formatMoney(data.valorAPagar)}.`, type: 'error' })
+      setConfirmacaoStep(1)
+      return
+    }
+
+    if (!comprovanteFile || comprovanteFile.size === 0) {
+      setToast({ message: 'Selecione o arquivo (nota fiscal ou recibo).', type: 'error' })
+      setConfirmacaoStep(2)
+      return
+    }
+
+    setSendingComprovante(true)
+    setToast(null)
+    try {
+      const form = new FormData()
+      form.append('year', String(selectedAno))
+      form.append('month', String(selectedMes))
+      form.append('file', comprovanteFile)
+      if (comprovanteMensagem.trim()) form.append('mensagem', comprovanteMensagem.trim())
+      const resSend = await fetch('/api/professor/financeiro/enviar-comprovante', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      })
+      const jsonSend = await resSend.json()
+      if (!resSend.ok || !jsonSend.ok) {
+        setToast({ message: jsonSend.message || 'Erro ao anexar comprovante', type: 'error' })
+        return
+      }
+
+      const resConfirm = await fetch('/api/professor/financeiro/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
+      })
+      const jsonConfirm = await resConfirm.json()
+      if (!resConfirm.ok || !jsonConfirm.ok) {
+        setToast({ message: jsonConfirm.message || 'Comprovante anexado, mas houve erro ao confirmar o valor.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Valor confirmado e comprovante anexado no sistema com sucesso.', type: 'success' })
+      setComprovanteModalOpen(false)
+      setConfirmacaoStep(1)
+      setValorConfirmadoDigitado('')
+      setComprovanteFile(null)
+      setComprovanteMensagem('')
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao concluir confirmação com anexo', type: 'error' })
+    } finally {
+      setSendingComprovante(false)
+    }
+  }
+
+  const handleReenviarComprovante = async (e?: React.FormEvent) => {
     e?.preventDefault()
     if (!comprovanteFile || comprovanteFile.size === 0) {
       setToast({ message: 'Selecione o arquivo (nota fiscal ou recibo).', type: 'error' })
@@ -177,49 +314,28 @@ export default function FinanceiroPage() {
       form.append('month', String(selectedMes))
       form.append('file', comprovanteFile)
       if (comprovanteMensagem.trim()) form.append('mensagem', comprovanteMensagem.trim())
-      const res = await fetch('/api/professor/financeiro/enviar-comprovante', {
+
+      const resSend = await fetch('/api/professor/financeiro/enviar-comprovante', {
         method: 'POST',
         credentials: 'include',
         body: form,
       })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao enviar comprovante', type: 'error' })
+      const jsonSend = await resSend.json()
+      if (!resSend.ok || !jsonSend.ok) {
+        setToast({ message: jsonSend.message || 'Erro ao reenviar comprovante', type: 'error' })
         return
       }
-      setToast({ message: json.data?.message || 'Comprovante enviado. Agora você pode confirmar o valor.', type: 'success' })
+      setToast({ message: 'Comprovante reenviado e anexado no sistema com sucesso.', type: 'success' })
       setComprovanteModalOpen(false)
+      setComprovanteMode('confirmar')
+      setConfirmacaoStep(1)
       setComprovanteFile(null)
       setComprovanteMensagem('')
       await fetchData(selectedAno, selectedMes)
     } catch {
-      setToast({ message: 'Erro ao enviar comprovante', type: 'error' })
+      setToast({ message: 'Erro ao reenviar comprovante', type: 'error' })
     } finally {
       setSendingComprovante(false)
-    }
-  }
-
-  const handleConfirmarValor = async () => {
-    setConfirming(true)
-    setToast(null)
-    try {
-      const res = await fetch('/api/professor/financeiro/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao confirmar', type: 'error' })
-        return
-      }
-      setToast({ message: json.message || 'Valor confirmado. O admin verá "pagamento pronto para fazer".', type: 'success' })
-      await fetchData(selectedAno, selectedMes)
-    } catch {
-      setToast({ message: 'Erro ao confirmar valor', type: 'error' })
-    } finally {
-      setConfirming(false)
     }
   }
 
@@ -280,21 +396,21 @@ export default function FinanceiroPage() {
               </div>
             </div>
             <div className="p-5 bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${data.statusPagamento === 'PAGO' ? 'bg-green-100' : 'bg-amber-100'}`}>
-                  {data.statusPagamento === 'PAGO' ? (
-                    <CheckCircle className="w-6 h-6 text-green-600" />
-                  ) : (
-                    <AlertCircle className="w-6 h-6 text-amber-600" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-500">Status do pagamento</p>
-                  <p className="text-lg font-bold text-gray-900">
-                    {data.statusPagamento === 'PAGO' ? 'Pago' : 'Em aberto'}
-                  </p>
-                </div>
-              </div>
+              {(() => {
+                const st = statusPagamentoProfessorDisplay(data)
+                const Icon = st.Icon
+                return (
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${st.boxClass}`}>
+                      <Icon className={`w-6 h-6 ${st.iconClass}`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Status do pagamento</p>
+                      <p className="text-lg font-bold text-gray-900">{st.label}</p>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
             <div className="p-5 bg-white rounded-xl border border-gray-200 shadow-sm">
               <div className="flex items-center gap-3">
@@ -309,71 +425,120 @@ export default function FinanceiroPage() {
             </div>
           </div>
 
-          {/* Enviar nota fiscal ou recibo – obrigatório antes de confirmar valor */}
-          <div className="mb-6 p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-800 mb-2">Nota fiscal ou recibo</h3>
-            {data.proofSentAt ? (
-              <div className="flex items-center gap-2 text-green-700">
-                <CheckCircle className="w-5 h-5 shrink-0" />
-                <span className="text-sm font-medium">
-                  Comprovante enviado em {new Date(data.proofSentAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} para financeiro@seidmanninstitute.com
-                </span>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="text-sm text-gray-600">
-                  Envie a nota fiscal ou recibo referente a {MESES_LABELS[selectedMes]} de {selectedAno}. O e-mail será enviado para financeiro@seidmanninstitute.com. Só depois você poderá confirmar o valor a receber.
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setComprovanteModalOpen(true)
-                    setComprovanteFile(null)
-                    setComprovanteMensagem(`Segue em anexo a nota fiscal/recibo referente a ${MESES_LABELS[selectedMes]} de ${selectedAno}, referente à prestação de serviços para a Seidmann Institute.`)
-                  }}
-                  className="flex items-center gap-2"
-                >
-                  <FileText className="w-4 h-4" />
-                  Enviar nota fiscal ou recibo
-                </Button>
-              </div>
-            )}
-          </div>
-
-          <div className="mb-6 p-4 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+          {/* Fluxo principal: confirmar valor e anexar NF/recibo */}
+          <div className="mb-6 p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-3">
             {data.teacherConfirmedAt ? (
-              <div className="flex items-center gap-2 text-green-700">
-                <CheckCircle className="w-5 h-5" />
-                <span className="font-medium">
-                  Valor confirmado em {new Date(data.teacherConfirmedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
-                </span>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-600">
-                {data.proofSentAt
-                  ? 'Confirme o valor a receber para que o admin veja "pagamento pronto para fazer".'
-                  : 'Envie primeiro a nota fiscal ou recibo acima para poder confirmar o valor a receber.'}
-              </p>
-            )}
-            {!data.teacherConfirmedAt && (
-              <Button
-                variant="primary"
-                onClick={handleConfirmarValor}
-                disabled={confirming || !data.proofSentAt}
-                title={!data.proofSentAt ? 'Envie a nota fiscal ou recibo antes' : undefined}
-              >
-                {confirming ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Confirmando...
-                  </>
+              <>
+                {data.statusPagamento === 'AGUARDANDO_REENVIO' && (
+                  <div className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-950">
+                    <p className="font-medium">Houve um problema com a nota fiscal ou o recibo</p>
+                    <p className="text-orange-900/90 mt-1 text-xs">
+                      Envie um novo arquivo (PDF, JPG ou PNG) usando o botão abaixo.
+                    </p>
+                  </div>
+                )}
+                {data.statusPagamento === 'NF_OK_AGUARDANDO' && (
+                  <p className="text-xs text-sky-800">
+                    A administração conferiu sua nota fiscal. O pagamento será feito em breve; você será avisado
+                    quando estiver pago.
+                  </p>
+                )}
+                {data.statusPagamento === 'PAGO' ? (
+                  <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-900">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle className="w-5 h-5 shrink-0 text-green-700 mt-0.5" />
+                      <div className="text-sm space-y-1.5 min-w-0">
+                        <p className="font-semibold leading-snug">
+                          Valor pago:{' '}
+                          {formatMoney(data.valorPago ?? data.valorAPagar)}
+                          {data.paymentMarkedPaidAt
+                            ? ` no dia ${new Date(data.paymentMarkedPaidAt).toLocaleDateString('pt-BR', {
+                                day: '2-digit',
+                                month: 'long',
+                                year: 'numeric',
+                              })}.`
+                            : '.'}
+                        </p>
+                        {!data.paymentMarkedPaidAt ? (
+                          <p className="text-xs text-green-900/75">
+                            A data exata do registro neste sistema não está disponível para este período.
+                          </p>
+                        ) : null}
+                        {data.proofFileUrl ? (
+                          <a
+                            href={data.proofFileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-block text-xs font-semibold text-green-800 underline hover:text-green-950"
+                          >
+                            Ver documento anexado
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <>
-                    <ThumbsUp className="w-4 h-4 mr-2" />
-                    Confirmar valor a receber
+                    <div className="flex items-center gap-2 text-green-700">
+                      <CheckCircle className="w-5 h-5 shrink-0" />
+                      <span className="font-medium flex flex-wrap items-center gap-x-2 gap-y-1">
+                        Valor confirmado em{' '}
+                        {new Date(data.teacherConfirmedAt).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: 'long',
+                          year: 'numeric',
+                        })}
+                        {data.proofSentAt
+                          ? ` e comprovante anexado em ${new Date(data.proofSentAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                          : ''}
+                        {data.proofFileUrl ? (
+                          <>
+                            <a
+                              href={data.proofFileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline font-semibold"
+                            >
+                              Ver documento anexado
+                            </a>
+                            <button
+                              type="button"
+                              onClick={abrirFluxoReenvio}
+                              className="underline font-semibold text-green-700 hover:text-green-800"
+                            >
+                              Reenviar
+                            </button>
+                          </>
+                        ) : null}
+                      </span>
+                    </div>
+                    {!data.proofFileUrl ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                    <p className="font-medium">Anexe a nota fiscal ou o recibo deste período</p>
+                    <p className="text-amber-900/90 mt-1 text-xs">
+                      Se a administração pediu um novo envio, selecione o arquivo correto abaixo.
+                    </p>
+                    <Button variant="primary" className="mt-3 w-full md:w-auto" onClick={abrirFluxoReenvio}>
+                      Anexar nota fiscal ou recibo
+                    </Button>
+                  </div>
+                ) : null}
                   </>
                 )}
-              </Button>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-600">
+                  Primeiro, confirme seu valor a receber. Em seguida, o sistema pedirá o anexo da nota fiscal ou recibo.
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={abrirFluxoConfirmacao}
+                  className="w-full md:w-auto min-h-[56px] text-base md:text-lg font-semibold"
+                >
+                  Confirmar valor e anexar NF/recibo
+                </Button>
+              </div>
             )}
           </div>
 
@@ -505,11 +670,20 @@ export default function FinanceiroPage() {
         onClose={() => {
           if (!sendingComprovante) {
             setComprovanteModalOpen(false)
+            setComprovanteMode('confirmar')
+            setConfirmacaoStep(1)
+            setValorConfirmadoDigitado('')
             setComprovanteFile(null)
             setComprovanteMensagem('')
           }
         }}
-        title="Enviar nota fiscal ou recibo"
+        title={
+          comprovanteMode === 'reenviar'
+            ? 'Reenviar nota fiscal ou recibo'
+            : confirmacaoStep === 1
+              ? 'Confirmar valor a receber'
+              : 'Anexar nota fiscal ou recibo'
+        }
         size="md"
         footer={
           <>
@@ -518,6 +692,9 @@ export default function FinanceiroPage() {
               variant="outline"
               onClick={() => {
                 setComprovanteModalOpen(false)
+                setComprovanteMode('confirmar')
+                setConfirmacaoStep(1)
+                setValorConfirmadoDigitado('')
                 setComprovanteFile(null)
                 setComprovanteMensagem('')
               }}
@@ -525,70 +702,122 @@ export default function FinanceiroPage() {
             >
               Cancelar
             </Button>
-            <Button
-              type="button"
-              variant="primary"
-              disabled={sendingComprovante || !comprovanteFile}
-              onClick={() => {
-                if (comprovanteFile?.size) handleEnviarComprovante()
-              }}
-            >
-              {sendingComprovante ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Enviando...
-                </>
-              ) : (
-                'Enviar'
-              )}
-            </Button>
+            {comprovanteMode === 'confirmar' && confirmacaoStep === 1 ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  if (!data) return
+                  const valorDigitado = parseMoedaDigitada(valorConfirmadoDigitado)
+                  if (valorDigitado == null || Math.abs(valorDigitado - Number(data.valorAPagar)) > 0.009) {
+                    setToast({ message: `Digite exatamente o valor ${formatMoney(data.valorAPagar)} para continuar.`, type: 'error' })
+                    return
+                  }
+                  setConfirmacaoStep(2)
+                }}
+              >
+                Continuar para anexo
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="primary"
+                disabled={sendingComprovante || !comprovanteFile}
+                onClick={() => {
+                  if (!comprovanteFile?.size) return
+                  if (comprovanteMode === 'reenviar') {
+                    handleReenviarComprovante()
+                    return
+                  }
+                  handleEnviarComprovanteEConfirmar()
+                }}
+              >
+                {sendingComprovante ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    {comprovanteMode === 'reenviar' ? 'Reenviando...' : 'Confirmando e anexando...'}
+                  </>
+                ) : (
+                  comprovanteMode === 'reenviar' ? 'Reenviar comprovante' : 'Confirmar valor e anexar'
+                )}
+              </Button>
+            )}
           </>
         }
       >
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            O e-mail será enviado para <strong>financeiro@seidmanninstitute.com</strong> com seu nome, o período e o modelo abaixo. Anexe o comprovante (PDF ou imagem).
-          </p>
-          <div>
-            <label htmlFor="comprovante-professor" className="block text-sm font-semibold text-gray-700 mb-1">Professor</label>
-            <input
-              id="comprovante-professor"
-              name="professor"
-              type="text"
-              value={data?.professorNome ?? ''}
-              readOnly
-              className="input w-full bg-gray-100"
-              aria-label="Nome do professor"
-            />
-          </div>
-          <div>
-            <label htmlFor="comprovante-anexo" className="block text-sm font-semibold text-gray-700 mb-1">Anexo (nota fiscal ou recibo) *</label>
-            <input
-              id="comprovante-anexo"
-              name="anexo"
-              type="file"
-              accept=".pdf,image/jpeg,image/png,image/gif,image/webp"
-              onChange={(e) => setComprovanteFile(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
-              aria-required="true"
-              aria-label="Anexar nota fiscal ou recibo"
-            />
-            <p className="text-xs text-gray-500 mt-1">PDF ou imagem (JPG, PNG, GIF, WebP). Máximo 10 MB.</p>
-          </div>
-          <div>
-            <label htmlFor="comprovante-mensagem" className="block text-sm font-semibold text-gray-700 mb-1">Mensagem do e-mail (modelo)</label>
-            <textarea
-              id="comprovante-mensagem"
-              name="mensagem"
-              value={comprovanteMensagem}
-              onChange={(e) => setComprovanteMensagem(e.target.value)}
-              className="input w-full min-h-[100px]"
-              placeholder="Segue em anexo a nota fiscal/recibo referente ao mês de ... referente à prestação de serviços para a Seidmann Institute."
-              rows={4}
-              aria-label="Mensagem do e-mail"
-            />
-            <p className="text-xs text-gray-500 mt-1">Esta mensagem será enviada no corpo do e-mail. Você pode editar o texto acima.</p>
-          </div>
+          {confirmacaoStep === 1 ? (
+            <>
+              <p className="text-sm text-gray-600">
+                Para confirmar, digite o valor exatamente como aparece abaixo.
+              </p>
+              <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                <p className="text-xs text-gray-500">Valor a receber neste período</p>
+                <p className="text-2xl font-bold text-gray-900">{data ? formatMoney(data.valorAPagar) : '—'}</p>
+              </div>
+              <div>
+                <label htmlFor="confirmar-valor-digitado" className="block text-sm font-semibold text-gray-700 mb-1">
+                  Digite o valor para confirmar *
+                </label>
+                <input
+                  id="confirmar-valor-digitado"
+                  name="confirmar-valor-digitado"
+                  type="text"
+                  value={valorConfirmadoDigitado}
+                  onChange={(e) => setValorConfirmadoDigitado(e.target.value)}
+                  className="input w-full"
+                  placeholder={data ? formatMoney(data.valorAPagar) : 'R$ 0,00'}
+                  aria-required="true"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600">
+                Agora anexe a nota fiscal ou recibo para concluir a confirmação.
+              </p>
+              <div>
+                <label htmlFor="comprovante-professor" className="block text-sm font-semibold text-gray-700 mb-1">Professor</label>
+                <input
+                  id="comprovante-professor"
+                  name="professor"
+                  type="text"
+                  value={data?.professorNome ?? ''}
+                  readOnly
+                  className="input w-full bg-gray-100"
+                  aria-label="Nome do professor"
+                />
+              </div>
+              <div>
+                <label htmlFor="comprovante-anexo" className="block text-sm font-semibold text-gray-700 mb-1">Anexo (nota fiscal ou recibo) *</label>
+                <input
+                  id="comprovante-anexo"
+                  name="anexo"
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/gif,image/webp"
+                  onChange={(e) => setComprovanteFile(e.target.files?.[0] ?? null)}
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
+                  aria-required="true"
+                  aria-label="Anexar nota fiscal ou recibo"
+                />
+                <p className="text-xs text-gray-500 mt-1">PDF ou imagem (JPG, PNG, GIF, WebP). Máximo 10 MB.</p>
+              </div>
+              <div>
+                <label htmlFor="comprovante-mensagem" className="block text-sm font-semibold text-gray-700 mb-1">Observação (opcional)</label>
+                <textarea
+                  id="comprovante-mensagem"
+                  name="mensagem"
+                  value={comprovanteMensagem}
+                  onChange={(e) => setComprovanteMensagem(e.target.value)}
+                  className="input w-full min-h-[100px]"
+                  placeholder="Ex.: referência do comprovante, observações para o financeiro, etc."
+                  rows={4}
+                  aria-label="Observação do comprovante"
+                />
+                <p className="text-xs text-gray-500 mt-1">A observação fica registrada junto ao anexo no sistema.</p>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
     </div>

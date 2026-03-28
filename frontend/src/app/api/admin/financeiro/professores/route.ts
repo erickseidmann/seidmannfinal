@@ -1,6 +1,8 @@
 /**
  * API: GET /api/admin/financeiro/professores?year=YYYY&month=M
- * Lista professores ativos. Com year e month: período = esse mês para todos; status e valores vêm de TeacherPaymentMonth (como financeiro alunos).
+ * Lista professores ACTIVE. Modo mês: só entram quem já existia até o fim do mês (criadoEm ≤ último dia),
+ * alinhado à coluna "Data de Início" do admin. Valores vêm de TeacherPaymentMonth quando existir;
+ * se o período cadastrado não cobrir o mês visualizado, usa o mês civil em UTC para listagem e cálculo.
  * Sem year/month: período e status vêm do cadastro do professor (periodoPagamentoInicio/Termino, periodoPagamentoPago).
  * Regra: o professor recebe por HORAS REGISTRADAS (LessonRecord), nunca pela estimativa (Lesson).
  */
@@ -9,8 +11,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
-import { teacherPaymentPeriodBoundsUtc, calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
-import { ymdInTZ } from '@/lib/datetime'
+import { resolveTeacherProofFileUrlFromAuditLogs } from '@/lib/finance/resolve-teacher-proof-url'
+import {
+  calendarMonthBoundsUtc,
+  resolveTeacherPaymentMonthBoundsUtc,
+  teacherPaymentBoundsFromDueDay,
+  teacherPaymentPeriodBoundsUtc,
+} from '@/lib/teacher-paid-period'
+import { ymdUtc } from '@/lib/datetime'
 
 function startOfDay(d: Date): Date {
   const x = new Date(d)
@@ -50,15 +58,10 @@ export async function GET(request: NextRequest) {
     const useMonthMode = year != null && month != null && month >= 1 && month <= 12
 
     const now = new Date()
-    const defaultStart = firstDayOfMonth(now)
-    const defaultEnd = lastDayOfMonth(now)
-
-    let periodStart = defaultStart
-    let periodEnd = defaultEnd
-    if (useMonthMode) {
-      periodStart = startOfDay(new Date(year!, month! - 1, 1))
-      periodEnd = lastDayOfMonth(new Date(year!, month! - 1, 1))
-    }
+    const periodEnd =
+      useMonthMode && year != null && month != null
+        ? lastDayOfMonth(new Date(year, month - 1, 1))
+        : null
 
     const teacherSelect = {
       id: true,
@@ -69,6 +72,7 @@ export async function GET(request: NextRequest) {
       infosPagamento: true,
       periodoPagamentoInicio: true,
       periodoPagamentoTermino: true,
+      paymentDueDay: true,
       periodoPagamentoPago: true,
       valorPorPeriodo: true,
       valorExtra: true,
@@ -79,21 +83,31 @@ export async function GET(request: NextRequest) {
     } as const
 
     const teachers = await prisma.teacher.findMany({
-      where: useMonthMode
-        ? {
-            status: 'ACTIVE',
-            // Professor só entra a partir do mês em que foi cadastrado.
-            // Se foi criado depois do fim do mês selecionado, não aparece na listagem.
-            criadoEm: { lte: periodEnd },
-          }
-        : { status: 'ACTIVE' },
+      where:
+        useMonthMode && periodEnd != null
+          ? {
+              status: 'ACTIVE',
+              criadoEm: { lte: periodEnd },
+            }
+          : { status: 'ACTIVE' },
       select: teacherSelect,
       orderBy: { nome: 'asc' },
     })
 
     // No modo mês: buscar o período que TERMINA no mês selecionado (ex.: em abril mostrar 23/03–23/04, não 23/04–23/05).
-    type PmRow = { teacherId: string; periodoInicio: Date | null; periodoTermino: Date | null; paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; teacherConfirmedAt: Date | null }
+    type PmRow = {
+      teacherId: string
+      periodoInicio: Date | null
+      periodoTermino: Date | null
+      paymentStatus: string | null
+      valorPorPeriodo: unknown
+      valorExtra: unknown
+      teacherConfirmedAt: Date | null
+      proofSentAt: Date | null
+    }
     let periodEndsInMonthMap = new Map<string, PmRow>()
+    // Mapa: teacherId|year|month -> fileUrl do comprovante anexado.
+    const proofFileByTeacherYearMonth = new Map<string, string>()
     if (useMonthMode && year != null && month != null) {
       const firstDaySel = firstDayOfMonth(new Date(year, month - 1, 1))
       const lastDaySel = lastDayOfMonth(new Date(year, month - 1, 1))
@@ -110,9 +124,36 @@ export async function GET(request: NextRequest) {
           valorPorPeriodo: true,
           valorExtra: true,
           teacherConfirmedAt: true,
+          proofSentAt: true,
         },
       })
       rowsEnding.forEach((r) => periodEndsInMonthMap.set(r.teacherId, r as PmRow))
+
+      // Comprovante: último evento PROOF_SENT ou PROOF_REJECTED por professor/mês (mais recente vence).
+      const proofLogs = await prisma.financeAuditLog.findMany({
+        where: {
+          entityType: 'TEACHER',
+          entityId: { in: teachers.map((t) => t.id) },
+          action: { in: ['PROOF_SENT', 'PROOF_REJECTED'] },
+        },
+        orderBy: { criadoEm: 'desc' },
+        take: 800,
+        select: { entityId: true, action: true, metadata: true },
+      })
+
+      const proofLogsByTeacher = new Map<string, { action: string; metadata: unknown }[]>()
+      for (const l of proofLogs) {
+        const arr = proofLogsByTeacher.get(l.entityId) ?? []
+        arr.push({ action: l.action, metadata: l.metadata })
+        proofLogsByTeacher.set(l.entityId, arr)
+      }
+      for (const t of teachers) {
+        const mine = proofLogsByTeacher.get(t.id) ?? []
+        const url = resolveTeacherProofFileUrlFromAuditLogs(mine, year!, month!)
+        if (url) {
+          proofFileByTeacherYearMonth.set(`${t.id}|${year}|${month}`, url)
+        }
+      }
     }
 
     const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
@@ -141,14 +182,30 @@ export async function GET(request: NextRequest) {
     } else {
       globalStart = selCal.startMs
       globalEndExclusive = selCal.endExclusiveMs
+      const mb = selCal
       for (const t of teachers) {
         const rowEndsInMonth = periodEndsInMonthMap.get(t.id)
         const pmFallback = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
           ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
           : null
         const source = rowEndsInMonth ?? pmFallback
-        const b =
-          teacherPaymentPeriodBoundsUtc(source?.periodoInicio ?? null, source?.periodoTermino ?? null) ?? selCal
+        const due = t.paymentDueDay
+        let b: { startMs: number; endExclusiveMs: number } | null = null
+        if (due != null && due >= 1 && due <= 31) {
+          const p = teacherPaymentBoundsFromDueDay(year!, month!, due)
+          b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
+        }
+        if (!b) {
+          b =
+            resolveTeacherPaymentMonthBoundsUtc(year!, month!, source?.periodoInicio ?? null, source?.periodoTermino ?? null) ??
+            teacherPaymentPeriodBoundsUtc(source?.periodoInicio ?? null, source?.periodoTermino ?? null) ??
+            selCal
+        }
+        if (b.startMs >= b.endExclusiveMs) b = selCal
+        // Linha de TeacherPaymentMonth com datas fora do mês visualizado: usar mês civil (evita sumir da lista).
+        const overlapsMonth =
+          b.endExclusiveMs > mb.startMs && b.startMs < mb.endExclusiveMs
+        if (!overlapsMonth) b = selCal
         if (b.startMs < globalStart) globalStart = b.startMs
         if (b.endExclusiveMs > globalEndExclusive) globalEndExclusive = b.endExclusiveMs
         teacherPeriods.push({ id: t.id, startMs: b.startMs, endExclusiveMs: b.endExclusiveMs })
@@ -221,7 +278,15 @@ export async function GET(request: NextRequest) {
       const valorPorHora = t.valorPorHora != null ? Number(t.valorPorHora) : 0
       const pm = useMonthMode
         ? (periodEndsInMonthMap.get(t.id) ?? ('paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
-            ? (t.paymentMonths[0] as { paymentStatus: string | null; valorPorPeriodo: unknown; valorExtra: unknown; periodoInicio: Date | null; periodoTermino: Date | null; teacherConfirmedAt: Date | null })
+            ? (t.paymentMonths[0] as {
+                paymentStatus: string | null
+                valorPorPeriodo: unknown
+                valorExtra: unknown
+                periodoInicio: Date | null
+                periodoTermino: Date | null
+                teacherConfirmedAt: Date | null
+                proofSentAt: Date | null
+              })
             : null))
         : null
 
@@ -231,9 +296,24 @@ export async function GET(request: NextRequest) {
       const valorExtra = useMonthMode && pm?.valorExtra != null
         ? Number(pm.valorExtra)
         : (t.valorExtra != null ? Number(t.valorExtra) : 0)
-      const statusPagamento = useMonthMode && pm?.paymentStatus === 'PAGO'
-        ? 'PAGO'
-        : (useMonthMode ? 'EM_ABERTO' : (t.periodoPagamentoPago ? 'PAGO' : 'EM_ABERTO'))
+      const rawPay = pm?.paymentStatus
+      const proofFileUrlRow =
+        useMonthMode && year != null && month != null
+          ? proofFileByTeacherYearMonth.get(`${t.id}|${year}|${month}`) ?? null
+          : null
+
+      const statusPagamento =
+        useMonthMode && rawPay === 'PAGO'
+          ? 'PAGO'
+          : useMonthMode && rawPay === 'NF_OK_AGUARDANDO'
+            ? 'NF_OK_AGUARDANDO'
+            : useMonthMode && rawPay === 'AGUARDANDO_REENVIO'
+              ? 'AGUARDANDO_REENVIO'
+              : useMonthMode
+                ? 'EM_ABERTO'
+                : t.periodoPagamentoPago
+                  ? 'PAGO'
+                  : 'EM_ABERTO'
 
       const { totalHorasRegistradas, valorAPagar } = computeValorAPagar({
         records: filteredRecords,
@@ -259,8 +339,8 @@ export async function GET(request: NextRequest) {
       }
       const totalHorasEstimadas = Math.round((totalMinutosEstimados / 60) * 100) / 100
 
-      const dataInicioISO = ymdInTZ(new Date(period.startMs))
-      const dataTerminoISO = ymdInTZ(new Date(period.endExclusiveMs - 1))
+      const dataInicioISO = ymdUtc(new Date(period.startMs))
+      const dataTerminoISO = ymdUtc(new Date(period.endExclusiveMs - 1))
 
       return {
         id: t.id,
@@ -277,8 +357,15 @@ export async function GET(request: NextRequest) {
         valorAPagar,
         metodoPagamento: t.metodoPagamento ?? null,
         infosPagamento: t.infosPagamento ?? null,
-        statusPagamento: statusPagamento as 'PAGO' | 'EM_ABERTO',
-        pagamentoProntoParaFazer: !!(pm?.teacherConfirmedAt),
+        statusPagamento: statusPagamento as
+          | 'PAGO'
+          | 'EM_ABERTO'
+          | 'NF_OK_AGUARDANDO'
+          | 'AGUARDANDO_REENVIO',
+        pagamentoProntoParaFazer:
+          !!(pm?.teacherConfirmedAt) && statusPagamento === 'EM_ABERTO' && !!proofFileUrlRow,
+        proofSentAt: useMonthMode ? (pm?.proofSentAt ? pm.proofSentAt.toISOString() : null) : null,
+        proofFileUrl: proofFileUrlRow,
         hasFinanceObservations: ((t as { _count?: { financeObservations: number } })._count?.financeObservations ?? 0) > 0,
         criadoEm: t.criadoEm.toISOString(),
       }
@@ -288,13 +375,15 @@ export async function GET(request: NextRequest) {
     // Ex.: período 24/02–24/03 → aparece em fev e mar; período 23/03–23/04 → aparece em mar e abr (Maria em ambos).
     let professoresFinais = list
     if (useMonthMode && year != null && month != null) {
-      const primeiroDia = firstDayOfMonth(new Date(year, month - 1, 1)).getTime()
-      const ultimoDia = lastDayOfMonth(new Date(year, month - 1, 1)).getTime()
+      const monthBounds = calendarMonthBoundsUtc(year, month)
       professoresFinais = list.filter((p) => {
         const period = teacherPeriods.find((tp) => tp.id === p.id)
         if (!period) return false
-        // Período sobrepõe o mês se: início do período <= fim do mês E fim do período >= início do mês
-        return period.startMs <= ultimoDia && period.endExclusiveMs > primeiroDia
+        // Sobreposição [início, fim) com o mês civil em UTC (mesma convenção de selCal).
+        return (
+          period.startMs < monthBounds.endExclusiveMs &&
+          period.endExclusiveMs > monthBounds.startMs
+        )
       })
     }
 

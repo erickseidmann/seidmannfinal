@@ -577,7 +577,8 @@ export default function CalendarioProfessorPage() {
   const weekStart = useMemo(() => getStartOfWeekInTZ(currentDate), [currentDate])
   
   // Verificar se o professor está disponível em um horário específico
-  const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 60): boolean => {
+  // Cada linha da grade = 30 min; a disponibilidade deve caber nesse intervalo (não em 60 min).
+  const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 30): boolean => {
     // Se não há slots cadastrados, sempre disponível
     if (!currentTeacherId || teacherSlots.length === 0) {
       return true
@@ -587,7 +588,7 @@ export default function CalendarioProfessorPage() {
     const slotStartMinutes = slotHour * 60 + slotMinute
     const slotEndMinutes = slotStartMinutes + durationMinutes
 
-    // Verificar se o slot está dentro de algum slot de disponibilidade do professor
+    // [start, end) contido em [slot.start, slot.end) — mesma convenção da agenda (intervalos de 30 em 30)
     return teacherSlots.some(
       (slot) =>
         slot.dayOfWeek === dayOfWeek &&

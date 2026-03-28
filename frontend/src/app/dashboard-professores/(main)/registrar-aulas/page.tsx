@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ClipboardList, Loader2, CheckCircle, Circle, ChevronLeft, ChevronRight, BookOpen, Clock, Wallet, FileEdit, CalendarX, Pencil } from 'lucide-react'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { formatTimeInTZ, formatDateTimeInTZ, toDateKeyInTZ } from '@/lib/datetime'
+import { resolveProfessorFinanceiroForToday } from '@/lib/professor-fin-period'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
@@ -95,6 +96,18 @@ function formatDateOnly(iso: string, locale: string): string {
   }).format(d)
 }
 
+/** Formata YYYY-MM-DD para o texto do período (meio-dia local, alinhado ao calendário BR). */
+function formatPeriodDayYmd(ymd: string, locale: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  if (!y || !m || !d) return ymd
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: BRAZIL_TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date(y, m - 1, d, 12, 0, 0))
+}
+
 function getLessonStudentLabel(l: Lesson): string {
   const enr = l.enrollment
   if (enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()) {
@@ -103,6 +116,26 @@ function getLessonStudentLabel(l: Lesson): string {
     return members ? `${groupName} — ${members}` : groupName
   }
   return enr?.nome ?? '—'
+}
+
+/** Mesma regra da coluna "Pendente" / linha clicável: ainda sem registro e já pode registrar. */
+function isLessonOpenPending(
+  lesson: Lesson,
+  holidays: Set<string>,
+  periodPaid: boolean,
+  paidPeriodRange: { start: number; end: number } | null
+): boolean {
+  if (lesson.record?.id) return false
+  if (lesson.status === 'CANCELLED') return false
+  if (holidays.has(toDateKeyInTZ(lesson.startAt))) return false
+  const lessonStartMs = new Date(lesson.startAt).getTime()
+  if (lessonStartMs > Date.now()) return false
+  const isInPaidPeriod =
+    !!paidPeriodRange &&
+    lessonStartMs >= paidPeriodRange.start &&
+    lessonStartMs <= paidPeriodRange.end
+  if (periodPaid && isInPaidPeriod) return false
+  return true
 }
 
 export default function RegistrarAulasPage() {
@@ -137,52 +170,23 @@ export default function RegistrarAulasPage() {
   const [periodPaid, setPeriodPaid] = useState(false)
   const [registeringLessonId, setRegisteringLessonId] = useState<string | null>(null)
 
+  /** Alinha ano/mês com o mesmo resolvedor do início do professor: período aberto atual ou próximo se o de hoje já está PAGO. */
   const resolveCurrentPeriodMonth = useCallback(async () => {
-    const current = { year: now.getFullYear(), month: now.getMonth() + 1 }
-    const next = current.month === 12 ? { year: current.year + 1, month: 1 } : { year: current.year, month: current.month + 1 }
-    const prev = current.month === 1 ? { year: current.year - 1, month: 12 } : { year: current.year, month: current.month - 1 }
-    const candidates = [current, next, prev]
-
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-
     try {
-      const results = await Promise.all(
-        candidates.map(async (c) => {
-          const res = await fetch(`/api/professor/financeiro?year=${c.year}&month=${c.month}`, { credentials: 'include' })
-          const json = await res.json().catch(() => ({}))
-          if (!res.ok || !json?.ok || !json?.data?.dataInicio || !json?.data?.dataTermino) {
-            return null
-          }
-          return {
-            ...c,
-            start: String(json.data.dataInicio),
-            end: String(json.data.dataTermino),
-            status: String(json.data.statusPagamento || 'EM_ABERTO'),
-          }
-        })
-      )
-      const valid = results.filter((r): r is NonNullable<typeof r> => !!r)
-      if (valid.length > 0) {
-        const containingOpen = valid.find((r) => r.start <= todayKey && todayKey <= r.end && r.status !== 'PAGO')
-        if (containingOpen) {
-          if (selectedYear !== containingOpen.year) setSelectedYear(containingOpen.year)
-          if (selectedMonth !== containingOpen.month) setSelectedMonth(containingOpen.month)
-          setInitialMonthResolved(true)
-          return
-        }
-        const containingAny = valid.find((r) => r.start <= todayKey && todayKey <= r.end)
-        if (containingAny) {
-          if (selectedYear !== containingAny.year) setSelectedYear(containingAny.year)
-          if (selectedMonth !== containingAny.month) setSelectedMonth(containingAny.month)
-          setInitialMonthResolved(true)
-          return
+      const fj = await resolveProfessorFinanceiroForToday(fetch)
+      if (fj?.ok && fj.data) {
+        const y = fj.data.year
+        const m = fj.data.month
+        if (typeof y === 'number' && typeof m === 'number') {
+          setSelectedYear(y)
+          setSelectedMonth(m)
         }
       }
     } catch {
-      // fallback para mês atual
+      // mantém mês civil inicial
     }
     setInitialMonthResolved(true)
-  }, [now, selectedMonth, selectedYear])
+  }, [])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -226,19 +230,10 @@ export default function RegistrarAulasPage() {
       const periodStartDate = new Date(start + 'T00:00:00.000Z')
       const periodEndDate = new Date(end + 'T23:59:59.999Z')
 
-      // Para permitir que o professor registre aulas DEPOIS do fim do período já pago,
-      // buscamos aulas até o fim do mês de calendário selecionado quando o período está pago.
-      let lessonsStartDate = periodStartDate
-      let lessonsEndDate = periodEndDate
-      if (isPaid) {
-        const y = selectedYear
-        const m = selectedMonth
-        const lastDay = new Date(y, m, 0).getDate()
-        lessonsEndDate = new Date(`${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59.999Z`)
-      }
-
+      // Sempre o intervalo exato do período de pagamento (ex.: venc. dia 12 → 12/fev–12/mar),
+      // nunca o mês civil inteiro.
       const lessonsRes = await fetch(
-        `/api/professor/lessons?start=${lessonsStartDate.toISOString()}&end=${lessonsEndDate.toISOString()}`,
+        `/api/professor/lessons?start=${periodStartDate.toISOString()}&end=${periodEndDate.toISOString()}`,
         { credentials: 'include' }
       )
       const lessonsJson = await lessonsRes.json()
@@ -250,8 +245,8 @@ export default function RegistrarAulasPage() {
 
       // Carregar feriados do período para excluir do cálculo de pendentes
       try {
-        const startKey = toDateKeyInTZ(startDate)
-        const endKey = toDateKeyInTZ(endDate)
+        const startKey = toDateKeyInTZ(start)
+        const endKey = toDateKeyInTZ(end)
         const holidaysRes = await fetch(`/api/professor/holidays?start=${startKey}&end=${endKey}`, {
           credentials: 'include',
         })
@@ -284,10 +279,20 @@ export default function RegistrarAulasPage() {
     fetchData()
   }, [initialMonthResolved, fetchData])
 
+  /** Mês civil de referência para o título: fim do período de pagamento (ex.: 28/02–31/03 → março), não o mês do TeacherPaymentMonth na API (ex.: abril). */
   const monthYearLabel = useMemo(() => {
+    if (periodEnd) {
+      const parts = periodEnd.split('-').map((x) => parseInt(x, 10))
+      const y = parts[0]
+      const m = parts[1]
+      if (Number.isFinite(y) && Number.isFinite(m) && m >= 1 && m <= 12) {
+        const d = new Date(y, m - 1, 15)
+        return new Intl.DateTimeFormat(dateLocale, { month: 'long', year: 'numeric' }).format(d)
+      }
+    }
     const d = new Date(selectedYear, selectedMonth - 1, 15)
     return new Intl.DateTimeFormat(dateLocale, { month: 'long', year: 'numeric' }).format(d)
-  }, [selectedYear, selectedMonth, dateLocale])
+  }, [periodEnd, selectedYear, selectedMonth, dateLocale])
 
   const goPrevMonth = () => {
     if (selectedMonth === 1) {
@@ -307,13 +312,28 @@ export default function RegistrarAulasPage() {
     }
   }
 
-  const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1
+  const isCurrentPaymentPeriod = useMemo(() => {
+    if (!periodStart || !periodEnd) return false
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    return periodStart <= todayKey && todayKey <= periodEnd
+  }, [periodStart, periodEnd])
   const paidPeriodRange = useMemo(() => {
     if (!periodPaid || !periodStart || !periodEnd) return null
     const start = new Date(periodStart + 'T00:00:00.000Z').getTime()
     const end = new Date(periodEnd + 'T23:59:59.999Z').getTime()
     return { start, end }
   }, [periodPaid, periodStart, periodEnd])
+
+  /** Período já vem filtrado pela API; em aberto (Pendente) primeiro, depois por data/hora. */
+  const sortedLessons = useMemo(() => {
+    return [...lessons].sort((a, b) => {
+      const oa = isLessonOpenPending(a, holidays, periodPaid, paidPeriodRange)
+      const ob = isLessonOpenPending(b, holidays, periodPaid, paidPeriodRange)
+      if (oa !== ob) return oa ? -1 : 1
+      return new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
+    })
+  }, [lessons, holidays, periodPaid, paidPeriodRange])
 
   const pendingLessons = useMemo(() => {
     const nowMs = Date.now()
@@ -581,9 +601,10 @@ export default function RegistrarAulasPage() {
   }
 
   const hasPeriod = periodStart != null && periodEnd != null
-  const periodLabel = hasPeriod
-    ? `${periodStart.split('-').reverse().join('/')} – ${periodEnd.split('-').reverse().join('/')}`
-    : null
+  const periodLabel = useMemo(() => {
+    if (!periodStart || !periodEnd) return null
+    return `${formatPeriodDayYmd(periodStart, dateLocale)} – ${formatPeriodDayYmd(periodEnd, dateLocale)}`
+  }, [periodStart, periodEnd, dateLocale])
 
   return (
     <div className="space-y-6">
@@ -659,7 +680,7 @@ export default function RegistrarAulasPage() {
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
-        {isCurrentMonth && (
+        {isCurrentPaymentPeriod && (
           <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
             {t('professor.registerClasses.currentMonth')}
           </span>
@@ -688,7 +709,7 @@ export default function RegistrarAulasPage() {
           </div>
         ) : error ? (
           <div className="px-4 py-8 text-center text-red-600">{error}</div>
-        ) : lessons.length === 0 ? (
+        ) : sortedLessons.length === 0 ? (
           <div className="px-4 py-8 text-center text-gray-500">
             {t('professor.registerClasses.noLessons')}
           </div>
@@ -704,7 +725,7 @@ export default function RegistrarAulasPage() {
                 </tr>
               </thead>
               <tbody>
-                {lessons.map((lesson) => {
+                {sortedLessons.map((lesson) => {
                   const hasRecord = !!lesson.record?.id
                   const isCancelled = lesson.status === 'CANCELLED'
                   const isHoliday = holidays.has(toDateKeyInTZ(lesson.startAt))

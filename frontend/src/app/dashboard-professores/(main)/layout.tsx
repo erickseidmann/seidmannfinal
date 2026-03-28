@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import ProfessorHeader from '@/components/professor/ProfessorHeader'
@@ -46,7 +46,13 @@ export default function DashboardProfessoresMainLayout({
   const [loading, setLoading] = useState(true)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  /** Mobile: fechado por padrão; a partir de md (768px): aberto. */
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  useLayoutEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    setSidebarOpen(mq.matches)
+  }, [])
 
   useEffect(() => {
     fetch('/api/professor/me', { credentials: 'include' })
@@ -172,6 +178,11 @@ export default function DashboardProfessoresMainLayout({
               <Link
                 key={href}
                 href={href}
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
+                    setSidebarOpen(false)
+                  }
+                }}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-brand-orange/10 text-brand-orange'

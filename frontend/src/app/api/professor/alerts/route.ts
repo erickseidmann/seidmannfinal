@@ -6,6 +6,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import {
+  cutoffDateProfessorHomeFeed,
+  cutoffDateProfessorReadAlertsStillVisible,
+} from '@/lib/professor-home-feed'
+import { findTeacherAlertsForProfessorWidgets } from '@/lib/prisma-teacher-alert-enrollment-column'
+import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert'
 import { requireTeacher } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -35,36 +41,29 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 15)
+    const feedCutoff = cutoffDateProfessorHomeFeed()
+    const readStillVisibleSince = cutoffDateProfessorReadAlertsStillVisible()
+    const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT', 'PROOF_RESEND_NEEDED'] as const
 
-    // Só exibir no Início: pagamento enviado, novo anúncio, novo aluno (apenas últimos 15 dias)
-    // Notificações lidas há mais de 2 dias não são exibidas
-    const twoDaysAgo = new Date()
-    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
-    const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT'] as const
-    const alerts = await prisma.teacherAlert.findMany({
-      where: {
+    // Janela de 30 dias; notificações já lidas somem após 2 dias
+    const rawAlerts = await findTeacherAlertsForProfessorWidgets(
+      prisma,
+      {
         teacherId: teacher.id,
         isActive: true,
         type: { in: [...TIPOS_NOTIFICACAO] },
-        criadoEm: { gte: cutoff },
+        criadoEm: { gte: feedCutoff },
         OR: [
           { readAt: null },
-          { readAt: { gte: twoDaysAgo } },
+          { readAt: { gte: readStillVisibleSince } },
         ],
       },
-      orderBy: { criadoEm: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        message: true,
-        type: true,
-        level: true,
-        readAt: true,
-        criadoEm: true,
-      },
-    })
+      50
+    )
+
+    const alerts = await Promise.all(
+      rawAlerts.map((a) => enrichNewStudentTeacherAlertRow(prisma, teacher.id, a))
+    )
 
     const unreadCount = alerts.filter((a) => a.readAt == null).length
 

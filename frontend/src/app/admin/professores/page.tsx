@@ -15,7 +15,8 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import StatCard from '@/components/admin/StatCard'
 import { validateMeetingLink } from '@/lib/meeting-link'
 
@@ -58,6 +59,24 @@ interface Teacher {
 }
 
 const TEACHER_COLUMNS_STORAGE_KEY = 'seidmann_admin_teacher_columns'
+
+function AvailabilityLegendSwatch({ variant }: { variant: 'available' | 'unavailable' | 'mixed' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center justify-center w-7 h-7 rounded-md border shadow-sm shrink-0',
+        variant === 'available' && 'bg-emerald-500 border-emerald-600 text-white',
+        variant === 'unavailable' && 'bg-red-500 border-red-600 text-white',
+        variant === 'mixed' && 'bg-amber-400 border-amber-500 text-amber-950'
+      )}
+      aria-hidden
+    >
+      {variant === 'available' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+      {variant === 'unavailable' && <X className="w-3.5 h-3.5 stroke-[3]" />}
+      {variant === 'mixed' && <Minus className="w-3.5 h-3.5 stroke-[3]" />}
+    </span>
+  )
+}
 
 export default function AdminProfessoresPage() {
   const router = useRouter()
@@ -828,11 +847,13 @@ export default function AdminProfessoresPage() {
     })
   }
 
-  const isWeekdayHourChecked = (startMinutes: number): boolean => {
-    // Dias úteis: Segunda (1) a Sexta (5)
-    const weekdays = [1, 2, 3, 4, 5]
-    const keys = weekdays.map((dayOfWeek) => `${dayOfWeek}-${startMinutes}`)
-    return keys.every((key) => availabilityChecked.has(key))
+  /** Cabeçalho Seg–Sex: mesmo padrão visual que Controlar minha agenda (professor) */
+  const weekdayColumnVisualState = (startMinutes: number): 'all' | 'none' | 'mixed' => {
+    const keys = [1, 2, 3, 4, 5].map((d) => `${d}-${startMinutes}`)
+    const n = keys.filter((k) => availabilityChecked.has(k)).length
+    if (n === 5) return 'all'
+    if (n === 0) return 'none'
+    return 'mixed'
   }
 
   /** Converte o set de checkboxes em slots (intervalos consecutivos por dia) */
@@ -2384,6 +2405,20 @@ export default function AdminProfessoresPage() {
               <p className="text-sm text-gray-600">
                 Por padrão o professor está disponível em <strong>todos os horários</strong>. Marque os horários em que ele pode dar aula; fora desses períodos aparecerá como &quot;Indisponível&quot; ao agendar.
               </p>
+              <ul className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-1 text-xs text-gray-800">
+                <li className="flex gap-2 items-center min-w-0">
+                  <AvailabilityLegendSwatch variant="available" />
+                  <span className="font-medium">Disponível</span>
+                </li>
+                <li className="flex gap-2 items-center min-w-0">
+                  <AvailabilityLegendSwatch variant="unavailable" />
+                  <span className="font-medium">Indisponível</span>
+                </li>
+                <li className="flex gap-2 items-center min-w-0">
+                  <AvailabilityLegendSwatch variant="mixed" />
+                  <span className="font-medium">Misto (atalho Seg–Sex)</span>
+                </li>
+              </ul>
               {availabilityConflicts && availabilityConflicts.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                   <p className="text-sm font-semibold text-red-800 mb-2">
@@ -2440,28 +2475,42 @@ export default function AdminProfessoresPage() {
                   Carregando...
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-4 sm:-mx-2">
+                <div className="overflow-x-auto -mx-4 sm:-mx-2 rounded-xl border border-gray-200 bg-white">
                   <div className="inline-block min-w-full">
                     <table className="w-full border-collapse text-xs sm:text-sm min-w-[800px] sm:min-w-[1000px] lg:min-w-[1400px]">
                       <thead>
-                        <tr className="border-b border-gray-200">
-                          <th className="text-left py-2 px-1 sm:px-2 font-semibold text-gray-700 w-12 sm:w-14 sticky left-0 bg-white z-10">Dia</th>
-                          {AVAIL_HORAS.map((m) => (
-                            <th key={m} className="py-2 px-0.5 sm:px-1 text-center font-semibold text-gray-600 w-8 sm:w-12 relative">
-                              <div className="flex flex-col items-center gap-0.5 sm:gap-1">
-                                <span className="text-[10px] sm:text-xs">{minutesToTime(m)}</span>
-                                <label className="inline-flex items-center justify-center cursor-pointer" title="Marcar/desmarcar Seg-Sex">
-                                  <input
-                                    type="checkbox"
-                                    checked={isWeekdayHourChecked(m)}
-                                    onChange={() => toggleAvailabilityForWeekdays(m)}
-                                    className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange w-3 h-3 sm:w-3.5 sm:h-3.5"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </label>
-                              </div>
-                            </th>
-                          ))}
+                        <tr className="border-b border-gray-200 bg-gray-50/80">
+                          <th className="text-left py-2 px-1 sm:px-2 font-semibold text-gray-700 w-12 sm:w-14 sticky left-0 bg-gray-50/80 z-10">
+                            Dia
+                          </th>
+                          {AVAIL_HORAS.map((m) => {
+                            const wk = weekdayColumnVisualState(m)
+                            return (
+                              <th key={m} className="py-2 px-0.5 sm:px-1 text-center font-semibold text-gray-600 w-8 sm:w-12 relative">
+                                <div className="flex flex-col items-center gap-0.5 sm:gap-1">
+                                  <span className="text-[10px] sm:text-xs">{minutesToTime(m)}</span>
+                                  <button
+                                    type="button"
+                                    title="Marcar/desmarcar Segunda a Sexta neste horário"
+                                    aria-label="Alternar Segunda a Sexta neste horário"
+                                    onClick={() => toggleAvailabilityForWeekdays(m)}
+                                    className={cn(
+                                      'inline-flex items-center justify-center w-7 h-6 sm:w-8 sm:h-7 rounded border shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1',
+                                      wk === 'all' &&
+                                        'bg-emerald-500 border-emerald-600 text-white hover:bg-emerald-600 focus:ring-emerald-400',
+                                      wk === 'none' && 'bg-red-500 border-red-600 text-white hover:bg-red-600 focus:ring-red-400',
+                                      wk === 'mixed' &&
+                                        'bg-amber-400 border-amber-500 text-amber-950 hover:bg-amber-500 focus:ring-amber-400'
+                                    )}
+                                  >
+                                    {wk === 'all' && <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-[3]" />}
+                                    {wk === 'none' && <X className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-[3]" />}
+                                    {wk === 'mixed' && <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-[3]" />}
+                                  </button>
+                                </div>
+                              </th>
+                            )
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -2470,17 +2519,27 @@ export default function AdminProfessoresPage() {
                             <td className="py-1.5 px-1 sm:px-2 font-medium text-gray-800 sticky left-0 bg-white z-10">{label}</td>
                             {AVAIL_HORAS.map((startMinutes) => {
                               const key = `${dayOfWeek}-${startMinutes}`
-                              const checked = availabilityChecked.has(key)
+                              const available = availabilityChecked.has(key)
                               return (
                                 <td key={key} className="py-1 px-0.5 sm:px-1 text-center">
-                                  <label className="inline-flex items-center justify-center w-8 h-7 sm:w-10 sm:h-8 cursor-pointer rounded border border-gray-200 hover:bg-gray-100">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleAvailabilityCell(dayOfWeek, startMinutes)}
-                                      className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange w-3 h-3 sm:w-4 sm:h-4"
-                                    />
-                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleAvailabilityCell(dayOfWeek, startMinutes)}
+                                    aria-label={available ? 'Disponível' : 'Indisponível'}
+                                    aria-pressed={available}
+                                    className={cn(
+                                      'inline-flex items-center justify-center w-8 h-7 sm:w-10 sm:h-8 rounded border text-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1',
+                                      available
+                                        ? 'bg-emerald-500 border-emerald-600 hover:bg-emerald-600 focus:ring-emerald-400'
+                                        : 'bg-red-500 border-red-600 hover:bg-red-600 focus:ring-red-400'
+                                    )}
+                                  >
+                                    {available ? (
+                                      <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[3]" />
+                                    ) : (
+                                      <X className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[3]" />
+                                    )}
+                                  </button>
                                 </td>
                               )
                             })}

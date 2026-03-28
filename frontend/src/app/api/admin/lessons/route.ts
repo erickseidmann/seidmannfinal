@@ -21,6 +21,8 @@ function formatDataHora(d: Date): string {
     ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 import { prisma } from '@/lib/prisma'
+import { isTeacherAlertEnrollmentIdColumnError } from '@/lib/prisma-teacher-alert-enrollment-column'
+import { buildNewStudentTeacherAlertMessage } from '@/lib/teacher-new-student-alert'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
 
@@ -533,17 +535,39 @@ export async function POST(request: NextRequest) {
 
     // Notificar o professor: tem um novo aluno (primeira aula com esse aluno) – aparece no Início
     if (isFirstLessonForTeacherAndEnrollment && prisma.teacherAlert && lessonsCreated.length > 0) {
-      const first = lessonsCreated[0]
-      const nomeAluno = (first as unknown as { enrollment?: { nome?: string } }).enrollment?.nome ?? 'Aluno'
-      await prisma.teacherAlert.create({
-        data: {
-          teacherId,
-          message: `Tem um novo aluno: ${nomeAluno}.`,
-          type: 'NEW_STUDENT',
-          level: 'INFO',
-          createdById: auth.session?.sub ?? null,
-        },
+      const firstLessonStartAt = lessonsCreated.reduce(
+        (min, l) => (l.startAt < min ? l.startAt : min),
+        lessonsCreated[0].startAt
+      )
+      const message = await buildNewStudentTeacherAlertMessage(prisma, {
+        teacherId,
+        enrollmentId,
+        firstLessonStartAt,
       })
+
+      try {
+        await prisma.teacherAlert.create({
+          data: {
+            teacherId,
+            enrollmentId,
+            message,
+            type: 'NEW_STUDENT',
+            level: 'INFO',
+            createdById: auth.session?.sub ?? null,
+          },
+        })
+      } catch (e) {
+        if (!isTeacherAlertEnrollmentIdColumnError(e)) throw e
+        await prisma.teacherAlert.create({
+          data: {
+            teacherId,
+            message,
+            type: 'NEW_STUDENT',
+            level: 'INFO',
+            createdById: auth.session?.sub ?? null,
+          },
+        })
+      }
     }
 
     // E-mail: aula(s) confirmada(s) para aluno e professor

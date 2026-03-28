@@ -1,19 +1,17 @@
 /**
  * POST /api/professor/financeiro/enviar-comprovante
- * Professor envia nota fiscal ou recibo (anexo) para financeiro@seidmanninstitute.com.
- * Após enviar, marca proofSentAt no TeacherPaymentMonth para o período, permitindo clicar em "Confirmar valor a receber".
+ * Professor anexa nota fiscal ou recibo no sistema.
+ * Após anexar, marca proofSentAt no TeacherPaymentMonth para o período, permitindo clicar em "Confirmar valor a receber".
  */
 
+import { mkdir, writeFile } from 'fs/promises'
+import { join } from 'path'
+import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
-import { sendEmail, mensagemNotaFiscalRecibo } from '@/lib/email'
 import { logFinanceAction } from '@/lib/finance'
 
-const EMAIL_FINANCEIRO_PADRAO = 'financeiro@seidmanninstitute.com'
-const EMAIL_FINANCEIRO =
-  process.env.FINANCEIRO_EMAIL?.trim() ||
-  EMAIL_FINANCEIRO_PADRAO
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -22,6 +20,19 @@ const ALLOWED_TYPES = [
   'image/gif',
   'image/webp',
 ]
+
+function sanitizeFileName(name: string): string {
+  return name
+    .replace(/[/\\:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getExtension(filename: string): string {
+  const i = filename.lastIndexOf('.')
+  if (i <= 0) return ''
+  return filename.slice(i)
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -82,29 +93,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const ext = getExtension(file.name) || '.bin'
+    const safeTeacher = sanitizeFileName(teacher.nome).toLowerCase().replace(/\s+/g, '-')
+    const filename = `${safeTeacher}-${year}-${String(month).padStart(2, '0')}-${randomUUID()}${ext}`
+    const dir = join(process.cwd(), 'public', 'uploads', 'teacher-proofs')
+    await mkdir(dir, { recursive: true })
+    const fullPath = join(dir, filename)
     const buffer = Buffer.from(await file.arrayBuffer())
-    const filename = file.name?.replace(/[^a-zA-Z0-9._-]/g, '_') || 'comprovante.pdf'
-
-    const { subject, text } = mensagemNotaFiscalRecibo({
-      nomeProfessor: teacher.nome,
-      year,
-      month,
-      mensagemOpcional: mensagem,
-    })
-
-    const sent = await sendEmail({
-      to: EMAIL_FINANCEIRO,
-      subject,
-      text,
-      attachments: [{ filename, content: buffer }],
-    })
-
-    if (!sent) {
-      return NextResponse.json(
-        { ok: false, message: 'Não foi possível enviar o e-mail. Tente novamente ou entre em contato com o suporte.' },
-        { status: 500 }
-      )
-    }
+    await writeFile(fullPath, buffer)
+    const fileUrl = `/uploads/teacher-proofs/${filename}`
 
     await prisma.teacherPaymentMonth.upsert({
       where: {
@@ -121,17 +118,31 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    const pmAfter = await prisma.teacherPaymentMonth.findUnique({
+      where: { teacherId_year_month: { teacherId: teacher.id, year, month } },
+      select: { paymentStatus: true },
+    })
+    if (pmAfter?.paymentStatus === 'AGUARDANDO_REENVIO') {
+      await prisma.teacherPaymentMonth.update({
+        where: { teacherId_year_month: { teacherId: teacher.id, year, month } },
+        data: { paymentStatus: 'EM_ABERTO' },
+      })
+    }
+
     logFinanceAction({
       entityType: 'TEACHER',
       entityId: teacher.id,
       action: 'PROOF_SENT',
       performedBy: auth.session?.userId ?? null,
-      metadata: { year, month },
+      metadata: { year, month, fileUrl, mensagem },
     })
 
     return NextResponse.json({
       ok: true,
-      data: { message: 'Comprovante enviado com sucesso. Agora você pode confirmar o valor a receber.' },
+      data: {
+        message: 'Comprovante anexado no sistema com sucesso. Agora você pode confirmar o valor a receber.',
+        fileUrl,
+      },
     })
   } catch (error) {
     console.error('[api/professor/financeiro/enviar-comprovante] Erro:', error)

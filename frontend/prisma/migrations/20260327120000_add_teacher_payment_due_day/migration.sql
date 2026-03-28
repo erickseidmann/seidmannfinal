@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `teachers` ADD COLUMN `payment_due_day` INTEGER NULL;

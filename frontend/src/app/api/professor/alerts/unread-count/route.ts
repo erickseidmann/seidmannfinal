@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { cutoffDateProfessorHomeFeed } from '@/lib/professor-home-feed'
 import { requireTeacher } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -32,17 +33,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: { unreadCount: 0 } })
     }
 
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 15)
+    const feedCutoff = cutoffDateProfessorHomeFeed()
 
-    // Só contar notificações exibidas no Início (apenas últimos 15 dias)
+    // Mesma janela do painel (30 dias)
     const unreadCount = await prisma.teacherAlert.count({
       where: {
         teacherId: teacher.id,
         isActive: true,
         readAt: null,
-        type: { in: ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT'] },
-        criadoEm: { gte: cutoff },
+        type: { in: ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT', 'PROOF_RESEND_NEEDED'] },
+        criadoEm: { gte: feedCutoff },
       },
     })
 

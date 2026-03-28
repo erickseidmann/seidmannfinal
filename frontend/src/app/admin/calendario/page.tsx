@@ -17,6 +17,7 @@ import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
+import { getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -1659,17 +1660,17 @@ export default function AdminCalendarioPage() {
     `${slot.hour.toString().padStart(2, '0')}:${slot.minute.toString().padStart(2, '0')}`
 
   // Verificar se o professor está disponível em um horário específico
-  const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 60): boolean => {
+  // Grade em passos de 30 min — comparar com blocos de 30 min (não 60), alinhado ao America/Sao_Paulo.
+  const isTeacherAvailableAtSlot = useCallback((day: Date, slotHour: number, slotMinute: number, durationMinutes: number = 30): boolean => {
     // Se não há professor selecionado, sempre disponível
     if (!selectedTeacherId || selectedTeacherSlots.length === 0) {
       return true
     }
 
-    const dayOfWeek = day.getDay()
+    const dayOfWeek = getDayOfWeekInTZ(day)
     const slotStartMinutes = slotHour * 60 + slotMinute
     const slotEndMinutes = slotStartMinutes + durationMinutes
 
-    // Verificar se o slot está dentro de algum slot de disponibilidade do professor
     return selectedTeacherSlots.some(
       (slot) =>
         slot.dayOfWeek === dayOfWeek &&
@@ -1687,18 +1688,21 @@ export default function AdminCalendarioPage() {
   )
 
   const getLessonsForDay = (day: Date) =>
-    visibleLessons.filter((l) => isSameDay(new Date(l.startAt), day))
+    visibleLessons.filter((l) => isSameDayInTZ(l.startAt, day))
 
+  /** Aula no slot de 30 min se o início (horário de Brasília) cai nesse intervalo — evita deslocamento por fuso. */
   const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
-    const slotStart = new Date(day)
-    slotStart.setHours(slotHour, slotMinute, 0, 0)
-    const slotEnd = new Date(day)
-    slotEnd.setHours(slotMinute === 30 ? slotHour + 1 : slotHour, slotMinute === 30 ? 0 : 30, 0, 0)
+    const dayKey = toDateKeyInTZ(day)
     return visibleLessons.filter((l) => {
-      const lessonStart = new Date(l.startAt)
-      const lessonEnd = new Date(lessonStart.getTime() + (l.durationMinutes || 60) * 60 * 1000)
-      // Aula aparece no slot se: começa no slot OU começou antes mas ainda está em andamento
-      return lessonStart < slotEnd && lessonEnd > slotStart
+      if (toDateKeyInTZ(l.startAt) !== dayKey) return false
+      const lessonTime = getTimeInTZ(l.startAt)
+      const slotEndHour = slotMinute === 30 ? slotHour + 1 : slotHour
+      const slotEndMinute = slotMinute === 30 ? 0 : 30
+      if (lessonTime.hour < slotHour) return false
+      if (lessonTime.hour === slotHour && lessonTime.minute < slotMinute) return false
+      if (lessonTime.hour > slotEndHour) return false
+      if (lessonTime.hour === slotEndHour && lessonTime.minute >= slotEndMinute) return false
+      return true
     })
   }
 

@@ -11,7 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw, Pencil } from 'lucide-react'
+import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw, Pencil, FileCheck, RotateCcw } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -39,9 +39,11 @@ interface ProfessorFinanceiro {
   valorAPagar: number
   metodoPagamento: string | null
   infosPagamento: string | null
-  statusPagamento: 'PAGO' | 'EM_ABERTO'
+  statusPagamento: 'PAGO' | 'EM_ABERTO' | 'NF_OK_AGUARDANDO' | 'AGUARDANDO_REENVIO'
   pagamentoProntoParaFazer: boolean
   hasFinanceObservations?: boolean
+  proofSentAt?: string | null
+  proofFileUrl?: string | null
 }
 
 function formatDate(iso: string): string {
@@ -158,7 +160,11 @@ export default function FinanceiroProfessoresPage() {
   const [notifyTeacher, setNotifyTeacher] = useState<ProfessorFinanceiro | null>(null)
   const [notifyMessage, setNotifyMessage] = useState('')
   const [notifyFile, setNotifyFile] = useState<File | null>(null)
+  /** Só marcar PAGO no sistema depois de transferir o valor (envio de e-mail não implica pagamento). */
+  const [notifyMarkPaid, setNotifyMarkPaid] = useState(false)
   const [sendingNotify, setSendingNotify] = useState(false)
+  const [confirmingNfTeacherId, setConfirmingNfTeacherId] = useState<string | null>(null)
+  const [rejectingProofTeacherId, setRejectingProofTeacherId] = useState<string | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
   /** Filtro por status: '' = todos, 'em_aberto' | 'pronto_pagar' | 'pago' */
   const [filterStatus, setFilterStatus] = useState<'' | 'em_aberto' | 'pronto_pagar' | 'pago'>('')
@@ -251,13 +257,13 @@ export default function FinanceiroProfessoresPage() {
   }, [professores])
 
   const { proximoPagamento, atrasados } = useMemo(() => {
-    const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
+    const emAberto = professores.filter((p) => p.statusPagamento !== 'PAGO')
     const proximo = emAberto.filter((p) => isProximoPagamento(getDiaPagamento(p)))
     const atrasadosList = emAberto.filter((p) => isAtrasado(getDiaPagamento(p)))
     return { proximoPagamento: proximo, atrasados: atrasadosList }
   }, [professores])
   const totalEmAberto = useMemo(
-    () => professores.filter((p) => p.statusPagamento === 'EM_ABERTO').length,
+    () => professores.filter((p) => p.statusPagamento !== 'PAGO').length,
     [professores]
   )
 
@@ -265,7 +271,7 @@ export default function FinanceiroProfessoresPage() {
   const { proximaDataPagamento, valorEstimadoProximoPagamento, listaProximaData } = useMemo(() => {
     const hoje = new Date()
     hoje.setHours(0, 0, 0, 0)
-    const emAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO')
+    const emAberto = professores.filter((p) => p.statusPagamento !== 'PAGO')
     const comVencimentoFuturo = emAberto.filter((p) => {
       const termino = new Date(p.dataTermino + 'T12:00:00')
       termino.setHours(0, 0, 0, 0)
@@ -304,7 +310,11 @@ export default function FinanceiroProfessoresPage() {
     } else if (filterStatus === 'pronto_pagar') {
       list = list.filter((p) => p.pagamentoProntoParaFazer && p.statusPagamento === 'EM_ABERTO')
     } else if (filterStatus === 'em_aberto') {
-      list = list.filter((p) => p.statusPagamento === 'EM_ABERTO' && !p.pagamentoProntoParaFazer)
+      list = list.filter(
+        (p) =>
+          p.statusPagamento === 'AGUARDANDO_REENVIO' ||
+          (p.statusPagamento === 'EM_ABERTO' && !p.pagamentoProntoParaFazer)
+      )
     }
 
     // Filtro por data de término (próximos dias)
@@ -345,13 +355,24 @@ export default function FinanceiroProfessoresPage() {
       const bAlerta = !!b.hasFinanceObservations
       if (aAlerta && !bAlerta) return -1
       if (!aAlerta && bAlerta) return 1
-      const aAberto = a.statusPagamento === 'EM_ABERTO'
-      const bAberto = b.statusPagamento === 'EM_ABERTO'
-      if (aAberto && !bAberto) return -1
-      if (!aAberto && bAberto) return 1
+      const aNaoPago = a.statusPagamento !== 'PAGO'
+      const bNaoPago = b.statusPagamento !== 'PAGO'
+      if (aNaoPago && !bNaoPago) return -1
+      if (!aNaoPago && bNaoPago) return 1
       const ta = new Date(a.dataTermino + 'T12:00:00').getTime()
       const tb = new Date(b.dataTermino + 'T12:00:00').getTime()
-      if (aAberto && bAberto) return ta - tb // em aberto: vencimento mais próximo primeiro
+      if (aNaoPago && bNaoPago) {
+        const rank = (p: ProfessorFinanceiro) => {
+          if (p.statusPagamento === 'AGUARDANDO_REENVIO') return 0
+          if (p.pagamentoProntoParaFazer) return 2
+          if (p.statusPagamento === 'NF_OK_AGUARDANDO') return 3
+          return 1
+        }
+        const ra = rank(a)
+        const rb = rank(b)
+        if (ra !== rb) return ra - rb
+        return ta - tb
+      }
       return tb - ta || (a.nome ?? '').localeCompare(b.nome ?? '') // pagos: mais recente primeiro, depois nome
     })
 
@@ -461,6 +482,7 @@ Equipe Seidmann Institute`
     setNotifyTeacher(row)
     setNotifyMessage(defaultMessage)
     setNotifyFile(null)
+    setNotifyMarkPaid(false)
   }
 
   const submitNotifyPayment = async () => {
@@ -472,6 +494,7 @@ Equipe Seidmann Institute`
       formData.set('year', String(selectedAno))
       formData.set('month', String(selectedMes))
       formData.set('message', notifyMessage)
+      formData.set('markPaid', notifyMarkPaid ? 'true' : 'false')
       if (notifyFile) formData.set('attachment', notifyFile)
       const res = await fetch(`/api/admin/financeiro/professores/${notifyTeacher.id}/notify-payment`, {
         method: 'POST',
@@ -492,7 +515,10 @@ Equipe Seidmann Institute`
     }
   }
 
-  const updatePagamento = async (teacherId: string, pago: boolean) => {
+  const updatePagamento = async (
+    teacherId: string,
+    paymentStatus: 'PAGO' | 'EM_ABERTO' | 'NF_OK_AGUARDANDO' | 'AGUARDANDO_REENVIO'
+  ) => {
     try {
       const res = await fetch(`/api/admin/financeiro/professores/${teacherId}`, {
         method: 'PATCH',
@@ -500,19 +526,23 @@ Equipe Seidmann Institute`
         body: JSON.stringify({
           year: selectedAno,
           month: selectedMes,
-          paymentStatus: pago ? 'PAGO' : 'EM_ABERTO',
+          paymentStatus,
         }),
       })
       const json = await res.json()
-      if (!res.ok || !json.ok) return
+      if (!res.ok || !json.ok) return false
       await fetchData(selectedAno, selectedMes)
+      return true
     } catch {
       // silencioso
+      return false
     }
   }
 
   const zerarPeriodosEmAberto = async () => {
-    const idsEmAberto = professores.filter((p) => p.statusPagamento === 'EM_ABERTO').map((p) => p.id)
+    const idsEmAberto = professores
+      .filter((p) => p.statusPagamento === 'EM_ABERTO')
+      .map((p) => p.id)
     if (idsEmAberto.length === 0) {
       setToast({ message: 'Não há pagamentos em aberto para zerar.', type: 'error' })
       return
@@ -771,15 +801,158 @@ Equipe Seidmann Institute`
             </span>
           )
         }
+        if (row.statusPagamento === 'AGUARDANDO_REENVIO') {
+          return (
+            <div className="text-center">
+              <span
+                className="inline-flex items-center gap-1 text-orange-800"
+                title="Aguardando o professor enviar nova nota fiscal ou recibo"
+              >
+                <RotateCcw className="w-5 h-5 shrink-0" />
+                <span className="text-xs font-medium leading-tight hidden sm:inline">
+                  Aguardando reenvio
+                </span>
+              </span>
+              <span className="text-[11px] font-medium text-orange-900/90 sm:hidden mt-0.5 block">
+                Aguard. reenvio
+              </span>
+              <p className="text-[10px] text-orange-900/80 mt-1.5 leading-snug text-left px-0.5">
+                O professor foi notificado para anexar novamente o comprovante em Financeiro.
+              </p>
+            </div>
+          )
+        }
+        if (row.statusPagamento === 'NF_OK_AGUARDANDO') {
+          return (
+            <div className="text-center">
+              <span
+                className="inline-flex items-center gap-1 text-sky-800"
+                title="Nota fiscal conferida pela administração — aguardando pagamento"
+              >
+                <FileCheck className="w-5 h-5 shrink-0" />
+                <span className="text-xs font-medium leading-tight hidden sm:inline">
+                  NF correto — aguardando pagamento
+                </span>
+              </span>
+              <span className="text-[11px] font-medium text-sky-900/90 sm:hidden mt-0.5 block">
+                NF ok — aguard. pagto.
+              </span>
+              {row.proofFileUrl ? (
+                <a
+                  href={row.proofFileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] text-sky-700 underline mt-1"
+                  title="Ver documento anexado pelo professor"
+                >
+                  Ver documento anexado
+                </a>
+              ) : (
+                <div className="block text-[11px] text-sky-800 mt-1">Sem comprovante</div>
+              )}
+              {row.proofSentAt ? (
+                <div className="block text-[11px] text-sky-800 mt-0.5">
+                  Anexo em {new Date(row.proofSentAt).toLocaleDateString('pt-BR')}
+                </div>
+              ) : null}
+            </div>
+          )
+        }
         if (row.pagamentoProntoParaFazer) {
           return (
-            <span
-              className="inline-flex items-center gap-1 text-emerald-700"
-              title="Pagamento pronto para fazer (professor confirmou o valor)"
-            >
-              <ThumbsUp className="w-5 h-5" />
-              <span className="text-xs font-medium hidden sm:inline">Pronto p/ pagar</span>
-            </span>
+            <div className="text-center">
+              <span
+                className="inline-flex items-center gap-1 text-emerald-700"
+                title="Pagamento pronto para fazer (professor confirmou o valor)"
+              >
+                <ThumbsUp className="w-5 h-5" />
+                <span className="text-xs font-medium hidden sm:inline">Pronto p/ pagar</span>
+              </span>
+              {row.proofFileUrl ? (
+                <a
+                  href={row.proofFileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] text-emerald-700 underline mt-1"
+                  title="Ver comprovante anexado pelo professor"
+                >
+                  Ver documento anexado
+                </a>
+              ) : (
+                <div className="block text-[11px] text-emerald-800 mt-1">Sem comprovante</div>
+              )}
+              {row.proofSentAt ? (
+                <div className="block text-[11px] text-emerald-800 mt-0.5">
+                  Anexo em {new Date(row.proofSentAt).toLocaleDateString('pt-BR')}
+                </div>
+              ) : null}
+              <div className="mt-1.5 flex flex-wrap items-stretch justify-center gap-1 max-w-[220px] mx-auto">
+                <button
+                  type="button"
+                  title="Só registra que a nota fiscal foi conferida. Não marca como pago; depois de pagar, use a coluna Pagamento → Pago."
+                  disabled={confirmingNfTeacherId === row.id}
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    setConfirmingNfTeacherId(row.id)
+                    try {
+                      const ok = await updatePagamento(row.id, 'NF_OK_AGUARDANDO')
+                      if (ok) {
+                        setToast({
+                          message: 'NF correta confirmada. Status: aguardando pagamento.',
+                          type: 'success',
+                        })
+                      } else {
+                        setToast({ message: 'Não foi possível confirmar a NF correta.', type: 'error' })
+                      }
+                    } finally {
+                      setConfirmingNfTeacherId(null)
+                    }
+                  }}
+                  className="flex-1 min-w-[4.5rem] px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-semibold leading-tight hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {confirmingNfTeacherId === row.id ? '…' : 'NF ok'}
+                </button>
+                <button
+                  type="button"
+                  title="Limpa o anexo deste mês, notifica o professor no painel e pede para enviar de novo."
+                  disabled={
+                    rejectingProofTeacherId === row.id || confirmingNfTeacherId === row.id
+                  }
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    setRejectingProofTeacherId(row.id)
+                    try {
+                      const res = await fetch(`/api/admin/financeiro/professores/${row.id}/reject-proof`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
+                      })
+                      const json = await res.json().catch(() => ({}))
+                      if (res.ok && json?.ok) {
+                        setToast({
+                          message:
+                            json.message ||
+                            'Professor notificado para anexar novamente a nota fiscal ou o recibo.',
+                          type: 'success',
+                        })
+                        await fetchData(selectedAno, selectedMes)
+                      } else {
+                        setToast({
+                          message: json.message || 'Não foi possível registrar o pedido de novo anexo.',
+                          type: 'error',
+                        })
+                      }
+                    } finally {
+                      setRejectingProofTeacherId(null)
+                    }
+                  }}
+                  className="flex-1 min-w-[4.5rem] px-1.5 py-0.5 rounded border border-amber-600 text-amber-900 bg-amber-50 text-[10px] font-semibold leading-tight hover:bg-amber-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {rejectingProofTeacherId === row.id ? '…' : 'Reenvio'}
+                </button>
+              </div>
+            </div>
           )
         }
         return (
@@ -813,10 +986,21 @@ Equipe Seidmann Institute`
       render: (row) => (
         <select
           value={row.statusPagamento}
-          onChange={(e) => updatePagamento(row.id, e.target.value === 'PAGO')}
-          className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+          onChange={(e) =>
+            void updatePagamento(
+              row.id,
+              e.target.value as
+                | 'PAGO'
+                | 'EM_ABERTO'
+                | 'NF_OK_AGUARDANDO'
+                | 'AGUARDANDO_REENVIO'
+            )
+          }
+          className="rounded border border-gray-300 px-2 py-1 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 max-w-[220px]"
         >
           <option value="EM_ABERTO">Em aberto</option>
+          <option value="AGUARDANDO_REENVIO">Aguardando reenvio (comprovante)</option>
+          <option value="NF_OK_AGUARDANDO">NF correto — aguardando pagamento</option>
           <option value="PAGO">Pago</option>
         </select>
       ),
@@ -1371,8 +1555,20 @@ Equipe Seidmann Institute`
         {notifyTeacher && (
           <div className="space-y-4">
             <p className="text-sm text-gray-600">
-              Revise o e-mail abaixo antes de enviar. Você pode editar a mensagem e anexar um arquivo. Ao clicar em &quot;Enviar notificação&quot;, o pagamento será marcado como pago e a notificação in-app também será registrada.
+              Revise o e-mail antes de enviar. Por padrão o sistema não altera o status de pagamento; marque a opção
+              abaixo somente depois de ter efetuado a transferência.
             </p>
+            <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-sm text-amber-950 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyMarkPaid}
+                onChange={(e) => setNotifyMarkPaid(e.target.checked)}
+                className="mt-0.5 rounded border-amber-400 text-orange-600 focus:ring-orange-500"
+              />
+              <span>
+                Já paguei: marcar como Pago no sistema e registrar notificação in-app de pagamento realizado.
+              </span>
+            </label>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Para (e-mail)</label>
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800">
