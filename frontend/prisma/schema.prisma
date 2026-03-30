@@ -723,7 +723,7 @@ model BookRelease {
 model Announcement {
   id                  String              @id @default(cuid())
   title               String
-  message             String
+  message             String              @db.Text // textos longos (bilíngue, etc.); antes era VARCHAR(191) e estourava em produção
   channel             AnnouncementChannel  // EMAIL ou SMS
   audience            String              // "ALL", "STUDENTS", "TEACHERS", "ACTIVE_ONLY"
   status              AnnouncementStatus  @default(PENDING)
