@@ -283,8 +283,10 @@ function toDateKey(d: Date): string {
 }
 
 export default function AdminCalendarioPage() {
+  console.log('render')
   const router = useRouter()
   const searchParams = useSearchParams()
+  const searchParamsKey = searchParams?.toString() ?? ''
   const [view, setView] = useState<ViewType>('month')
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [lessons, setLessons] = useState<Lesson[]>([])
@@ -490,19 +492,26 @@ export default function AdminCalendarioPage() {
     const aluno = searchParams?.get('aluno')
     const teacher = searchParams?.get('teacher')
     const data = searchParams?.get('data')
-    if (aluno && aluno.trim()) {
+    if (aluno && aluno.trim() && selectedStudentId !== aluno.trim()) {
       setSelectedStudentId(aluno.trim())
     }
-    if (teacher && teacher.trim()) {
+    if (teacher && teacher.trim() && selectedTeacherId !== teacher.trim()) {
       setSelectedTeacherId(teacher.trim())
     }
     if (data && data.trim()) {
       const d = new Date(data)
-      if (!Number.isNaN(d.getTime())) {
+      if (
+        !Number.isNaN(d.getTime()) &&
+        (
+          currentDate.getFullYear() !== d.getFullYear() ||
+          currentDate.getMonth() !== d.getMonth() ||
+          currentDate.getDate() !== d.getDate()
+        )
+      ) {
         setCurrentDate(d)
       }
     }
-  }, [searchParams])
+  }, [searchParamsKey, selectedStudentId, selectedTeacherId, currentDate])
 
   const activeTeachers = useMemo(
     () => teachers.filter((t) => t.status === 'ACTIVE'),
@@ -1775,7 +1784,6 @@ export default function AdminCalendarioPage() {
         timeZone: 'America/Sao_Paulo',
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
         hour12: false,
       }).format(now)
       
@@ -1783,7 +1791,6 @@ export default function AdminCalendarioPage() {
       const localTime = new Intl.DateTimeFormat('pt-BR', {
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
         hour12: false,
       }).format(now)
       
@@ -1794,8 +1801,8 @@ export default function AdminCalendarioPage() {
     // Atualizar imediatamente
     updateTimes()
     
-    // Atualizar a cada segundo
-    const interval = setInterval(updateTimes, 1000)
+    // Atualizar a cada minuto para evitar rerender pesado contínuo
+    const interval = setInterval(updateTimes, 60_000)
     
     return () => clearInterval(interval)
   }, [])
