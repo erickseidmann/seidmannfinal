@@ -10,6 +10,9 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
+/** Vercel / ambientes serverless: anúncios para muitos alunos podem demorar (vários inserts em lote). */
+export const maxDuration = 120
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
@@ -90,6 +93,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const aud = String(audience).trim()
+    const allowedAudience = ['ALL', 'STUDENTS', 'TEACHERS', 'ACTIVE_ONLY'] as const
+    if (!allowedAudience.includes(aud as (typeof allowedAudience)[number])) {
+      return NextResponse.json(
+        { ok: false, message: 'Audiência inválida. Use: ALL, STUDENTS, TEACHERS ou ACTIVE_ONLY.' },
+        { status: 400 }
+      )
+    }
+
+    const notifyTeachers =
+      aud === 'TEACHERS' || aud === 'ALL' || aud === 'ACTIVE_ONLY'
+    const notifyStudents =
+      aud === 'STUDENTS' || aud === 'ALL' || aud === 'ACTIVE_ONLY'
+    const activeOnly = aud === 'ACTIVE_ONLY'
+
+    const ALERT_BATCH = 150
+
     // Verificar se o model existe no Prisma Client
     if (!prisma.announcement) {
       console.error('[api/admin/announcements] Model Announcement não encontrado no Prisma Client. Execute: npx prisma generate')
@@ -105,28 +125,55 @@ export async function POST(request: NextRequest) {
           title: title.trim(),
           message: message.trim(),
           channel: channel,
-          audience: String(audience).trim(),
+          audience: aud,
           createdByAdminEmail: auth.session?.email || 'admin@seidmann.com',
           status: 'PENDING',
         },
       })
 
-      // Notificar todos os professores: tem um novo anúncio (aparece no Início do professor)
-      const teachers = await tx.teacher.findMany({
-        where: { status: 'ACTIVE' },
-        select: { id: true },
-      })
-      if (teachers.length > 0) {
-        await tx.teacherAlert.createMany({
-          data: teachers.map((t) => ({
-            teacherId: t.id,
-            message: 'Tem um novo anúncio.',
-            type: 'NEW_ANNOUNCEMENT',
-            level: 'INFO',
-            createdById: auth.session?.sub ?? null,
-          })),
+      // In-app: professores (painel professor) — só quando a audiência inclui professores
+      if (notifyTeachers) {
+        const teacherWhere = activeOnly ? { status: 'ACTIVE' as const } : {}
+        const teachers = await tx.teacher.findMany({
+          where: teacherWhere,
+          select: { id: true },
         })
+        for (let i = 0; i < teachers.length; i += ALERT_BATCH) {
+          const slice = teachers.slice(i, i + ALERT_BATCH)
+          if (slice.length === 0) continue
+          await tx.teacherAlert.createMany({
+            data: slice.map((t) => ({
+              teacherId: t.id,
+              message: 'Tem um novo anúncio.',
+              type: 'NEW_ANNOUNCEMENT',
+              level: 'INFO',
+              createdById: auth.session?.sub ?? null,
+            })),
+          })
+        }
       }
+
+      // In-app: alunos (painel aluno) — só quando a audiência inclui alunos
+      if (notifyStudents) {
+        const enrollmentWhere = activeOnly ? { status: 'ACTIVE' as const } : {}
+        const enrollments = await tx.enrollment.findMany({
+          where: enrollmentWhere,
+          select: { id: true },
+        })
+        for (let i = 0; i < enrollments.length; i += ALERT_BATCH) {
+          const slice = enrollments.slice(i, i + ALERT_BATCH)
+          if (slice.length === 0) continue
+          await tx.studentAlert.createMany({
+            data: slice.map((e) => ({
+              enrollmentId: e.id,
+              message: 'Tem um novo anúncio.',
+              level: 'INFO',
+              createdById: auth.session?.sub ?? null,
+            })),
+          })
+        }
+      }
+
       return ann
     })
 

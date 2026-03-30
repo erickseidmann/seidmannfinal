@@ -62,6 +62,13 @@ export default function AdminAlertasPage() {
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; confirmLabel?: string } | null>(null)
+  const [sendProgress, setSendProgress] = useState<{
+    id: string
+    title: string
+    sent: number
+    total: number | null
+    percent: number
+  } | null>(null)
   const [clearingTeachers, setClearingTeachers] = useState(false)
   const [clearingStudents, setClearingStudents] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -277,23 +284,100 @@ export default function AdminAlertasPage() {
     }
   }
 
+  const runSendStream = async (announcementId: string) => {
+    try {
+      const response = await fetch(`/api/admin/announcements/${announcementId}/send`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/x-ndjson' },
+      })
+
+      if (!response.ok) {
+        const ct = response.headers.get('content-type')
+        if (ct?.includes('application/json')) {
+          const json = (await response.json()) as { message?: string }
+          throw new Error(json.message || 'Erro ao enviar anúncio')
+        }
+        throw new Error('Erro ao enviar anúncio')
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('Resposta inválida do servidor')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let doneReceived = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          const obj = JSON.parse(trimmed) as
+            | { type: 'progress'; sent: number; total: number; percent: number }
+            | { type: 'done'; ok: true }
+            | { type: 'error'; message: string }
+
+          if (obj.type === 'progress') {
+            setSendProgress((prev) => {
+              if (!prev || prev.id !== announcementId) return prev
+              return {
+                ...prev,
+                sent: obj.sent,
+                total: obj.total,
+                percent: obj.percent,
+              }
+            })
+          } else if (obj.type === 'error') {
+            throw new Error(obj.message || 'Erro ao enviar anúncio')
+          } else if (obj.type === 'done') {
+            doneReceived = true
+          }
+        }
+      }
+
+      const last = buffer.trim()
+      if (last) {
+        const obj = JSON.parse(last) as { type: string; message?: string }
+        if (obj.type === 'error') throw new Error(obj.message || 'Erro ao enviar anúncio')
+        if (obj.type === 'done') doneReceived = true
+      }
+
+      if (!doneReceived) {
+        throw new Error('Envio interrompido antes de concluir')
+      }
+
+      setToast({ message: 'Anúncio enviado com sucesso!', type: 'success' })
+      await fetchAnnouncements()
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao enviar anúncio', type: 'error' })
+      await fetchAnnouncements()
+    } finally {
+      setSendProgress(null)
+    }
+  }
+
   const handleSend = (id: string) => {
+    const ann = announcements.find((a) => a.id === id)
     setConfirmModal({
       title: 'Enviar anúncio',
       message: 'Deseja enviar este anúncio agora?',
-      onConfirm: async () => {
-        try {
-          const response = await fetch(`/api/admin/announcements/${id}/send`, {
-            method: 'POST',
-            credentials: 'include',
-          })
-          const json = await response.json()
-          if (!response.ok || !json.ok) throw new Error(json.message || 'Erro ao enviar anúncio')
-          setToast({ message: 'Anúncio enviado com sucesso!', type: 'success' })
-          fetchAnnouncements()
-        } catch (err) {
-          setToast({ message: err instanceof Error ? err.message : 'Erro ao enviar anúncio', type: 'error' })
-        }
+      onConfirm: () => {
+        setSendProgress({
+          id,
+          title: ann?.title ?? 'Anúncio',
+          sent: 0,
+          total: null,
+          percent: 0,
+        })
+        void runSendStream(id)
       },
     })
   }
@@ -326,15 +410,44 @@ export default function AdminAlertasPage() {
     {
       key: 'status',
       label: 'Status',
-      render: (a: Announcement) => (
-        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-          a.status === 'SENT' ? 'bg-green-100 text-green-800' :
-          a.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-          'bg-red-100 text-red-800'
-        }`}>
-          {a.status}
-        </span>
-      ),
+      render: (a: Announcement) => {
+        if (sendProgress?.id === a.id) {
+          const sp = sendProgress
+          const pct = sp.total === null ? 5 : sp.total === 0 ? 100 : sp.percent
+          return (
+            <div className="flex flex-col gap-1.5 min-w-[132px] max-w-[200px]">
+              <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width] duration-200 ease-out ${
+                    sp.total === null ? 'animate-pulse' : ''
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-gray-700">
+                {sp.total === null
+                  ? 'Preparando envio…'
+                  : sp.total === 0
+                    ? 'Concluindo…'
+                    : `${sp.percent}% · ${sp.sent}/${sp.total} e-mails`}
+              </span>
+            </div>
+          )
+        }
+        return (
+          <span
+            className={`px-2 py-1 rounded-full text-xs font-semibold ${
+              a.status === 'SENT'
+                ? 'bg-green-100 text-green-800'
+                : a.status === 'PENDING'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-red-100 text-red-800'
+            }`}
+          >
+            {a.status}
+          </span>
+        )
+      },
     },
     {
       key: 'sentAt',
@@ -345,20 +458,27 @@ export default function AdminAlertasPage() {
       key: 'actions',
       label: 'Ações',
       render: (a: Announcement) => (
-        <div className="flex gap-2">
-          {a.status === 'PENDING' && (
+        <div className="flex gap-2 items-center min-h-[28px]">
+          {a.status === 'PENDING' && sendProgress?.id === a.id && (
+            <Loader2 className="w-4 h-4 animate-spin text-amber-600" aria-label="Enviando" />
+          )}
+          {a.status === 'PENDING' && sendProgress?.id !== a.id && (
             <>
               <button
+                type="button"
                 onClick={() => handleSend(a.id)}
-                className="text-green-600 hover:text-green-800 text-sm font-medium"
+                className="text-green-600 hover:text-green-800 text-sm font-medium disabled:opacity-40"
                 title="Enviar"
+                disabled={!!sendProgress}
               >
                 <Send className="w-4 h-4" />
               </button>
               <button
+                type="button"
                 onClick={() => handleCancel(a.id)}
-                className="text-red-600 hover:text-red-800 text-sm font-medium"
-                title="Cancelar"
+                className="text-red-600 hover:text-red-800 text-sm font-medium disabled:opacity-40"
+                title="Cancelar anúncio"
+                disabled={!!sendProgress}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -533,6 +653,44 @@ export default function AdminAlertasPage() {
             emptyMessage="Nenhuma notificação de aluno"
           />
         </div>
+
+        {/* Envio em andamento (barra + %) */}
+        {sendProgress && (
+          <div
+            className="fixed inset-0 bg-black/45 flex items-center justify-center z-[70] p-4"
+            role="dialog"
+            aria-labelledby="send-progress-title"
+            aria-busy="true"
+          >
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 border border-gray-100">
+              <h2 id="send-progress-title" className="text-xl font-bold text-gray-900 mb-1">
+                Enviando anúncio
+              </h2>
+              <p className="text-sm text-gray-600 mb-5 truncate" title={sendProgress.title}>
+                {sendProgress.title}
+              </p>
+              <div className="h-3 bg-gray-200 rounded-full overflow-hidden mb-3">
+                <div
+                  className={`h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width] duration-200 ease-out ${
+                    sendProgress.total === null ? 'animate-pulse' : ''
+                  }`}
+                  style={{
+                    width: `${
+                      sendProgress.total === null ? 6 : sendProgress.total === 0 ? 100 : sendProgress.percent
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="text-sm text-center text-gray-700">
+                {sendProgress.total === null
+                  ? 'Preparando envio…'
+                  : sendProgress.total === 0
+                    ? 'Concluindo…'
+                    : `${sendProgress.percent}% · ${sendProgress.sent} de ${sendProgress.total} e-mails`}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Modal de Confirmação */}
         {confirmModal && (
