@@ -17,7 +17,7 @@ import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
-import { getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
+import { formatTimeInTZ, getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -247,8 +247,7 @@ function isToday(d: Date): boolean {
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso)
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  return formatTimeInTZ(iso)
 }
 
 /** Rótulo do aluno no calendário: grupo = "Nome do grupo — Nome1, Nome2", particular = nome do aluno */
@@ -353,11 +352,27 @@ export default function AdminCalendarioPage() {
   >({})
   const [listModal, setListModal] = useState<{
     title: string
-    type: 'confirmed' | 'cancelled' | 'reposicao' | 'wrongFrequency' | 'teacherErrors' | 'novosMatriculados'
+    type:
+      | 'confirmed'
+      | 'cancelled'
+      | 'reposicao'
+      | 'wrongFrequency'
+      | 'teacherErrors'
+      | 'novosMatriculados'
+      | 'alunosParaRedirecionar'
   } | null>(null)
   const [novosMatriculadosCount, setNovosMatriculadosCount] = useState(0)
   const [novosMatriculadosList, setNovosMatriculadosList] = useState<{ id: string; nome: string; dataMatricula?: string; linkPagamentoEnviadoAt?: string | null }[]>([])
   const [novosMatriculadosListLoading, setNovosMatriculadosListLoading] = useState(false)
+  const [alunosParaRedirecionarCount, setAlunosParaRedirecionarCount] = useState(0)
+  const [alunosParaRedirecionarList, setAlunosParaRedirecionarList] = useState<Array<{
+    id: string
+    nome: string
+    professorNome?: string | null
+    frequenciaSemanal?: number | null
+    tempoAulaMinutos?: number | null
+  }>>([])
+  const [alunosParaRedirecionarListLoading, setAlunosParaRedirecionarListLoading] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
   const [marcandoRedirectId, setMarcandoRedirectId] = useState<string | null>(null)
@@ -558,6 +573,7 @@ export default function AdminCalendarioPage() {
                     month: '2-digit',
                   })
                   const hora = d.toLocaleTimeString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
                     hour: '2-digit',
                     minute: '2-digit',
                   })
@@ -591,6 +607,7 @@ export default function AdminCalendarioPage() {
                     month: '2-digit',
                   })
                   const hora = d.toLocaleTimeString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
                     hour: '2-digit',
                     minute: '2-digit',
                   })
