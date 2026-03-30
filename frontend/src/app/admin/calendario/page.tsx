@@ -1111,17 +1111,18 @@ export default function AdminCalendarioPage() {
 
   useEffect(() => {
     setLoading(true)
+    // Carregamento crítico da tela: não bloquear por consultas secundárias pesadas.
     Promise.all([
-      fetchLessons(), 
-      fetchStats(), 
-      fetchEnrollmentsAndTeachers(), 
+      fetchLessons(),
+      fetchStats(),
+      fetchEnrollmentsAndTeachers(),
       fetchHolidays(),
-      fetchStudentRescheduledLessons(),
-      fetchPendingTransferRequests(),
-      fetchNovosMatriculadosCount()
-    ]).finally(() =>
-      setLoading(false)
-    )
+    ]).finally(() => setLoading(false))
+
+    // Cargas secundárias (não devem travar o calendário principal).
+    void fetchStudentRescheduledLessons()
+    void fetchPendingTransferRequests()
+    void fetchNovosMatriculadosCount()
   }, [fetchLessons, fetchStats, fetchEnrollmentsAndTeachers, fetchHolidays, fetchStudentRescheduledLessons, fetchPendingTransferRequests, fetchNovosMatriculadosCount])
 
   useEffect(() => {
@@ -1713,23 +1714,37 @@ export default function AdminCalendarioPage() {
     [lessons, selectedStudentId]
   )
 
+  // Indexações para evitar filtrar todo o array em cada célula/slot.
+  const visibleLessonsByDayKey = useMemo(() => {
+    const map: Record<string, Lesson[]> = {}
+    for (const l of visibleLessons) {
+      const dayKey = toDateKeyInTZ(l.startAt)
+      if (!map[dayKey]) map[dayKey] = []
+      map[dayKey].push(l)
+    }
+    return map
+  }, [visibleLessons])
+
+  const visibleLessonsByDaySlotKey = useMemo(() => {
+    const map: Record<string, Lesson[]> = {}
+    for (const l of visibleLessons) {
+      const dayKey = toDateKeyInTZ(l.startAt)
+      const t = getTimeInTZ(l.startAt)
+      const slotMinute = t.minute < 30 ? 0 : 30
+      const slotKey = `${dayKey}|${t.hour}:${slotMinute}`
+      if (!map[slotKey]) map[slotKey] = []
+      map[slotKey].push(l)
+    }
+    return map
+  }, [visibleLessons])
+
   const getLessonsForDay = (day: Date) =>
-    visibleLessons.filter((l) => isSameDayInTZ(l.startAt, day))
+    visibleLessonsByDayKey[toDateKeyInTZ(day)] ?? []
 
   /** Aula no slot de 30 min se o início (horário de Brasília) cai nesse intervalo — evita deslocamento por fuso. */
   const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
-    const dayKey = toDateKeyInTZ(day)
-    return visibleLessons.filter((l) => {
-      if (toDateKeyInTZ(l.startAt) !== dayKey) return false
-      const lessonTime = getTimeInTZ(l.startAt)
-      const slotEndHour = slotMinute === 30 ? slotHour + 1 : slotHour
-      const slotEndMinute = slotMinute === 30 ? 0 : 30
-      if (lessonTime.hour < slotHour) return false
-      if (lessonTime.hour === slotHour && lessonTime.minute < slotMinute) return false
-      if (lessonTime.hour > slotEndHour) return false
-      if (lessonTime.hour === slotEndHour && lessonTime.minute >= slotEndMinute) return false
-      return true
-    })
+    const key = `${toDateKeyInTZ(day)}|${slotHour}:${slotMinute}`
+    return visibleLessonsByDaySlotKey[key] ?? []
   }
 
   const statusLabel = (s: string) =>
