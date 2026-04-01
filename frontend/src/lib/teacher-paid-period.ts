@@ -2,19 +2,14 @@
  * Intervalos de datas de TeacherPaymentMonth (periodoInicio → periodoTermino, limites em UTC).
  * Usado para períodos PAGO (bloquear registro) e EM_ABERTO (alertas de registro atrasado no admin).
  */
-import { ymdInTZ } from './datetime'
 
 export type TeacherPaidPeriodRow = {
   periodoInicio: Date | null
   periodoTermino: Date | null
 }
 
-/** Dia do mês (1–31) da âncora do ciclo no fuso Brasil. Evita usar só getUTCDate(): 28/02 no Brasil pode cair em 01/03 UTC. */
+/** Dia do mês (1–31) da âncora do ciclo em UTC. */
 function dueDayFromPeriodAnchorBrazil(periodoInicio: Date): number {
-  const ymd = ymdInTZ(periodoInicio)
-  const parts = ymd.split('-').map(Number)
-  const d = parts[2]
-  if (d >= 1 && d <= 31) return d
   return new Date(periodoInicio).getUTCDate()
 }
 
@@ -27,11 +22,10 @@ export function teacherPaymentPeriodBoundsUtc(
   periodoTermino: Date | null
 ): { startMs: number; endExclusiveMs: number } | null {
   if (!periodoInicio || !periodoTermino) return null
-  const s = new Date(periodoInicio)
-  s.setUTCHours(0, 0, 0, 0)
-  const e = new Date(periodoTermino)
-  e.setUTCHours(0, 0, 0, 0)
-  return { startMs: s.getTime(), endExclusiveMs: e.getTime() }
+  return {
+    startMs: new Date(periodoInicio).getTime(),
+    endExclusiveMs: new Date(periodoTermino).getTime(),
+  }
 }
 
 /** Mês civil em UTC: [1º dia 00:00 UTC, 1º do mês seguinte 00:00 UTC exclusivo). */

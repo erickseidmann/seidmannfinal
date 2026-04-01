@@ -431,13 +431,14 @@ export async function GET(request: NextRequest) {
         const endsInMonth =
           period.endExclusiveMs >= monthBounds.startMs &&
           period.endExclusiveMs < monthBounds.endExclusiveMs
+        const endsAtMonthStart = period.endExclusiveMs === monthBounds.startMs
         const startsInMonth =
           period.startMs >= monthBounds.startMs &&
           period.startMs < monthBounds.endExclusiveMs
         const overlapsMonth =
           period.startMs < monthBounds.endExclusiveMs &&
           period.endExclusiveMs > monthBounds.startMs
-        return endsInMonth || startsInMonth || overlapsMonth
+        return endsInMonth || endsAtMonthStart || startsInMonth || overlapsMonth
       })
     }
 
