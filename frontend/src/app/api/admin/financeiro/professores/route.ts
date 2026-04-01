@@ -56,6 +56,8 @@ export async function GET(request: NextRequest) {
     const year = yearParam ? parseInt(yearParam, 10) : null
     const month = monthParam ? parseInt(monthParam, 10) : null
     const useMonthMode = year != null && month != null && month >= 1 && month <= 12
+    const viewedYear = year
+    const viewedMonth = month
 
     const now = new Date()
     const periodEnd =
@@ -202,8 +204,16 @@ export async function GET(request: NextRequest) {
         const source = rowEndsInMonth ?? pmFallback
         const due = t.paymentDueDay
         let b: { startMs: number; endExclusiveMs: number } | null = null
-        if (due != null && due >= 1 && due <= 31) {
-          const p = teacherPaymentBoundsFromDueDay(year!, month!, due)
+        if (due != null && due >= 1 && due <= 31 && viewedYear != null && viewedMonth != null) {
+          // Debug temporário: confirmar que o cálculo usa o mês visualizado na tela.
+          console.log('[financeiro/professores][DEBUG_DUE_CALL]', {
+            teacherId: t.id,
+            teacherName: t.nome,
+            year: viewedYear,
+            month: viewedMonth,
+            dueDay: due,
+          })
+          const p = teacherPaymentBoundsFromDueDay(viewedYear, viewedMonth, due)
           b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
         }
         if (!b) {
