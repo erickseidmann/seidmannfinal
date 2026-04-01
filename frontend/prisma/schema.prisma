@@ -118,6 +118,7 @@ model User {
   passwordResetTokens   PasswordResetToken[]
   availabilityLogsChanged TeacherAvailabilityLog[]
   adminDashboardTodosCreated   AdminDashboardTodo[] @relation("AdminDashboardTodoCreatedBy")
+  adminDashboardTodosProgress  AdminDashboardTodo[] @relation("AdminDashboardTodoProgressBy")
   adminDashboardTodosCompleted AdminDashboardTodo[] @relation("AdminDashboardTodoCompletedBy")
 
   // ├ìndices
@@ -138,10 +139,13 @@ model AdminDashboardTodo {
   criadoEm          DateTime  @default(now()) @map("created_at")
   createdByUserId   String    @map("created_by_user_id")
   resolutionNote    String?   @db.VarChar(2000) @map("resolution_note")
+  progressUpdatedAt DateTime? @map("progress_updated_at")
+  progressByUserId  String?   @map("progress_by_user_id")
   completedAt       DateTime? @map("completed_at")
   completedByUserId String?   @map("completed_by_user_id")
 
   createdBy   User  @relation("AdminDashboardTodoCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  progressBy  User? @relation("AdminDashboardTodoProgressBy", fields: [progressByUserId], references: [id], onDelete: SetNull)
   completedBy User? @relation("AdminDashboardTodoCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
 
   @@index([dayKey])

@@ -8,10 +8,10 @@ import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
-import { ChevronLeft, ChevronRight, ListTodo, Plus, Trash2, Flame } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ListTodo, Plus, Trash2, Flame, Loader2 } from 'lucide-react'
 
 type TodoCategory = 'GESTAO' | 'FINANCEIRO'
-type TodoFilter = 'TODOS' | TodoCategory | 'EMERGENCIA'
+type TodoFilter = 'TODOS' | TodoCategory | 'EMERGENCIA' | 'EM_ANDAMENTO'
 
 interface DashboardTodoApiItem {
   id: string
@@ -24,6 +24,9 @@ interface DashboardTodoApiItem {
   createdByUserId: string
   createdByName: string
   resolutionNote: string | null
+  progressUpdatedAt: string | null
+  progressByUserId: string | null
+  progressByName: string | null
   completedAt: string | null
   completedByUserId: string | null
   completedByName: string | null
@@ -55,11 +58,19 @@ function formatDateTime(iso: string): string {
 }
 
 function normalizeTodo(row: DashboardTodoApiItem): DashboardTodoApiItem {
+  const status =
+    row.status === 'DONE' || row.status === 'IN_PROGRESS' || row.status === 'OPEN'
+      ? row.status
+      : 'OPEN'
   return {
     ...row,
     category: row.category === 'FINANCEIRO' ? 'FINANCEIRO' : 'GESTAO',
+    status,
     isUrgent: Boolean(row.isUrgent),
     resolutionNote: row.resolutionNote ?? null,
+    progressUpdatedAt: row.progressUpdatedAt ?? null,
+    progressByUserId: row.progressByUserId ?? null,
+    progressByName: row.progressByName ?? null,
   }
 }
 
@@ -77,6 +88,9 @@ export default function AdminTodosPage() {
   const [completeModalItem, setCompleteModalItem] = useState<DashboardTodoApiItem | null>(null)
   const [resolutionDraft, setResolutionDraft] = useState('')
   const [completeSaving, setCompleteSaving] = useState(false)
+  const [progressModalItem, setProgressModalItem] = useState<DashboardTodoApiItem | null>(null)
+  const [progressDraft, setProgressDraft] = useState('')
+  const [progressSaving, setProgressSaving] = useState(false)
 
   const fetchTodos = useCallback(async (dateKey: string | null) => {
     setTodoLoading(true)
@@ -251,9 +265,47 @@ export default function AdminTodosPage() {
     setResolutionDraft('')
   }
 
+  const submitProgress = useCallback(async () => {
+    if (!progressModalItem || todoDateKey == null) return
+    const note = progressDraft.trim()
+    if (!note) {
+      setTodoError('Descreva o andamento da tarefa.')
+      return
+    }
+    setProgressSaving(true)
+    setTodoError(null)
+    try {
+      const res = await fetch(`/api/admin/dashboard-todos/${encodeURIComponent(progressModalItem.id)}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inProgress: true, progressNote: note }),
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        setTodoError(typeof json.message === 'string' ? json.message : 'Não foi possível atualizar andamento')
+        return
+      }
+      setProgressModalItem(null)
+      setProgressDraft('')
+      await fetchTodos(todoDateKey)
+    } catch {
+      setTodoError('Erro de rede ao atualizar andamento')
+    } finally {
+      setProgressSaving(false)
+    }
+  }, [progressModalItem, progressDraft, todoDateKey, fetchTodos])
+
+  const closeProgressModal = () => {
+    if (progressSaving) return
+    setProgressModalItem(null)
+    setProgressDraft('')
+  }
+
   const visibleTodos = todos.filter((item) => {
     if (todoFilter === 'TODOS') return true
     if (todoFilter === 'EMERGENCIA') return item.isUrgent
+    if (todoFilter === 'EM_ANDAMENTO') return item.status === 'IN_PROGRESS'
     return item.category === todoFilter
   })
 
@@ -309,6 +361,44 @@ export default function AdminTodosPage() {
                 disabled={completeSaving}
               />
               <p className="text-xs text-gray-500 mt-1">{resolutionDraft.length}/2000</p>
+            </>
+          )}
+        </Modal>
+        <Modal
+          isOpen={!!progressModalItem}
+          onClose={closeProgressModal}
+          title="Atualizar andamento"
+          size="md"
+          footer={
+            <>
+              <Button variant="outline" onClick={closeProgressModal} disabled={progressSaving}>
+                Cancelar
+              </Button>
+              <Button variant="primary" onClick={() => void submitProgress()} disabled={progressSaving}>
+                {progressSaving ? 'Salvando…' : 'Salvar em andamento'}
+              </Button>
+            </>
+          }
+        >
+          {progressModalItem && (
+            <>
+              <p className="text-sm text-gray-700 mb-2">
+                <span className="font-medium">Tarefa:</span> {progressModalItem.text}
+              </p>
+              <label htmlFor="progress-note" className="block text-sm font-medium text-gray-800 mb-1">
+                O que está sendo feito? <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                id="progress-note"
+                value={progressDraft}
+                onChange={(e) => setProgressDraft(e.target.value)}
+                rows={4}
+                maxLength={2000}
+                placeholder="Ex.: aguardando retorno do financeiro, já enviei e-mail e cobrei no WhatsApp…"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/40 focus:border-brand-orange"
+                disabled={progressSaving}
+              />
+              <p className="text-xs text-gray-500 mt-1">{progressDraft.length}/2000</p>
             </>
           )}
         </Modal>
@@ -413,6 +503,7 @@ export default function AdminTodosPage() {
               <option value="TODOS">Todos</option>
               <option value="GESTAO">Gestão</option>
               <option value="FINANCEIRO">Financeiro</option>
+              <option value="EM_ANDAMENTO">Em andamento</option>
               <option value="EMERGENCIA">Emergência (fogo)</option>
             </select>
           </div>
@@ -432,6 +523,7 @@ export default function AdminTodosPage() {
             <ul className="space-y-2" aria-label="Lista de tarefas">
               {visibleTodosSorted.map((item) => {
                 const isDone = item.status === 'DONE'
+                const isInProgress = item.status === 'IN_PROGRESS'
                 const isFin = item.category === 'FINANCEIRO'
                 const urgentOpen = item.isUrgent && !isDone
                 return (
@@ -468,6 +560,17 @@ export default function AdminTodosPage() {
                         >
                           {isFin ? 'Financeiro' : 'Gestão'}
                         </span>
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 ${
+                            isDone
+                              ? 'bg-slate-200 text-slate-700'
+                              : isInProgress
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-orange-100 text-orange-800'
+                          }`}
+                        >
+                          {isDone ? 'Concluída' : isInProgress ? 'Em andamento' : 'Pendente'}
+                        </span>
                       </div>
                       <span
                         className={`text-sm text-slate-800 break-words block ${isDone ? 'line-through text-slate-400' : ''}`}
@@ -485,6 +588,18 @@ export default function AdminTodosPage() {
                           </>
                         )}
                       </p>
+                      {!isDone && isInProgress && item.resolutionNote && (
+                        <p className="text-xs text-amber-900 mt-2 pl-2 border-l-2 border-amber-400 bg-amber-50 rounded-r py-1.5 pr-2">
+                          <span className="font-semibold">Andamento: </span>
+                          {item.resolutionNote}
+                          {(item.progressByName || item.progressUpdatedAt) && (
+                            <span className="block mt-1 text-[11px] text-amber-800/90">
+                              {item.progressByName ? `Por ${item.progressByName}` : 'Atualizado'}
+                              {item.progressUpdatedAt ? ` · ${formatDateTime(item.progressUpdatedAt)}` : ''}
+                            </span>
+                          )}
+                        </p>
+                      )}
                       {isDone && item.resolutionNote && (
                         <p className="text-xs text-slate-700 mt-2 pl-2 border-l-2 border-brand-orange/60 bg-white/60 rounded-r py-1.5 pr-2">
                           <span className="font-semibold text-slate-800">Solução: </span>
@@ -493,6 +608,25 @@ export default function AdminTodosPage() {
                       )}
                     </div>
                     <div className="flex items-start gap-0.5 shrink-0">
+                      {!isDone && (
+                        <button
+                          type="button"
+                          disabled={todoActionId === item.id}
+                          onClick={() => {
+                            setProgressDraft(item.resolutionNote ?? '')
+                            setProgressModalItem(item)
+                          }}
+                          className={`p-1.5 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:opacity-40 ${
+                            isInProgress
+                              ? 'text-amber-700 bg-amber-100 hover:bg-amber-200'
+                              : 'text-slate-400 hover:text-amber-700 hover:bg-amber-50'
+                          }`}
+                          title={isInProgress ? 'Atualizar andamento' : 'Marcar como em andamento'}
+                          aria-label={isInProgress ? 'Atualizar andamento' : 'Marcar como em andamento'}
+                        >
+                          <Loader2 className={`w-4 h-4 ${isInProgress ? 'animate-spin' : ''}`} aria-hidden />
+                        </button>
+                      )}
                       {!isDone && (
                         <button
                           type="button"

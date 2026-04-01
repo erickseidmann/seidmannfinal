@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
     const lessons = await prisma.lesson.findMany({
       where: {
         startAt: { gte: monday, lte: saturdayEnd },
+        teacherId: { not: null },
       },
       include: {
         enrollment: {
@@ -165,8 +166,10 @@ export async function GET(request: NextRequest) {
     const groupSlotsByKey: Record<string, { byStartAt: Map<string, number> }> = {}
     const enrollmentToGroupKey: Record<string, string> = {}
 
+    // Frequência incorreta dos cubos: considerar apenas aulas regulares (CONFIRMED),
+    // ignorando reposições para não distorcer o "actual" da semana.
     for (const l of lessons) {
-      if (l.status === 'CANCELLED') continue
+      if (l.status !== 'CONFIRMED') continue
       const eid = l.enrollmentId
       const enr = l.enrollment as { tipoAula?: string | null; nomeGrupo?: string | null }
       const isGroup = enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()
@@ -322,12 +325,12 @@ export async function GET(request: NextRequest) {
         item.groupKey != null
           ? lessons.filter(
               (l) =>
-                l.status !== 'CANCELLED' &&
+                l.status === 'CONFIRMED' &&
                 (l.enrollment as { tipoAula?: string; nomeGrupo?: string })?.tipoAula === 'GRUPO' &&
                 (l.enrollment as { nomeGrupo?: string })?.nomeGrupo === item.groupKey
             )
           : lessons.filter(
-              (l) => l.status !== 'CANCELLED' && l.enrollmentId === item.enrollmentId
+              (l) => l.status === 'CONFIRMED' && l.enrollmentId === item.enrollmentId
             )
       const lessonTimesThisWeek = relevantLessons.map((l) => l.startAt.toISOString())
       const lessonsThisWeek = relevantLessons.map((l) => ({

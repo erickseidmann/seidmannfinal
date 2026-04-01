@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/dashboard-todos?date=YYYY-MM-DD — lista tarefas do dia (rollover de OPEN para hoje se date=hoje)
+ * GET /api/admin/dashboard-todos?date=YYYY-MM-DD — lista tarefas do dia (rollover de OPEN/IN_PROGRESS para hoje se date=hoje)
  * POST /api/admin/dashboard-todos?date=YYYY-MM-DD — cria tarefa no dia indicado (default: hoje BR)
  */
 
@@ -42,17 +42,18 @@ export async function GET(request: NextRequest) {
     const todos = await prisma.$transaction(async (tx) => {
       if (requestedDate === todayKey) {
         await tx.adminDashboardTodo.updateMany({
-          where: { status: 'OPEN', dayKey: { lt: todayKey } },
+          where: { status: { in: ['OPEN', 'IN_PROGRESS'] }, dayKey: { lt: todayKey } },
           data: { dayKey: todayKey },
         })
       }
 
-      // Inclui abertas e concluídas do bucket do dia. Dia futuro: também pendentes (OPEN) de dias anteriores.
+      // Inclui abertas/em andamento e concluídas do bucket do dia.
+      // Dia futuro: também pendentes (OPEN/IN_PROGRESS) de dias anteriores.
       const where = dateKeyIsAfter(requestedDate, todayKey)
         ? {
             OR: [
               { dayKey: requestedDate },
-              { AND: [{ status: 'OPEN' }, { dayKey: { lt: requestedDate } }] },
+              { AND: [{ status: { in: ['OPEN', 'IN_PROGRESS'] } }, { dayKey: { lt: requestedDate } }] },
             ],
           }
         : { dayKey: requestedDate }
@@ -62,6 +63,7 @@ export async function GET(request: NextRequest) {
         orderBy: [{ isUrgent: 'desc' }, { criadoEm: 'asc' }],
         include: {
           createdBy: { select: { id: true, nome: true } },
+          progressBy: { select: { id: true, nome: true } },
           completedBy: { select: { id: true, nome: true } },
         },
       })
@@ -83,6 +85,9 @@ export async function GET(request: NextRequest) {
           createdByUserId: t.createdByUserId,
           createdByName: t.createdBy.nome,
           resolutionNote: t.resolutionNote,
+          progressUpdatedAt: t.progressUpdatedAt?.toISOString() ?? null,
+          progressByUserId: t.progressByUserId,
+          progressByName: t.progressBy?.nome ?? null,
           completedAt: t.completedAt?.toISOString() ?? null,
           completedByUserId: t.completedByUserId,
           completedByName: t.completedBy?.nome ?? null,
@@ -138,6 +143,7 @@ export async function POST(request: NextRequest) {
       },
       include: {
         createdBy: { select: { id: true, nome: true } },
+        progressBy: { select: { id: true, nome: true } },
         completedBy: { select: { id: true, nome: true } },
       },
     })
@@ -156,6 +162,9 @@ export async function POST(request: NextRequest) {
           createdByUserId: created.createdByUserId,
           createdByName: created.createdBy.nome,
           resolutionNote: created.resolutionNote,
+          progressUpdatedAt: created.progressUpdatedAt?.toISOString() ?? null,
+          progressByUserId: created.progressByUserId,
+          progressByName: created.progressBy?.nome ?? null,
           completedAt: null,
           completedByUserId: null,
           completedByName: null,

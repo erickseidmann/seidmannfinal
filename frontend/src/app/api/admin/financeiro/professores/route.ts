@@ -228,6 +228,7 @@ export async function GET(request: NextRequest) {
       where: {
         startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
         status: 'CONFIRMED',
+        teacherId: { not: null },
       },
       select: {
         id: true,

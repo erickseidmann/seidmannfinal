@@ -1,6 +1,7 @@
 /**
  * PATCH /api/admin/dashboard-todos/[id]
  *   - { urgent: boolean } — marca/desmarca urgência (fogo); lista ordena urgentes no topo
+ *   - { inProgress: boolean, progressNote?: string } — marca/desmarca "em andamento" (pode salvar nota de andamento)
  *   - { done: boolean, resolutionNote?: string } — ao concluir (done: true), resolutionNote é obrigatório (1–2000 caracteres)
  * DELETE /api/admin/dashboard-todos/[id]
  */
@@ -19,9 +20,12 @@ function todoJson(t: {
   criadoEm: Date
   createdByUserId: string
   resolutionNote: string | null
+  progressUpdatedAt: Date | null
+  progressByUserId: string | null
   completedAt: Date | null
   completedByUserId: string | null
   createdBy: { nome: string }
+  progressBy: { nome: string } | null
   completedBy: { nome: string } | null
 }) {
   return {
@@ -35,6 +39,9 @@ function todoJson(t: {
     createdByUserId: t.createdByUserId,
     createdByName: t.createdBy.nome,
     resolutionNote: t.resolutionNote,
+    progressUpdatedAt: t.progressUpdatedAt?.toISOString() ?? null,
+    progressByUserId: t.progressByUserId,
+    progressByName: t.progressBy?.nome ?? null,
     completedAt: t.completedAt?.toISOString() ?? null,
     completedByUserId: t.completedByUserId,
     completedByName: t.completedBy?.nome ?? null,
@@ -69,10 +76,11 @@ export async function PATCH(
     const obj = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
     const hasUrgent = typeof obj.urgent === 'boolean'
     const hasDone = typeof obj.done === 'boolean'
+    const hasInProgress = typeof obj.inProgress === 'boolean'
 
-    if (!hasUrgent && !hasDone) {
+    if (!hasUrgent && !hasDone && !hasInProgress) {
       return NextResponse.json(
-        { ok: false, message: 'Envie urgent (boolean) e/ou done (boolean)' },
+        { ok: false, message: 'Envie urgent (boolean), inProgress (boolean) e/ou done (boolean)' },
         { status: 400 }
       )
     }
@@ -90,10 +98,38 @@ export async function PATCH(
       completedAt?: Date | null
       completedByUserId?: string | null
       resolutionNote?: string | null
+      progressUpdatedAt?: Date | null
+      progressByUserId?: string | null
     } = {}
 
     if (hasUrgent) {
       data.isUrgent = obj.urgent as boolean
+    }
+
+    if (hasInProgress) {
+      const inProgress = obj.inProgress as boolean
+      if (inProgress) {
+        const note =
+          typeof obj.progressNote === 'string'
+            ? (obj.progressNote as string).trim()
+            : typeof obj.resolutionNote === 'string'
+              ? (obj.resolutionNote as string).trim()
+              : ''
+        if (!note || note.length > 2000) {
+          return NextResponse.json(
+            { ok: false, message: 'Descreva o andamento (1–2000 caracteres)' },
+            { status: 400 }
+          )
+        }
+        data.status = 'IN_PROGRESS'
+        data.completedAt = null
+        data.completedByUserId = null
+        data.resolutionNote = note
+        data.progressUpdatedAt = new Date()
+        data.progressByUserId = userId
+      } else if (!hasDone) {
+        data.status = 'OPEN'
+      }
     }
 
     if (hasDone) {
@@ -115,7 +151,9 @@ export async function PATCH(
         data.status = 'OPEN'
         data.completedAt = null
         data.completedByUserId = null
-        data.resolutionNote = null
+        if (!hasInProgress) {
+          data.resolutionNote = null
+        }
       }
     }
 
@@ -124,6 +162,7 @@ export async function PATCH(
       data,
       include: {
         createdBy: { select: { id: true, nome: true } },
+        progressBy: { select: { id: true, nome: true } },
         completedBy: { select: { id: true, nome: true } },
       },
     })

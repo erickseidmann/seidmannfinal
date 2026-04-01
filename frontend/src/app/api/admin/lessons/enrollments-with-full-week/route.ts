@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
       where: {
         startAt: { gte: monday, lte: saturdayEnd },
         status: { in: ['CONFIRMED', 'REPOSICAO'] },
+        teacherId: { not: null },
       },
       select: { enrollmentId: true },
     })
