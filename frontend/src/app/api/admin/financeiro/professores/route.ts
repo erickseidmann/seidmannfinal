@@ -109,12 +109,15 @@ export async function GET(request: NextRequest) {
     // Mapa: teacherId|year|month -> fileUrl do comprovante anexado.
     const proofFileByTeacherYearMonth = new Map<string, string>()
     if (useMonthMode && year != null && month != null) {
-      const firstDaySel = firstDayOfMonth(new Date(year, month - 1, 1))
-      const lastDaySel = lastDayOfMonth(new Date(year, month - 1, 1))
+      // Regra do mês visualizado: selecionar o período que VENCE no mês (periodoTermino no mês).
+      // Usar limites UTC [início do mês, início do próximo mês) evita ambiguidades de fuso.
+      const monthBounds = calendarMonthBoundsUtc(year, month)
+      const firstDaySel = new Date(monthBounds.startMs)
+      const nextMonthStart = new Date(monthBounds.endExclusiveMs)
       const rowsEnding = await prisma.teacherPaymentMonth.findMany({
         where: {
           teacherId: { in: teachers.map((t) => t.id) },
-          periodoTermino: { gte: firstDaySel, lte: lastDaySel },
+          periodoTermino: { gte: firstDaySel, lt: nextMonthStart },
         },
         select: {
           teacherId: true,
@@ -127,7 +130,14 @@ export async function GET(request: NextRequest) {
           proofSentAt: true,
         },
       })
-      rowsEnding.forEach((r) => periodEndsInMonthMap.set(r.teacherId, r as PmRow))
+      // Segurança para dados legados duplicados: preferir o período com termino mais recente no mês.
+      rowsEnding
+        .sort((a, b) => {
+          const at = a.periodoTermino ? new Date(a.periodoTermino).getTime() : 0
+          const bt = b.periodoTermino ? new Date(b.periodoTermino).getTime() : 0
+          return at - bt
+        })
+        .forEach((r) => periodEndsInMonthMap.set(r.teacherId, r as PmRow))
 
       // Comprovante: último evento PROOF_SENT ou PROOF_REJECTED por professor/mês (mais recente vence).
       const proofLogs = await prisma.financeAuditLog.findMany({
