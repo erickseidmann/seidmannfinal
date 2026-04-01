@@ -57,6 +57,16 @@ export function teacherPaymentBoundsFromDueDay(
   month: number,
   dueDay: number
 ): { inicio: Date; termino: Date } {
+  // Regra especial e explícita para vencimento no dia 1:
+  // competência = mês civil anterior completo (01..último dia).
+  // Ex.: referência abril/2026 -> 01/03/2026 .. 01/04/2026 (fim exclusivo).
+  if (dueDay === 1) {
+    const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
+    const inicio = new Date(Date.UTC(prev.year, prev.month - 1, 1, 0, 0, 0, 0))
+    const termino = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0))
+    return { inicio, termino }
+  }
+
   const safeDueCurrent = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(year, month))
   const pagamentoDate = new Date(Date.UTC(year, month - 1, safeDueCurrent))
   const termino = new Date(pagamentoDate.getTime())

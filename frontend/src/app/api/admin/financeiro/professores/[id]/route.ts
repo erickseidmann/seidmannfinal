@@ -236,8 +236,19 @@ export async function PATCH(
           1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril', 5: 'maio', 6: 'junho',
           7: 'julho', 8: 'agosto', 9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro',
         }
-        const mesNome = MESES_NOMES[month] || String(month)
-        const message = `Seu pagamento referente a ${mesNome}/${year} foi realizado.`
+        const monthRow = await prisma.teacherPaymentMonth.findUnique({
+          where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
+          select: { periodoTermino: true },
+        })
+        let competenciaMonth = month
+        let competenciaYear = year
+        if (monthRow?.periodoTermino) {
+          const lastInclusive = new Date(monthRow.periodoTermino.getTime() - 1)
+          competenciaMonth = lastInclusive.getUTCMonth() + 1
+          competenciaYear = lastInclusive.getUTCFullYear()
+        }
+        const mesNome = MESES_NOMES[competenciaMonth] || String(competenciaMonth)
+        const message = `Seu pagamento referente a ${mesNome}/${competenciaYear} foi realizado.`
         await prisma.teacherAlert.create({
           data: {
             teacherId,
