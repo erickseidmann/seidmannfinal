@@ -262,12 +262,6 @@ export async function GET(request: NextRequest) {
           lesson: {
             teacherId: teacher.id,
             startAt: { gte: periodStart, lt: periodEndExclusive },
-            enrollment: {
-              OR: [
-                { status: { not: 'PAUSED' } },
-                { pausedAt: null },
-              ],
-            },
           },
           status: { in: ['CONFIRMED', 'REPOSICAO'] },
         },

@@ -245,12 +245,6 @@ export async function GET(request: NextRequest) {
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
           startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
-          enrollment: {
-            OR: [
-              { status: { not: 'PAUSED' } },
-              { pausedAt: null },
-            ],
-          },
         },
         status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
