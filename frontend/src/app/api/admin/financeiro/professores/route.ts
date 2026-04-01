@@ -195,6 +195,7 @@ export async function GET(request: NextRequest) {
       const mb = selCal
       for (const t of teachers) {
         const rowEndsInMonth = periodEndsInMonthMap.get(t.id)
+        const hasPeriodEndingInMonth = !!rowEndsInMonth
         const pmFallback = 'paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
           ? (t.paymentMonths[0] as { periodoInicio: Date | null; periodoTermino: Date | null })
           : null
@@ -212,10 +213,13 @@ export async function GET(request: NextRequest) {
             selCal
         }
         if (b.startMs >= b.endExclusiveMs) b = selCal
-        // Linha de TeacherPaymentMonth com datas fora do mês visualizado: usar mês civil (evita sumir da lista).
-        const overlapsMonth =
-          b.endExclusiveMs > mb.startMs && b.startMs < mb.endExclusiveMs
-        if (!overlapsMonth) b = selCal
+        // Se NÃO houver período com vencimento no mês, mantém fallback por sobreposição
+        // para legado. Se houver (ex.: 01/03→01/04 ao visualizar abril), preserva o período.
+        if (!hasPeriodEndingInMonth) {
+          const overlapsMonth =
+            b.endExclusiveMs > mb.startMs && b.startMs < mb.endExclusiveMs
+          if (!overlapsMonth) b = selCal
+        }
         if (b.startMs < globalStart) globalStart = b.startMs
         if (b.endExclusiveMs > globalEndExclusive) globalEndExclusive = b.endExclusiveMs
         teacherPeriods.push({ id: t.id, startMs: b.startMs, endExclusiveMs: b.endExclusiveMs })
