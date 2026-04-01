@@ -278,6 +278,42 @@ export async function GET(request: NextRequest) {
 
     const filteredRecords = filterRecordsByPausedEnrollment(recordsInRange as PaymentRecord[])
 
+    // Debug temporário: investigar cálculo de período para professora Keila.
+    const DEBUG_KEILA = true
+    if (DEBUG_KEILA) {
+      const keila = teachers.find((t) => t.nome.toLowerCase().includes('keila'))
+      if (keila) {
+        const period = teacherPeriods.find((p) => p.id === keila.id)
+        const selectedPm = periodEndsInMonthMap.get(keila.id)
+        if (period) {
+          const recordsForKeilaInWindow = filteredRecords.filter((r) => {
+            if (r.lesson.teacherId !== keila.id) return false
+            const ts = new Date(r.lesson.startAt).getTime()
+            return ts >= period.startMs && ts < period.endExclusiveMs
+          })
+          console.log('[financeiro/professores][DEBUG_KEILA]', {
+            teacherId: keila.id,
+            teacherName: keila.nome,
+            monthView: useMonthMode ? { year, month } : null,
+            selectedTeacherPaymentMonth: selectedPm
+              ? {
+                  periodoInicio: selectedPm.periodoInicio?.toISOString?.() ?? null,
+                  periodoTermino: selectedPm.periodoTermino?.toISOString?.() ?? null,
+                  paymentStatus: selectedPm.paymentStatus ?? null,
+                }
+              : null,
+            periodBoundsUsed: {
+              startMs: period.startMs,
+              endExclusiveMs: period.endExclusiveMs,
+              startIso: new Date(period.startMs).toISOString(),
+              endExclusiveIso: new Date(period.endExclusiveMs).toISOString(),
+            },
+            lessonRecordsFound: recordsForKeilaInWindow.length,
+          })
+        }
+      }
+    }
+
     const list = teachers.map((t) => {
       const period = teacherPeriods.find((p) => p.id === t.id)!
       const valorPorHora = t.valorPorHora != null ? Number(t.valorPorHora) : 0
@@ -392,10 +428,18 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    // Ordenação final: por dia de pagamento (1..31), depois por nome.
+    const professoresOrdenados = [...professoresFinais].sort((a, b) => {
+      const aDay = new Date(`${a.dataInicio}T12:00:00Z`).getUTCDate()
+      const bDay = new Date(`${b.dataInicio}T12:00:00Z`).getUTCDate()
+      if (aDay !== bDay) return aDay - bDay
+      return a.nome.localeCompare(b.nome, 'pt-BR')
+    })
+
     return NextResponse.json({
       ok: true,
       data: {
-        professores: professoresFinais,
+        professores: professoresOrdenados,
         year: useMonthMode ? year : null,
         month: useMonthMode ? month : null,
       },
