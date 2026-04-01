@@ -424,11 +424,20 @@ export async function GET(request: NextRequest) {
       professoresFinais = list.filter((p) => {
         const period = teacherPeriods.find((tp) => tp.id === p.id)
         if (!period) return false
-        // Sobreposição [início, fim) com o mês civil em UTC (mesma convenção de selCal).
-        return (
+        // Regra de inclusão no mês visualizado:
+        // 1) período que vence no mês (periodoTermino no mês, incluindo 1º dia 00:00),
+        // 2) período que começa no mês,
+        // 3) sobreposição geral (fallback/legado).
+        const endsInMonth =
+          period.endExclusiveMs >= monthBounds.startMs &&
+          period.endExclusiveMs < monthBounds.endExclusiveMs
+        const startsInMonth =
+          period.startMs >= monthBounds.startMs &&
+          period.startMs < monthBounds.endExclusiveMs
+        const overlapsMonth =
           period.startMs < monthBounds.endExclusiveMs &&
           period.endExclusiveMs > monthBounds.startMs
-        )
+        return endsInMonth || startsInMonth || overlapsMonth
       })
     }
 
