@@ -122,6 +122,18 @@ export async function PATCH(
       }
     }
 
+    // Se o período foi informado/salvo sem dueDay explícito, sincronizar paymentDueDay
+    // com o dia de periodoInicio para manter o cadastro consistente.
+    if (dueDay === undefined && updateData.periodoInicio instanceof Date) {
+      const inferredDueDay = updateData.periodoInicio.getUTCDate()
+      if (inferredDueDay >= 1 && inferredDueDay <= 31) {
+        await prisma.teacher.update({
+          where: { id: teacherId },
+          data: { paymentDueDay: inferredDueDay },
+        })
+      }
+    }
+
     if (Object.keys(updateData).length === 0 && (metodoPagamento === undefined && infosPagamento === undefined)) {
       return NextResponse.json({ ok: true, message: 'Nada a atualizar' })
     }

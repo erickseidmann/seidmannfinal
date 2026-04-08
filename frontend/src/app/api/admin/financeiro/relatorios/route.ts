@@ -37,11 +37,6 @@ function lastDayOfMonth(y: number, m: number): Date {
   return endOfDay(new Date(y, m, 0))
 }
 
-/** Ano/mês calendário em UTC (alinhado ao financeiro – alunos). */
-function getYearMonthUtc(d: Date): { year: number; month: number } {
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
-}
-
 function valorMensalAluno(e: {
   valorMensalidade: unknown
   paymentInfo?: { valorMensal: unknown } | null
@@ -55,56 +50,24 @@ function valorMensalAluno(e: {
   return Math.round(v * 100) / 100
 }
 
-/**
- * Mesma regra de visibilidade do financeiro por mês que em /api/admin/financeiro/alunos.
- */
-function enrollmentVisibleInFinanceiroMonth(
-  e: {
-    status: string
-    dataInicio?: Date | null
-    inactiveAt?: Date | null
-    paymentMonths?: { paymentStatus: string | null }[]
-  },
-  year: number,
-  month: number
-): boolean {
-  const dataInicio = e.dataInicio
-  if (dataInicio) {
-    const { year: y0, month: m0 } = getYearMonthUtc(new Date(dataInicio))
-    if (year < y0 || (year === y0 && month < m0)) return false
-  }
-  if (e.status === 'INACTIVE') {
-    if (!e.inactiveAt) return false
-    const d = new Date(e.inactiveAt)
-    const anoInativo = d.getFullYear()
-    const mesInativo = d.getMonth() + 1
-    const viewingAfterOrSameInactiveMonth = year > anoInativo || (year === anoInativo && month >= mesInativo)
-    if (viewingAfterOrSameInactiveMonth) return false
-    const pm = e.paymentMonths?.[0]
-    if (pm?.paymentStatus === 'REMOVIDO') return false
-    return true
-  }
-  const pm = e.paymentMonths?.[0]
-  if (pm?.paymentStatus === 'REMOVIDO') return false
-  return true
-}
-
 async function computeMatriculaKpis(year: number, month: number) {
-  const enrollments = await prisma.enrollment.findMany({
-    include: {
-      paymentInfo: true,
-      paymentMonths: { where: { year, month }, take: 1 },
+  const matriculadosEnrollments = await prisma.enrollment.findMany({
+    where: {
+      status: { in: ['ACTIVE', 'INACTIVE', 'PAUSED', 'COMPLETED'] },
+      criadoEm: {
+        gte: new Date(year, month - 1, 1),
+        lt: new Date(year, month, 1),
+      },
+      cadastroViaImportacaoLista: false,
     },
+    include: { paymentInfo: true },
   })
 
-  let matriculadosCount = 0
+  let matriculadosCount = matriculadosEnrollments.length
   let matriculadosValorTotal = 0
-  for (const e of enrollments) {
-    if ((e as { cadastroViaImportacaoLista?: boolean }).cadastroViaImportacaoLista) continue
-    if (!enrollmentVisibleInFinanceiroMonth(e, year, month)) continue
-    matriculadosCount += 1
+  for (const e of matriculadosEnrollments) {
     const v = valorMensalAluno(e)
-    const bolsista = Boolean((e as { bolsista?: boolean | null }).bolsista)
+    const bolsista = Boolean(e.bolsista)
     matriculadosValorTotal += bolsista ? 0 : v
   }
 
