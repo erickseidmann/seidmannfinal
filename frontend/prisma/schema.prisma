@@ -95,6 +95,8 @@ model User {
   funcao       String?      @db.VarChar(255) @map("funcao") // Fun├º├úo/cargo (para usu├írios do ADM)
   emailPessoal String?      @map("email_pessoal") @db.VarChar(255) // Email pessoal (para usu├írios do ADM)
   adminPages   Json?        @map("admin_pages") // P├íginas do dashboard que pode acessar (array de strings)
+  /** Post-its do bloco de notas admin (por usuário): { notes: { id, text, hue }[] } */
+  adminPostItsBoard Json?   @map("admin_post_its_board")
   mustChangePassword Boolean @default(false) @map("must_change_password") // Professor: obrigar a alterar senha no primeiro acesso
   criadoEm     DateTime     @default(now()) @map("created_at")
   atualizadoEm DateTime     @updatedAt @map("updated_at")
@@ -120,6 +122,8 @@ model User {
   adminDashboardTodosCreated   AdminDashboardTodo[] @relation("AdminDashboardTodoCreatedBy")
   adminDashboardTodosProgress  AdminDashboardTodo[] @relation("AdminDashboardTodoProgressBy")
   adminDashboardTodosCompleted AdminDashboardTodo[] @relation("AdminDashboardTodoCompletedBy")
+  /** Áudios de livro marcados como ouvidos (material do aluno) */
+  bookAudioListens BookAudioListen[]
 
   // ├ìndices
   @@index([email])
@@ -695,9 +699,45 @@ model Book {
   atualizadoEm   DateTime @updatedAt @map("updated_at")
 
   releases       BookRelease[]
+  audios         BookAudio[]
 
   @@index([level])
   @@map("books")
+}
+
+/** Áudio por capítulo (faixa de páginas) vinculado a um livro do catálogo */
+model BookAudio {
+  id           String   @id @default(cuid())
+  bookId       String   @map("book_id")
+  chapterTitle String   @db.VarChar(255) @map("chapter_title")
+  pageStart    Int      @map("page_start")
+  pageEnd      Int      @map("page_end")
+  audioPath    String   @db.VarChar(500) @map("audio_path")
+  sortOrder    Int      @default(0) @map("sort_order")
+  criadoEm     DateTime @default(now()) @map("created_at")
+  atualizadoEm DateTime @updatedAt @map("updated_at")
+
+  book    Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  listens BookAudioListen[]
+
+  @@index([bookId])
+  @@map("book_audios")
+}
+
+/** Registro de que o aluno ouviu até o fim um áudio de capítulo (para barra de progresso) */
+model BookAudioListen {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  bookAudioId String   @map("book_audio_id")
+  listenedAt  DateTime @default(now()) @map("listened_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookAudio BookAudio @relation(fields: [bookAudioId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bookAudioId])
+  @@index([userId])
+  @@index([bookAudioId])
+  @@map("book_audio_listens")
 }
 
 // Model: BookRelease (Libera├º├úo de Livro)
@@ -806,9 +846,11 @@ model StudentAlert {
 
 // Status da aula no calend├írio (segunda a s├íbado = semana para frequ├¬ncia)
 enum LessonStatus {
-  CONFIRMED   // Confirmada
-  CANCELLED   // Cancelada
-  REPOSICAO   // Reposi├º├úo
+  CONFIRMED                  // Confirmada
+  CANCELLED                  // Cancelada (pode ter reposição)
+  CANCELLED_BY_TEACHER       // Cancelada pelo professor (pode ter reposição)
+  CANCELLED_NO_REPLACEMENT   // Cancelada sem reposição (não gera reposição)
+  REPOSICAO                  // Reposi├º├úo
 }
 
 // Enums para solicita├º├Áes de aula

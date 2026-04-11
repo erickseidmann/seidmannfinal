@@ -6,6 +6,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { enrollmentAllowsSchedulingLessons } from '@/lib/enrollment-scheduling'
+import { lessonIntervalsOverlap } from '@/lib/lesson-overlap'
+import {
+  isLessonCancelledFamily,
+  isLessonScheduledStatus,
+  LESSON_STATUSES_SCHEDULED,
+} from '@/lib/lesson-status'
 import {
   sendEmail,
   mensagemAulaCancelada,
@@ -128,7 +135,12 @@ export async function PATCH(
     const updateData: {
       enrollmentId?: string
       teacherId?: string | null
-      status?: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+      status?:
+        | 'CONFIRMED'
+        | 'CANCELLED'
+        | 'CANCELLED_BY_TEACHER'
+        | 'CANCELLED_NO_REPLACEMENT'
+        | 'REPOSICAO'
       startAt?: Date
       durationMinutes?: number
       notes?: string | null
@@ -137,7 +149,16 @@ export async function PATCH(
 
     if (enrollmentId != null) updateData.enrollmentId = enrollmentId
     if ('teacherId' in body) updateData.teacherId = teacherId ?? null
-    if (status != null && ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status)) {
+    if (
+      status != null &&
+      [
+        'CONFIRMED',
+        'CANCELLED',
+        'CANCELLED_BY_TEACHER',
+        'CANCELLED_NO_REPLACEMENT',
+        'REPOSICAO',
+      ].includes(status)
+    ) {
       updateData.status = status
     }
     if (startAtStr != null) {
@@ -159,17 +180,54 @@ export async function PATCH(
       return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
     }
 
-    // Regra de negócio: reposição só pode nascer de uma aula cancelada.
-    if (status === 'REPOSICAO' && lessonBefore.status !== 'CANCELLED' && lessonBefore.status !== 'REPOSICAO') {
-      return NextResponse.json(
-        { ok: false, message: 'Reposição só pode ser agendada a partir de uma aula cancelada.' },
-        { status: 400 }
-      )
+    // Reposição: só a partir de cancelamento que permite reposição, ou já é reposição.
+    if (status === 'REPOSICAO') {
+      const before = lessonBefore.status
+      const ok =
+        before === 'CANCELLED' ||
+        before === 'CANCELLED_BY_TEACHER' ||
+        before === 'REPOSICAO'
+      if (!ok) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              before === 'CANCELLED_NO_REPLACEMENT'
+                ? 'Esta aula foi cancelada sem reposição; não é possível marcar como reposição.'
+                : 'Reposição só pode ser agendada a partir de uma aula cancelada.',
+          },
+          { status: 400 }
+        )
+      }
     }
 
     const effectiveEnrollmentId = updateData.enrollmentId ?? lessonBefore.enrollmentId
     const effectiveTeacherId = updateData.teacherId ?? lessonBefore.teacherId
     const effectiveStartAt = updateData.startAt ?? lessonBefore.startAt
+    const teacherAfterPatch =
+      'teacherId' in body
+        ? teacherId && String(teacherId).trim() !== ''
+          ? String(teacherId).trim()
+          : null
+        : lessonBefore.teacherId
+
+    const lessonStatusAfterPatch = (updateData.status ?? lessonBefore.status) as string
+    if (effectiveEnrollmentId && teacherAfterPatch && isLessonScheduledStatus(lessonStatusAfterPatch)) {
+      const enrScheduling = await prisma.enrollment.findUnique({
+        where: { id: effectiveEnrollmentId },
+        select: { status: true },
+      })
+      if (enrScheduling && !enrollmentAllowsSchedulingLessons(enrScheduling.status)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              'Não é possível manter ou atribuir professor enquanto o aluno estiver em Matriculado ou Contrato aceito. Cancele a aula ou remova o professor.',
+          },
+          { status: 400 }
+        )
+      }
+    }
 
     // Verificar se aluno está pausado e tentando atribuir professor durante período pausado
     if (effectiveEnrollmentId && effectiveTeacherId && updateData.teacherId) {
@@ -234,6 +292,74 @@ export async function PATCH(
       }
     }
 
+    const patchDuration =
+      updateData.durationMinutes ?? lessonBefore.durationMinutes ?? 60
+    const patchStatus = (updateData.status ?? lessonBefore.status) as string
+    if (isLessonScheduledStatus(patchStatus) && effectiveTeacherId && effectiveEnrollmentId) {
+      const windowStart = new Date(effectiveStartAt)
+      windowStart.setHours(windowStart.getHours() - 4)
+      const windowEnd = new Date(effectiveStartAt)
+      windowEnd.setMinutes(windowEnd.getMinutes() + patchDuration + 240)
+
+      const byEnrollment = await prisma.lesson.findMany({
+        where: {
+          enrollmentId: effectiveEnrollmentId,
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
+          id: { not: id },
+          startAt: { gte: windowStart, lte: windowEnd },
+        },
+        select: { startAt: true, durationMinutes: true },
+      })
+      for (const ex of byEnrollment) {
+        if (
+          lessonIntervalsOverlap(
+            effectiveStartAt,
+            patchDuration,
+            ex.startAt,
+            ex.durationMinutes ?? 60
+          )
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                'Este aluno já tem aula neste horário (intervalo sobreposto). Ajuste horário ou duração.',
+            },
+            { status: 400 }
+          )
+        }
+      }
+
+      const byTeacher = await prisma.lesson.findMany({
+        where: {
+          teacherId: effectiveTeacherId,
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
+          id: { not: id },
+          startAt: { gte: windowStart, lte: windowEnd },
+        },
+        select: { enrollmentId: true, startAt: true, durationMinutes: true },
+      })
+      for (const ex of byTeacher) {
+        if (ex.enrollmentId === effectiveEnrollmentId) continue
+        if (
+          lessonIntervalsOverlap(
+            effectiveStartAt,
+            patchDuration,
+            ex.startAt,
+            ex.durationMinutes ?? 60
+          )
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message: 'Professor já tem aula neste horário com outro aluno.',
+            },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     // Adicionar observações automáticas quando status muda
     const oldStatus = lessonBefore?.status as string | undefined
     const newStatus = (updateData.status ?? oldStatus) as string | undefined
@@ -262,7 +388,7 @@ export async function PATCH(
         ? updateData.notes 
         : (lessonBefore?.notes || null)
       
-      if (newStatus === 'CANCELLED') {
+      if (newStatus && isLessonCancelledFamily(newStatus)) {
         const novaObs = adicionarObservacaoCancelamento(notesAtuais, nomeAdmin, agora)
         updateData.notes = novaObs
       } else if (newStatus === 'REPOSICAO') {
@@ -319,7 +445,7 @@ export async function PATCH(
       const emailProfessor = lesson.teacher.email
       const dataAula = lesson.startAt
       try {
-        if (newStatus === 'CANCELLED') {
+        if (newStatus && isLessonCancelledFamily(newStatus)) {
           if (emailAluno) {
             const { subject, text } = mensagemAulaCancelada({
               nomeAluno,

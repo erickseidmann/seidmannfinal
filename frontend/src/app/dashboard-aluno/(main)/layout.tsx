@@ -18,6 +18,7 @@ import {
   BookOpen,
   LogOut,
   X,
+  Gamepad2,
 } from 'lucide-react'
 
 const NAV = [
@@ -26,6 +27,7 @@ const NAV = [
   { href: '/dashboard-aluno/calendario', label: 'Calendário', icon: Calendar },
   { href: '/dashboard-aluno/aula', label: 'Sala de Aula', icon: Video },
   { href: '/dashboard-aluno/material', label: 'Material', icon: BookOpen },
+  { href: '/dashboard-aluno/jogos', label: 'Jogos', icon: Gamepad2 },
   { href: '/dashboard-aluno/chat', label: 'Chat', icon: MessageCircle },
   { href: '/dashboard-aluno/financeiro', label: 'Financeiro', icon: Wallet },
 ] as const

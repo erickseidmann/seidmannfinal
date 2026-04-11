@@ -5,8 +5,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import type { LessonStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { ENROLLMENT_STATUSES_LESSON_TRACKING } from '@/lib/enrollment-scheduling'
+import {
+  LESSON_STATUSES_CANCELLED_FAMILY,
+  lessonCancelledStatusAllowsReposicao,
+} from '@/lib/lesson-status'
 
 function getMonday(d: Date): Date {
   const date = new Date(d)
@@ -93,7 +99,7 @@ export async function GET(request: NextRequest) {
     // Canceladas: cubo/lista mensal (todas as aulas canceladas do mês selecionado)
     const cancelledLessonsInMonth = await prisma.lesson.findMany({
       where: {
-        status: 'CANCELLED',
+        status: { in: [...LESSON_STATUSES_CANCELLED_FAMILY] as LessonStatus[] },
         startAt: { gte: monthStart, lte: monthEnd },
         enrollment: {
           status: { not: 'INACTIVE' },
@@ -133,6 +139,7 @@ export async function GET(request: NextRequest) {
       rescheduledLessonId: string | null
       rescheduledAt: string | null
       rescheduledTeacherName: string | null
+      allowsReschedule: boolean
     }[] = cancelledLessonsInMonth.map((l) => {
       const candidates = reposicoesByEnrollment.filter((r) => r.enrollmentId === l.enrollmentId)
       const marker = `[cancelledLessonId:${l.id}]`
@@ -153,6 +160,7 @@ export async function GET(request: NextRequest) {
         rescheduledLessonId: matched?.id ?? null,
         rescheduledAt: matched?.startAt?.toISOString() ?? null,
         rescheduledTeacherName: matched?.teacher?.nome ?? null,
+        allowsReschedule: lessonCancelledStatusAllowsReposicao(l.status),
       }
     })
 
@@ -212,7 +220,7 @@ export async function GET(request: NextRequest) {
     // Buscar todos os alunos em situação ativa com frequência semanal definida (e tempoAulaMinutos quando houver).
     const activeEnrollments = await prisma.enrollment.findMany({
       where: {
-        status: { in: ['ACTIVE', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING'] },
+        status: { in: [...ENROLLMENT_STATUSES_LESSON_TRACKING] },
         frequenciaSemanal: { gt: 0 }, // Fix: use gt:0 instead of not:null for Int fields
       },
       select: {

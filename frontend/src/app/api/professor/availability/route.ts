@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(request: NextRequest) {
   try {
@@ -121,7 +122,7 @@ export async function PUT(request: NextRequest) {
       const lessons = await prisma.lesson.findMany({
         where: {
           teacherId,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: hoje },
         },
         select: {
@@ -184,7 +185,7 @@ export async function PUT(request: NextRequest) {
       const lessonsRedirect = await prisma.lesson.findMany({
         where: {
           teacherId,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: hoje },
         },
         select: {

@@ -4,17 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-
-function overlap(
-  startA: Date,
-  durationA: number,
-  startB: Date,
-  durationB: number
-): boolean {
-  const endA = new Date(startA.getTime() + durationA * 60 * 1000)
-  const endB = new Date(startB.getTime() + durationB * 60 * 1000)
-  return startA.getTime() < endB.getTime() && startB.getTime() < endA.getTime()
-}
+import { lessonIntervalsOverlap } from '@/lib/lesson-overlap'
 
 function formatDataHora(d: Date): string {
   return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) +
@@ -24,6 +14,11 @@ import { prisma } from '@/lib/prisma'
 import { isTeacherAlertEnrollmentIdColumnError } from '@/lib/prisma-teacher-alert-enrollment-column'
 import { buildNewStudentTeacherAlertMessage } from '@/lib/teacher-new-student-alert'
 import { requireAdmin } from '@/lib/auth'
+import {
+  ENROLLMENT_STATUSES_PRE_SCHEDULING,
+  enrollmentAllowsSchedulingLessons,
+} from '@/lib/enrollment-scheduling'
+import { LESSON_STATUSES_SCHEDULED, lessonStatusValidOriginForReposicao } from '@/lib/lesson-status'
 import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
 
 export async function GET(request: NextRequest) {
@@ -68,6 +63,9 @@ export async function GET(request: NextRequest) {
       startAt: { gte: startAt, lte: endAt },
       // Não mostrar aulas sem professor: nenhum aluno pode ficar no calendário sem professor
       teacherId: { not: null },
+      enrollment: {
+        status: { notIn: [...ENROLLMENT_STATUSES_PRE_SCHEDULING] },
+      },
     }
     if (teacherIdParam?.trim()) {
       where.teacherId = teacherIdParam.trim()
@@ -179,6 +177,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (enrollment && !enrollmentAllowsSchedulingLessons(enrollment.status)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            'Não é possível agendar aulas para alunos em Matriculado ou Contrato aceito. Avance o status após pagamento/início.',
+        },
+        { status: 400 }
+      )
+    }
+
     // Verificar se aluno está inativo - não pode criar aulas futuras
     if (enrollment && enrollment.status === 'INACTIVE') {
       const hoje = new Date()
@@ -238,7 +247,13 @@ export async function POST(request: NextRequest) {
     }
 
 
-    const validStatus = ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status)
+    const validStatus = [
+      'CONFIRMED',
+      'CANCELLED',
+      'CANCELLED_BY_TEACHER',
+      'CANCELLED_NO_REPLACEMENT',
+      'REPOSICAO',
+    ].includes(status)
       ? status
       : 'CONFIRMED'
     const duration = Number(durationMinutes) || 60
@@ -276,24 +291,49 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const canceledLesson = await prisma.lesson.findFirst({
-        where: {
-          enrollmentId,
-          teacherId: canceledTeacherId,
-          startAt: canceledStartAt,
-          status: 'CANCELLED',
-        },
-        select: { id: true },
-      })
+      const canceledLessonIdFromBody =
+        canceledLessonInfo && typeof canceledLessonInfo.lessonId === 'string'
+          ? canceledLessonInfo.lessonId.trim()
+          : ''
 
-      if (!canceledLesson) {
-        return NextResponse.json(
-          {
-            ok: false,
-            message: 'Não foi encontrada a aula cancelada de origem para esta reposição.',
+      let canceledLesson: { id: string } | null = null
+      if (canceledLessonIdFromBody) {
+        const cl = await prisma.lesson.findFirst({
+          where: { id: canceledLessonIdFromBody, enrollmentId },
+          select: { id: true, status: true },
+        })
+        if (!cl || !lessonStatusValidOriginForReposicao(cl.status)) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                cl?.status === 'CANCELLED_NO_REPLACEMENT'
+                  ? 'Esta aula foi cancelada sem reposição; não é possível agendar reposição a partir dela.'
+                  : 'Não foi encontrada a aula cancelada de origem válida para esta reposição.',
+            },
+            { status: 400 }
+          )
+        }
+        canceledLesson = { id: cl.id }
+      } else {
+        canceledLesson = await prisma.lesson.findFirst({
+          where: {
+            enrollmentId,
+            teacherId: canceledTeacherId,
+            startAt: canceledStartAt,
+            status: { in: ['CANCELLED', 'CANCELLED_BY_TEACHER'] },
           },
-          { status: 400 }
-        )
+          select: { id: true },
+        })
+        if (!canceledLesson) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message: 'Não foi encontrada a aula cancelada de origem para esta reposição.',
+            },
+            { status: 400 }
+          )
+        }
       }
     }
 
@@ -335,35 +375,59 @@ export async function POST(request: NextRequest) {
 
     const lessonsCreated: Awaited<ReturnType<typeof prisma.lesson.create>>[] = []
 
-    // Verificar sobreposição: não permitir que professor tenha duas aulas no mesmo horário (exceto mesmo aluno)
+    // Sobreposição: mesmo aluno não pode ter duas aulas no mesmo intervalo (qualquer professor);
+    // mesmo professor não pode ter duas aulas no mesmo intervalo (outros alunos).
     const checkOverlap = async (
       lessonStart: Date,
       enrollmentIdParam: string,
       teacherIdParam: string
-    ): Promise<{ skip: boolean; conflictMessage?: string }> => {
+    ): Promise<{ conflictMessage?: string }> => {
       const windowStart = new Date(lessonStart)
       windowStart.setHours(windowStart.getHours() - 4)
       const windowEnd = new Date(lessonStart)
-      windowEnd.setMinutes(windowEnd.getMinutes() + duration + 60)
-      const existing = await prisma.lesson.findMany({
+      windowEnd.setMinutes(windowEnd.getMinutes() + duration + 240)
+
+      const byEnrollment = await prisma.lesson.findMany({
         where: {
-          teacherId: teacherIdParam,
-          status: { not: 'CANCELLED' },
+          enrollmentId: enrollmentIdParam,
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: windowStart, lte: windowEnd },
         },
-        select: { id: true, enrollmentId: true, startAt: true, durationMinutes: true },
+        select: { startAt: true, durationMinutes: true },
       })
-      for (const ex of existing) {
-        if (!overlap(lessonStart, duration, ex.startAt, ex.durationMinutes ?? 60)) continue
-        if (ex.enrollmentId === enrollmentIdParam) {
-          return { skip: true } // mesmo aluno: ignorar este slot
+      for (const ex of byEnrollment) {
+        if (
+          !lessonIntervalsOverlap(lessonStart, duration, ex.startAt, ex.durationMinutes ?? 60)
+        ) {
+          continue
         }
         return {
-          skip: false,
+          conflictMessage:
+            'Este aluno já tem aula neste horário (intervalo sobreposto). Escolha outro horário que não coincida com a duração da aula existente.',
+        }
+      }
+
+      const byTeacher = await prisma.lesson.findMany({
+        where: {
+          teacherId: teacherIdParam,
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
+          startAt: { gte: windowStart, lte: windowEnd },
+        },
+        select: { enrollmentId: true, startAt: true, durationMinutes: true },
+      })
+      for (const ex of byTeacher) {
+        if (
+          !lessonIntervalsOverlap(lessonStart, duration, ex.startAt, ex.durationMinutes ?? 60)
+        ) {
+          continue
+        }
+        if (ex.enrollmentId === enrollmentIdParam) continue
+        return {
           conflictMessage: `A repetição de frequência não pode acontecer porque no dia ${formatDataHora(ex.startAt)} o professor já tem outra aula. Por favor, reagende para outro dia e horário, ou coloque uma frequência diferente. Nunca podemos sobrepor uma aula sobre a outra.`,
         }
       }
-      return { skip: false }
+
+      return {}
     }
 
     // Se há repetição de frequência, usar lógica de frequência (não usar repeatWeeks)
@@ -380,25 +444,23 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           )
         }
-        if (!overlapResult.skip) {
         const lesson1 = await prisma.lesson.create({
-            data: {
-              enrollmentId,
-              teacherId,
-              status: validStatus,
-              startAt: lessonStart,
-              durationMinutes: duration,
-              notes: notesTrim,
-              createdById: auth.session?.sub || null,
-              createdByName,
-            },
-            include: {
-              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-              teacher: { select: { id: true, nome: true, email: true } },
-            },
-          })
-          lessonsCreated.push(lesson1)
-        }
+          data: {
+            enrollmentId,
+            teacherId,
+            status: validStatus,
+            startAt: lessonStart,
+            durationMinutes: duration,
+            notes: notesTrim,
+            createdById: auth.session?.sub || null,
+            createdByName,
+          },
+          include: {
+            enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+            teacher: { select: { id: true, nome: true, email: true } },
+          },
+        })
+        lessonsCreated.push(lesson1)
         
         // Aula da mesma semana (se configurada)
         if (repeatSameWeek && repeatSameWeekStartAt) {
@@ -411,25 +473,23 @@ export async function POST(request: NextRequest) {
               { status: 400 }
             )
           }
-          if (!overlapResult2.skip) {
           const lesson2 = await prisma.lesson.create({
-              data: {
-                enrollmentId,
-                teacherId,
-                status: validStatus,
-                startAt: sameWeekDate,
-                durationMinutes: duration,
-                notes: notesTrim,
-                createdById: auth.session?.sub || null,
-                createdByName,
-              },
-              include: {
-                enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-                teacher: { select: { id: true, nome: true, email: true } },
-              },
-            })
-            lessonsCreated.push(lesson2)
-          }
+            data: {
+              enrollmentId,
+              teacherId,
+              status: validStatus,
+              startAt: sameWeekDate,
+              durationMinutes: duration,
+              notes: notesTrim,
+              createdById: auth.session?.sub || null,
+              createdByName,
+            },
+            include: {
+              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+              teacher: { select: { id: true, nome: true, email: true } },
+            },
+          })
+          lessonsCreated.push(lesson2)
         }
       }
     } else {
@@ -445,7 +505,6 @@ export async function POST(request: NextRequest) {
               { status: 400 }
             )
           }
-          if (overlapResult.skip) continue
           const lesson = await prisma.lesson.create({
             data: {
               enrollmentId,
@@ -473,7 +532,6 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           )
         }
-        if (!overlapResult.skip) {
         const lesson = await prisma.lesson.create({
           data: {
             enrollmentId,
@@ -491,7 +549,6 @@ export async function POST(request: NextRequest) {
           },
         })
         lessonsCreated.push(lesson)
-        }
       }
       
       // Se há repetição na mesma semana (sem frequência), criar essa aula também
@@ -504,25 +561,23 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           )
         }
-        if (!overlapResultSame.skip) {
-        const lesson = await prisma.lesson.create({
-            data: {
-              enrollmentId,
-              teacherId,
-              status: validStatus,
-              startAt: sameWeekDate,
-              durationMinutes: duration,
-              notes: notesTrim,
-              createdById: auth.session?.sub || null,
-              createdByName,
-            },
-            include: {
-              enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
-              teacher: { select: { id: true, nome: true, email: true } },
-            },
-          })
-          lessonsCreated.push(lesson)
-        }
+        const lessonSameWeek = await prisma.lesson.create({
+          data: {
+            enrollmentId,
+            teacherId,
+            status: validStatus,
+            startAt: sameWeekDate,
+            durationMinutes: duration,
+            notes: notesTrim,
+            createdById: auth.session?.sub || null,
+            createdByName,
+          },
+          include: {
+            enrollment: { select: { id: true, nome: true, email: true, frequenciaSemanal: true } },
+            teacher: { select: { id: true, nome: true, email: true } },
+          },
+        })
+        lessonsCreated.push(lessonSameWeek)
       }
     }
 

@@ -11,6 +11,8 @@ import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import type { InactiveReason } from '@prisma/client'
 import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
+import { ENROLLMENT_STATUSES_PRE_SCHEDULING } from '@/lib/enrollment-scheduling'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -51,11 +53,14 @@ export async function GET(request: NextRequest) {
     const weekStartParam = searchParams.get('weekStart') // Opcional: segunda-feira ISO para professor da semana
     const limitParam = searchParams.get('limit')
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
+    const schedulingEligible = searchParams.get('schedulingEligible') === '1'
 
     // Construir filtro de status
     const statusFilter: any = statusParam
       ? { status: statusParam }
-      : {} // Se não especificado, busca todos
+      : schedulingEligible
+        ? { status: { notIn: ENROLLMENT_STATUSES_PRE_SCHEDULING } }
+        : {} // Se não especificado, busca todos
 
     // Construir filtro de busca (nome, email, whatsapp, nomeGrupo)
     // MySQL não suporta mode: 'insensitive', mas aceita contains (case-sensitive)
@@ -133,7 +138,7 @@ export async function GET(request: NextRequest) {
           where: {
             enrollmentId: { in: enrollmentIds },
             startAt: { gte: startFrom, lte: endAt },
-            status: { not: 'CANCELLED' },
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
           },
           select: {
             enrollmentId: true,
@@ -230,8 +235,14 @@ export async function GET(request: NextRequest) {
             tempoAulaMinutos: (e as any).tempoAulaMinutos ?? null,
             tipoAula: ((e as any).tipoAula?.trim()) || 'PARTICULAR',
             nomeGrupo: (e as any).nomeGrupo ?? null,
-            teacherNameForWeek: teacherNamesByEnrollment[e.id] ?? null,
-            agenda: agendaByEnrollment[e.id] ?? null,
+            teacherNameForWeek:
+              ENROLLMENT_STATUSES_PRE_SCHEDULING.includes(e.status)
+                ? null
+                : (teacherNamesByEnrollment[e.id] ?? null),
+            agenda:
+              ENROLLMENT_STATUSES_PRE_SCHEDULING.includes(e.status)
+                ? null
+                : (agendaByEnrollment[e.id] ?? null),
             cep: (e as any).cep ?? null,
             rua: (e as any).rua ?? null,
             bairro: (e as any).bairro ?? null,

@@ -63,16 +63,31 @@ export async function GET(request: NextRequest) {
       orderBy: { criadoEm: 'desc' },
     })
 
-    const books = releases
-      .filter((r) => r.book)
-      .map((r) => ({
-        id: r.book!.id,
-        nome: r.book!.nome,
-        level: r.book!.level,
-        totalPaginas: r.book!.totalPaginas,
-        capaPath: r.book!.capaPath,
-        pdfPath: r.book!.pdfPath,
-      }))
+    const booksRaw = releases.filter((r) => r.book).map((r) => r.book!)
+
+    const books = await Promise.all(
+      booksRaw.map(async (book) => {
+        const [audioTotal, audioListened] = await Promise.all([
+          prisma.bookAudio.count({ where: { bookId: book.id } }),
+          prisma.bookAudioListen.count({
+            where: {
+              userId: targetUserId,
+              bookAudio: { bookId: book.id },
+            },
+          }),
+        ])
+        return {
+          id: book.id,
+          nome: book.nome,
+          level: book.level,
+          totalPaginas: book.totalPaginas,
+          capaPath: book.capaPath,
+          pdfPath: book.pdfPath,
+          audioTotal,
+          audioListened,
+        }
+      })
+    )
 
     return NextResponse.json({
       ok: true,

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { ENROLLMENT_STATUSES_LESSON_TRACKING } from '@/lib/enrollment-scheduling'
 
 function getSaturdayEnd(monday: Date): Date {
   const sat = new Date(monday)
@@ -42,16 +43,9 @@ export async function GET(request: NextRequest) {
     monday.setHours(0, 0, 0, 0)
     const saturdayEnd = getSaturdayEnd(monday)
 
-    // Considerar apenas matrículas em situação "ativa" para frequência (mesma definição usada em /lessons/stats):
-    // REGISTERED, CONTRACT_ACCEPTED, ACTIVE, PAYMENT_PENDING.
-    const activeStatuses: import('@prisma/client').EnrollmentStatus[] = [
-      'ACTIVE',
-      'REGISTERED',
-      'CONTRACT_ACCEPTED',
-      'PAYMENT_PENDING',
-    ]
+    // Matrículas já no fluxo de aulas (exclui Matriculado / Contrato aceito).
     const enrollments = await prisma.enrollment.findMany({
-      where: { status: { in: activeStatuses } },
+      where: { status: { in: [...ENROLLMENT_STATUSES_LESSON_TRACKING] } },
       select: { id: true, frequenciaSemanal: true },
     })
 

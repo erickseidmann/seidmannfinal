@@ -6,14 +6,37 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
-import { Plus, Search, BookOpen, Upload, X } from 'lucide-react'
+import { Plus, Search, BookOpen, Upload, X, Headphones, Trash2, Loader2 } from 'lucide-react'
+
+const MAX_BATCH_AUDIOS = 10
+const ALLOWED_AUDIO_EXT = ['.mp3', '.m4a', '.wav', '.ogg', '.webm'] as const
+
+function defaultChapterTitleFromFile(file: File): string {
+  const base = file.name.replace(/\.[^./\\]+$/, '').replace(/[_]+/g, ' ').trim()
+  return base || 'Capítulo'
+}
+
+function newBatchRowKey(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `row-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+interface PendingBatchAudioRow {
+  key: string
+  file: File
+  chapterTitle: string
+  pageStart: number
+  pageEnd: number
+  sortOrder: number
+}
 
 const BOOK_LEVELS: { value: string; label: string }[] = [
   { value: 'A1', label: 'A1 – Básico Iniciante' },
@@ -36,6 +59,14 @@ interface Book {
   pdfPath: string | null
   capaPath: string | null
   criadoEm: string
+}
+
+interface BookAudioRow {
+  id: string
+  chapterTitle: string
+  pageStart: number
+  pageEnd: number
+  sortOrder: number
 }
 
 interface BookRelease {
@@ -102,6 +133,18 @@ export default function AdminLivrosPage() {
     pdf: null as File | null,
     capa: null as File | null,
   })
+
+  const [editBookAudios, setEditBookAudios] = useState<BookAudioRow[]>([])
+  const [editAudiosLoading, setEditAudiosLoading] = useState(false)
+  const [newAudioChapter, setNewAudioChapter] = useState('')
+  const [newAudioPageStart, setNewAudioPageStart] = useState(1)
+  const [newAudioPageEnd, setNewAudioPageEnd] = useState(1)
+  const [newAudioSort, setNewAudioSort] = useState(0)
+  const [newAudioFile, setNewAudioFile] = useState<File | null>(null)
+  const [addingAudio, setAddingAudio] = useState(false)
+  const [deletingAudioId, setDeletingAudioId] = useState<string | null>(null)
+  const [pendingBatchAudios, setPendingBatchAudios] = useState<PendingBatchAudioRow[]>([])
+  const batchFileInputRef = useRef<HTMLInputElement>(null)
 
   const [releaseForm, setReleaseForm] = useState({
     selectedUserIds: [] as string[],
@@ -193,6 +236,31 @@ export default function AdminLivrosPage() {
   }, [tab, fetchBooks])
 
   useEffect(() => {
+    if (!editingBook) {
+      setEditBookAudios([])
+      setNewAudioChapter('')
+      setNewAudioPageStart(1)
+      setNewAudioPageEnd(1)
+      setNewAudioSort(0)
+      setNewAudioFile(null)
+      setPendingBatchAudios([])
+      return
+    }
+    setEditAudiosLoading(true)
+    fetch(`/api/admin/books/${editingBook.id}/audios`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.data?.audios)) {
+          setEditBookAudios(j.data.audios)
+        } else {
+          setEditBookAudios([])
+        }
+      })
+      .catch(() => setEditBookAudios([]))
+      .finally(() => setEditAudiosLoading(false))
+  }, [editingBook?.id])
+
+  useEffect(() => {
     if (tab === 'liberacoes') fetchReleases()
   }, [tab, releaseFilterBookId, releaseFilterRole, fetchReleases])
 
@@ -254,6 +322,204 @@ export default function AdminLivrosPage() {
       pdf: null,
       capa: null,
     })
+    setNewAudioChapter('')
+    setNewAudioPageStart(1)
+    setNewAudioPageEnd(1)
+    setNewAudioSort(0)
+    setNewAudioFile(null)
+    setPendingBatchAudios([])
+  }
+
+  const handleBatchFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const list = e.target.files
+    if (!list?.length || !editingBook) return
+    const picked = Array.from(list)
+    const valid: File[] = []
+    const rejected: string[] = []
+    for (const f of picked.slice(0, MAX_BATCH_AUDIOS)) {
+      const ext = f.name.includes('.') ? `.${f.name.split('.').pop()!.toLowerCase()}` : ''
+      if (ALLOWED_AUDIO_EXT.includes(ext as (typeof ALLOWED_AUDIO_EXT)[number])) valid.push(f)
+      else rejected.push(f.name)
+    }
+    if (rejected.length > 0) {
+      setToast({
+        message: `Ignorados (formato inválido): ${rejected.slice(0, 3).join(', ')}${rejected.length > 3 ? '…' : ''}`,
+        type: 'error',
+      })
+    }
+    if (valid.length === 0) {
+      e.target.value = ''
+      return
+    }
+    const maxSort = editBookAudios.reduce((m, a) => Math.max(m, a.sortOrder), 0)
+    setPendingBatchAudios(
+      valid.map((file, i) => ({
+        key: newBatchRowKey(),
+        file,
+        chapterTitle: defaultChapterTitleFromFile(file),
+        pageStart: 1,
+        pageEnd: 1,
+        sortOrder: maxSort + i + 1,
+      }))
+    )
+    e.target.value = ''
+  }
+
+  /**
+   * Envia todos os áudios da fila em lote (máx. 10).
+   */
+  const submitPendingBatchAudios = async (options?: { showSuccessToast?: boolean }): Promise<boolean> => {
+    const showSuccessToast = options?.showSuccessToast ?? false
+    if (!editingBook || pendingBatchAudios.length === 0) return true
+
+    for (let i = 0; i < pendingBatchAudios.length; i++) {
+      const row = pendingBatchAudios[i]
+      if (!row.chapterTitle.trim()) {
+        setToast({ message: `Fila: informe o título na linha ${i + 1}.`, type: 'error' })
+        return false
+      }
+      if (row.pageStart < 1 || row.pageEnd < row.pageStart) {
+        setToast({ message: `Fila: intervalo de páginas inválido na linha ${i + 1}.`, type: 'error' })
+        return false
+      }
+      if (row.pageEnd > editingBook.totalPaginas) {
+        setToast({
+          message: `Fila: página final (linha ${i + 1}) não pode ser maior que ${editingBook.totalPaginas}.`,
+          type: 'error',
+        })
+        return false
+      }
+    }
+
+    setAddingAudio(true)
+    try {
+      let count = 0
+      for (const row of pendingBatchAudios) {
+        const fd = new FormData()
+        fd.append('chapterTitle', row.chapterTitle.trim())
+        fd.append('pageStart', String(row.pageStart))
+        fd.append('pageEnd', String(row.pageEnd))
+        fd.append('sortOrder', String(row.sortOrder))
+        fd.append('audio', row.file)
+        const res = await fetch(`/api/admin/books/${editingBook.id}/audios`, {
+          method: 'POST',
+          credentials: 'include',
+          body: fd,
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message || `Erro ao enviar "${row.chapterTitle.trim()}"`)
+        }
+        if (json.data?.audio) {
+          setEditBookAudios((prev) =>
+            [...prev, json.data.audio].sort((a, b) => a.sortOrder - b.sortOrder || a.pageStart - b.pageStart)
+          )
+        }
+        count++
+      }
+      setPendingBatchAudios([])
+      if (showSuccessToast) {
+        setToast({ message: `${count} áudio(s) adicionado(s).`, type: 'success' })
+      }
+      return true
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao enviar lote de áudios', type: 'error' })
+      return false
+    } finally {
+      setAddingAudio(false)
+    }
+  }
+
+  /**
+   * Envia o áudio do formulário (se houver título + arquivo).
+   * Sem pendência → true. Erro de validação/envio → false (toast já exibido).
+   * `showSuccessToast`: só para o botão "Adicionar áudio"; no "Salvar" o toast final é do livro.
+   */
+  const trySubmitPendingAudio = async (options?: { showSuccessToast?: boolean }): Promise<boolean> => {
+    const showSuccessToast = options?.showSuccessToast ?? false
+    if (!editingBook) return true
+    const hasFile = !!newAudioFile
+    const hasTitle = !!newAudioChapter.trim()
+    if (!hasFile && !hasTitle) return true
+    if (!newAudioChapter.trim()) {
+      setToast({ message: 'Informe o título do capítulo.', type: 'error' })
+      return false
+    }
+    if (!newAudioFile) {
+      setToast({ message: 'Selecione um arquivo de áudio.', type: 'error' })
+      return false
+    }
+    if (newAudioPageStart < 1 || newAudioPageEnd < newAudioPageStart) {
+      setToast({ message: 'Intervalo de páginas inválido.', type: 'error' })
+      return false
+    }
+    if (newAudioPageEnd > editingBook.totalPaginas) {
+      setToast({
+        message: `Página final não pode ser maior que ${editingBook.totalPaginas}.`,
+        type: 'error',
+      })
+      return false
+    }
+    setAddingAudio(true)
+    try {
+      const fd = new FormData()
+      fd.append('chapterTitle', newAudioChapter.trim())
+      fd.append('pageStart', String(newAudioPageStart))
+      fd.append('pageEnd', String(newAudioPageEnd))
+      fd.append('sortOrder', String(newAudioSort))
+      fd.append('audio', newAudioFile)
+      const res = await fetch(`/api/admin/books/${editingBook.id}/audios`, {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || 'Erro ao enviar áudio')
+      }
+      if (json.data?.audio) {
+        setEditBookAudios((prev) =>
+          [...prev, json.data.audio].sort((a, b) => a.sortOrder - b.sortOrder || a.pageStart - b.pageStart)
+        )
+      }
+      setNewAudioChapter('')
+      setNewAudioFile(null)
+      if (showSuccessToast) {
+        setToast({ message: json.message || 'Áudio adicionado.', type: 'success' })
+      }
+      return true
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao enviar áudio', type: 'error' })
+      return false
+    } finally {
+      setAddingAudio(false)
+    }
+  }
+
+  const handleAddBookAudio = async () => {
+    await trySubmitPendingAudio({ showSuccessToast: true })
+  }
+
+  const handleDeleteBookAudio = async (audioId: string) => {
+    if (!editingBook) return
+    if (!confirm('Remover este áudio?')) return
+    setDeletingAudioId(audioId)
+    try {
+      const res = await fetch(`/api/admin/books/${editingBook.id}/audios/${encodeURIComponent(audioId)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || 'Erro ao remover')
+      }
+      setEditBookAudios((prev) => prev.filter((a) => a.id !== audioId))
+      setToast({ message: 'Áudio removido.', type: 'success' })
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erro ao remover', type: 'error' })
+    } finally {
+      setDeletingAudioId(null)
+    }
   }
 
   const handleEditBook = async (e: React.FormEvent) => {
@@ -265,6 +531,11 @@ export default function AdminLivrosPage() {
     }
     setEditBookLoading(true)
     try {
+      const batchOk = await submitPendingBatchAudios({ showSuccessToast: false })
+      if (!batchOk) return
+      const audioOk = await trySubmitPendingAudio({ showSuccessToast: false })
+      if (!audioOk) return
+
       const fd = new FormData()
       fd.append('nome', editBookForm.nome.trim())
       fd.append('level', editBookForm.level)
@@ -820,7 +1091,7 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
           isOpen={!!editingBook}
           onClose={() => setEditingBook(null)}
           title="Editar Livro"
-          size="lg"
+          size="xl"
           footer={
             <>
               <Button variant="outline" onClick={() => setEditingBook(null)}>
@@ -945,6 +1216,292 @@ onClick={() => void handleEditBook({ preventDefault: () => {} } as React.FormEve
                 <p className="text-xs text-gray-500 mt-1">
                   Deixe em branco para manter a capa atual
                 </p>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-2">
+                  <Headphones className="w-4 h-4 text-brand-orange" aria-hidden />
+                  Áudios por capítulo
+                </h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Cada arquivo corresponde a um capítulo e à faixa de páginas no PDF. Os alunos com o livro liberado
+                  ouvem pelo material online.
+                </p>
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-3">
+                  Um áudio: preencha e use <strong>Adicionar áudio</strong>, ou até {MAX_BATCH_AUDIOS} de uma vez na
+                  seção abaixo. No <strong>Salvar</strong>, o sistema envia primeiro a fila em lote, depois o áudio
+                  único pendente (se houver), e atualiza o livro.
+                </p>
+                {editAudiosLoading ? (
+                  <p className="text-sm text-gray-500 flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    Carregando áudios…
+                  </p>
+                ) : editBookAudios.length === 0 ? (
+                  <p className="text-xs text-gray-500 mb-3">Nenhum áudio cadastrado.</p>
+                ) : (
+                  <ul className="space-y-2 mb-4 max-h-40 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                    {editBookAudios.map((a) => (
+                      <li
+                        key={a.id}
+                        className="flex items-start justify-between gap-2 text-sm bg-gray-50 rounded-md px-2 py-1.5"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-medium text-gray-800 block truncate">{a.chapterTitle}</span>
+                          <span className="text-xs text-gray-500">
+                            Págs. {a.pageStart}–{a.pageEnd}
+                            {a.sortOrder !== 0 ? ` · ordem ${a.sortOrder}` : ''}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteBookAudio(a.id)}
+                          disabled={deletingAudioId === a.id}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded shrink-0 disabled:opacity-40"
+                          title="Remover áudio"
+                          aria-label={`Remover áudio ${a.chapterTitle}`}
+                        >
+                          {deletingAudioId === a.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Título do capítulo</label>
+                    <input
+                      type="text"
+                      value={newAudioChapter}
+                      onChange={(e) => setNewAudioChapter(e.target.value)}
+                      className="input w-full text-sm"
+                      placeholder="Ex.: Unidade 3 – Past tense"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Página inicial</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={editingBook.totalPaginas}
+                      value={newAudioPageStart}
+                      onChange={(e) =>
+                        setNewAudioPageStart(Math.max(1, parseInt(e.target.value, 10) || 1))
+                      }
+                      className="input w-full text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Página final</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={editingBook.totalPaginas}
+                      value={newAudioPageEnd}
+                      onChange={(e) =>
+                        setNewAudioPageEnd(
+                          Math.min(
+                            editingBook.totalPaginas,
+                            Math.max(1, parseInt(e.target.value, 10) || 1)
+                          )
+                        )
+                      }
+                      className="input w-full text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Ordem (opcional)</label>
+                    <input
+                      type="number"
+                      value={newAudioSort}
+                      onChange={(e) => setNewAudioSort(parseInt(e.target.value, 10) || 0)}
+                      className="input w-full text-sm"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Arquivo de áudio</label>
+                    <input
+                      type="file"
+                      accept=".mp3,.m4a,.wav,.ogg,.webm,audio/*"
+                      onChange={(e) => setNewAudioFile(e.target.files?.[0] ?? null)}
+                      className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-gray-300"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">MP3, M4A, WAV, OGG ou WebM · máx. 45 MB</p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={addingAudio || editAudiosLoading}
+                  onClick={() => void handleAddBookAudio()}
+                >
+                  {addingAudio ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2 inline" aria-hidden />
+                      Enviando…
+                    </>
+                  ) : (
+                    'Adicionar áudio'
+                  )}
+                </Button>
+
+                <div className="mt-6 pt-4 border-t border-dashed border-gray-200">
+                  <h4 className="text-xs font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                    <Upload className="w-3.5 h-3.5 text-brand-orange shrink-0" aria-hidden />
+                    Vários áudios de uma vez (máx. {MAX_BATCH_AUDIOS})
+                  </h4>
+                  <p className="text-[11px] text-gray-500 mb-2">
+                    Selecione vários arquivos; edite título e páginas em cada linha e envie a fila, ou apenas salve o
+                    livro para enviar tudo automaticamente.
+                  </p>
+                  <input
+                    ref={batchFileInputRef}
+                    type="file"
+                    multiple
+                    accept=".mp3,.m4a,.wav,.ogg,.webm,audio/*"
+                    disabled={addingAudio || editAudiosLoading}
+                    onChange={handleBatchFilesSelected}
+                    className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-gray-300 disabled:opacity-50"
+                  />
+                  {pendingBatchAudios.length > 0 && (
+                    <div className="mt-3 space-y-3 max-h-[min(50vh,360px)] overflow-y-auto pr-1">
+                      {pendingBatchAudios.map((row, idx) => (
+                        <div
+                          key={row.key}
+                          className="rounded-lg border border-gray-200 bg-gray-50/90 p-2 sm:p-3 text-xs space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-gray-700">#{idx + 1}</span>
+                            <button
+                              type="button"
+                              disabled={addingAudio}
+                              onClick={() =>
+                                setPendingBatchAudios((p) => p.filter((x) => x.key !== row.key))
+                              }
+                              className="text-red-600 hover:underline disabled:opacity-40"
+                            >
+                              Remover da fila
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-gray-500 truncate" title={row.file.name}>
+                            {row.file.name}
+                          </p>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Título</label>
+                            <input
+                              type="text"
+                              value={row.chapterTitle}
+                              onChange={(e) =>
+                                setPendingBatchAudios((p) =>
+                                  p.map((r) =>
+                                    r.key === row.key ? { ...r, chapterTitle: e.target.value } : r
+                                  )
+                                )
+                              }
+                              className="input w-full text-sm"
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Pág. ini.</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={editingBook.totalPaginas}
+                                value={row.pageStart}
+                                onChange={(e) =>
+                                  setPendingBatchAudios((p) =>
+                                    p.map((r) =>
+                                      r.key === row.key
+                                        ? { ...r, pageStart: Math.max(1, parseInt(e.target.value, 10) || 1) }
+                                        : r
+                                    )
+                                  )
+                                }
+                                className="input w-full text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Pág. fim</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={editingBook.totalPaginas}
+                                value={row.pageEnd}
+                                onChange={(e) =>
+                                  setPendingBatchAudios((p) =>
+                                    p.map((r) =>
+                                      r.key === row.key
+                                        ? {
+                                            ...r,
+                                            pageEnd: Math.min(
+                                              editingBook.totalPaginas,
+                                              Math.max(1, parseInt(e.target.value, 10) || 1)
+                                            ),
+                                          }
+                                        : r
+                                    )
+                                  )
+                                }
+                                className="input w-full text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Ordem</label>
+                              <input
+                                type="number"
+                                value={row.sortOrder}
+                                onChange={(e) =>
+                                  setPendingBatchAudios((p) =>
+                                    p.map((r) =>
+                                      r.key === row.key
+                                        ? { ...r, sortOrder: parseInt(e.target.value, 10) || 0 }
+                                        : r
+                                    )
+                                  )
+                                }
+                                className="input w-full text-sm"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          disabled={addingAudio || editAudiosLoading}
+                          onClick={() => void submitPendingBatchAudios({ showSuccessToast: true })}
+                        >
+                          {addingAudio ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin mr-2 inline" aria-hidden />
+                              Enviando…
+                            </>
+                          ) : (
+                            `Enviar ${pendingBatchAudios.length} áudio(s)`
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={addingAudio}
+                          onClick={() => setPendingBatchAudios([])}
+                        >
+                          Limpar fila
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </form>
           )}

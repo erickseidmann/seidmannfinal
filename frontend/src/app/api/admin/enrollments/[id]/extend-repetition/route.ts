@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 function overlap(
   startA: Date,
@@ -49,7 +50,7 @@ export async function PATCH(
     const lessons = await prisma.lesson.findMany({
       where: {
         enrollmentId,
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         teacherId: { not: null },
       },
       select: {
@@ -106,7 +107,7 @@ export async function PATCH(
       const existing = await prisma.lesson.findMany({
         where: {
           teacherId: teacherIdParam,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: windowStart, lte: windowEnd },
         },
         select: { id: true, enrollmentId: true, startAt: true, durationMinutes: true },

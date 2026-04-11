@@ -179,3 +179,54 @@
     animation: none;
   }
 }
+
+/* Post-it: animação de rasgar ao excluir (bloco de notas admin) */
+@keyframes postit-tear-left {
+  0% {
+    transform: rotate(0deg) translate(0, 0);
+    opacity: 1;
+  }
+  18% {
+    transform: rotate(-5deg) translate(-6px, 4px);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-32deg) translate(-48px, 42px);
+    opacity: 0;
+  }
+}
+
+@keyframes postit-tear-right {
+  0% {
+    transform: rotate(0deg) translate(0, 0);
+    opacity: 1;
+  }
+  18% {
+    transform: rotate(5deg) translate(6px, 4px);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(32deg) translate(48px, 42px);
+    opacity: 0;
+  }
+}
+
+.postit-animate-tear-left {
+  transform-origin: right center;
+  animation: postit-tear-left 0.72s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+.postit-animate-tear-right {
+  transform-origin: left center;
+  animation: postit-tear-right 0.72s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .postit-animate-tear-left,
+  .postit-animate-tear-right {
+    animation: none;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.12s ease-out;
+  }
+}

@@ -14,6 +14,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -241,7 +242,7 @@ export async function PATCH(
           where: {
             enrollmentId: id,
             startAt: { gte: hoje },
-            status: { not: 'CANCELLED' },
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
           },
           data: { status: 'CANCELLED' },
         })

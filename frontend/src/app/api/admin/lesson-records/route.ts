@@ -205,7 +205,15 @@ export async function POST(request: NextRequest) {
     }
 
     const isGroup = lesson.enrollment?.tipoAula === 'GRUPO' && lesson.enrollment?.nomeGrupo?.trim()
-    const validStatus = ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(status) ? status : 'CONFIRMED'
+    const validStatus = [
+      'CONFIRMED',
+      'CANCELLED',
+      'CANCELLED_BY_TEACHER',
+      'CANCELLED_NO_REPLACEMENT',
+      'REPOSICAO',
+    ].includes(status)
+      ? status
+      : 'CONFIRMED'
     const validPresence = ['PRESENTE', 'NAO_COMPARECEU', 'ATRASADO'].includes(presence) ? presence : 'PRESENTE'
     const validLessonType = ['NORMAL', 'CONVERSAÇÃO', 'REVISAO', 'AVALIACAO'].includes(lessonType) ? lessonType : 'NORMAL'
     const validHomeworkDone = ['SIM', 'NAO', 'PARCIAL', 'NAO_APLICA'].includes(homeworkDone) ? homeworkDone : null

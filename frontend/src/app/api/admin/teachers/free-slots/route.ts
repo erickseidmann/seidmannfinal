@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 /** Retorna a próxima data para um dayOfWeek (0-6) a partir de hoje */
 function nextDateForDayOfWeek(dayOfWeek: number): Date {
@@ -100,7 +101,7 @@ export async function GET(request: NextRequest) {
         const lessonsOnDay = await prisma.lesson.findMany({
           where: {
             teacherId,
-            status: { not: 'CANCELLED' },
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
             startAt: { gte: dayStart, lte: dayEnd },
           },
           select: { startAt: true, durationMinutes: true },

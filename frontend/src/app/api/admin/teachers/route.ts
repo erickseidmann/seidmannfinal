@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { validateMeetingLink } from '@/lib/meeting-link'
 import bcrypt from 'bcryptjs'
 
@@ -92,7 +93,7 @@ export async function GET(request: NextRequest) {
       where: {
         teacherId: { in: teacherIds },
         startAt: { gte: periodStart, lte: periodEnd },
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
       },
       select: { teacherId: true, durationMinutes: true },
     })

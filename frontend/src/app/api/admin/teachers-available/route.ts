@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 function mapIdiomaToCurso(idioma: string | null): string | null {
   if (!idioma) return null
@@ -124,7 +125,7 @@ export async function GET(request: NextRequest) {
     const lessonsNoPeriodo = await prisma.lesson.findMany({
       where: {
         teacherId: { in: teacherIds },
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         startAt: { gte: windowStart, lte: windowEnd },
       },
       select: { teacherId: true, startAt: true, durationMinutes: true },

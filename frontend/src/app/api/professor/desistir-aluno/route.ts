@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
       where: {
         enrollmentId,
         teacherId: teacher.id,
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         startAt: { gte: hoje },
       },
       data: { teacherId: null },

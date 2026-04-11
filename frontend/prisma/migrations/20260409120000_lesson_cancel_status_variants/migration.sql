@@ -1,0 +1,16 @@
+-- Novos status de aula: cancelada pelo professor e cancelada sem reposição
+ALTER TABLE `lessons` MODIFY COLUMN `status` ENUM(
+  'CONFIRMED',
+  'CANCELLED',
+  'REPOSICAO',
+  'CANCELLED_BY_TEACHER',
+  'CANCELLED_NO_REPLACEMENT'
+) NOT NULL DEFAULT 'CONFIRMED';
+
+ALTER TABLE `lesson_records` MODIFY COLUMN `status` ENUM(
+  'CONFIRMED',
+  'CANCELLED',
+  'REPOSICAO',
+  'CANCELLED_BY_TEACHER',
+  'CANCELLED_NO_REPLACEMENT'
+) NOT NULL DEFAULT 'CONFIRMED';

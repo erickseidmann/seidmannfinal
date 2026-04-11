@@ -57,6 +57,19 @@ function formatDateTime(iso: string): string {
   return `${day}/${month} ${h}:${min}`
 }
 
+/** Data e horário de criação (linha “Criado por…”) */
+function formatCreatedAt(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function normalizeTodo(row: DashboardTodoApiItem): DashboardTodoApiItem {
   const status =
     row.status === 'DONE' || row.status === 'IN_PROGRESS' || row.status === 'OPEN'
@@ -579,6 +592,12 @@ export default function AdminTodosPage() {
                       </span>
                       <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                         Criado por <span className="font-medium text-slate-600">{item.createdByName}</span>
+                        {item.criadoEm ? (
+                          <>
+                            {' · '}
+                            <span className="tabular-nums">{formatCreatedAt(item.criadoEm)}</span>
+                          </>
+                        ) : null}
                         {isDone && item.completedByName && item.completedAt && (
                           <>
                             {' · '}

@@ -13,9 +13,11 @@ interface PdfViewerProps {
   url: string
   totalPaginas?: number
   onClose?: () => void
+  /** Chamado sempre que a página exibida mudar (inclui após carregar o PDF). */
+  onPageChange?: (page: number) => void
 }
 
-export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }: PdfViewerProps) {
+export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose, onPageChange }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const pdfRef = useRef<{ destroy: () => void } | null>(null)
@@ -114,6 +116,12 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }:
     }
   }, [pdf, currentPage, numPages, renderPage])
 
+  useEffect(() => {
+    if (numPages > 0 && currentPage >= 1 && currentPage <= numPages) {
+      onPageChange?.(currentPage)
+    }
+  }, [currentPage, numPages, onPageChange])
+
   // Escala automática conforme largura (usada quando manualScale é null)
   useEffect(() => {
     const updateAutoScale = () => {
@@ -165,91 +173,108 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose }:
     return null
   }
 
+  const btnNavClass =
+    'inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-xl bg-white border border-gray-200 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation'
+  const btnZoomClass =
+    'inline-flex items-center justify-center min-h-[44px] min-w-[44px] rounded-xl bg-white border border-gray-200 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation'
+
   return (
     <div ref={containerRef} className="flex flex-col flex-1 min-h-0 w-full">
-      {/* Barra de navegação - fixa no topo, responsiva */}
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-100 border-b border-gray-200 shrink-0">
-        <button
-          type="button"
-          onClick={() => goToPage(currentPage - 1)}
-          disabled={currentPage <= 1}
-          className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-label="Página anterior"
-        >
-          <ChevronLeft className="w-5 h-5 text-gray-700" />
-        </button>
-        <button
-          type="button"
-          onClick={() => goToPage(currentPage + 1)}
-          disabled={currentPage >= numPages}
-          className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-label="Próxima página"
-        >
-          <ChevronRight className="w-5 h-5 text-gray-700" />
-        </button>
-
-        <span className="text-sm text-gray-600 shrink-0">
-          Página{' '}
-          <strong>
-            {currentPage} de {numPages}
-          </strong>
-        </span>
-
-        <form onSubmit={handleGoToSubmit} className="flex items-center gap-1 sm:gap-2 flex-1 min-w-0">
-          <Search className="w-4 h-4 text-gray-500 shrink-0 hidden sm:block" />
-          <input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={numPages}
-            value={goToInput}
-            onChange={(e) => setGoToInput(e.target.value)}
-            placeholder="Ir para página..."
-            className="w-24 sm:w-28 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-orange/50 focus:border-brand-orange"
-          />
-          <button
-            type="submit"
-            className="px-2 sm:px-3 py-1.5 text-sm font-medium text-white bg-brand-orange rounded-lg hover:bg-brand-orange/90 shrink-0"
-          >
-            Ir
-          </button>
-        </form>
-
-        {/* Zoom */}
-        <div className="flex items-center gap-1 border-l border-gray-300 pl-2 sm:pl-3 ml-1">
-          <button
-            type="button"
-            onClick={handleZoomOut}
-            disabled={scale <= ZOOM_MIN}
-            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            aria-label="Diminuir zoom"
-            title="Diminuir zoom"
-          >
-            <ZoomOut className="w-5 h-5 text-gray-700" />
-          </button>
-          <span className="min-w-[3rem] text-center text-sm text-gray-600" title="Zoom">
-            {Math.round(scale * 100)}%
-          </span>
-          <button
-            type="button"
-            onClick={handleZoomIn}
-            disabled={scale >= ZOOM_MAX}
-            className="p-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            aria-label="Aumentar zoom"
-            title="Aumentar zoom"
-          >
-            <ZoomIn className="w-5 h-5 text-gray-700" />
-          </button>
-          {manualScale !== null && (
+      {/* Barra em colunas no celular: evita sobrepor “Ir para” e zoom */}
+      <div className="shrink-0 bg-gray-100 border-b border-gray-200">
+        <div className="flex items-center justify-between gap-2 px-2 py-2 sm:px-3 sm:py-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               type="button"
-              onClick={handleZoomReset}
-              className="px-2 py-1 text-xs text-gray-600 hover:text-brand-orange border border-gray-200 rounded-lg hover:border-brand-orange/50"
-              title="Ajustar à tela"
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className={btnNavClass}
+              aria-label="Página anterior"
             >
-              Ajustar
+              <ChevronLeft className="w-6 h-6 text-gray-800" />
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage >= numPages}
+              className={btnNavClass}
+              aria-label="Próxima página"
+            >
+              <ChevronRight className="w-6 h-6 text-gray-800" />
+            </button>
+          </div>
+          <span className="text-sm sm:text-base text-gray-700 font-medium tabular-nums px-1">
+            {currentPage} / {numPages}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-2.5 px-2 pb-2.5 sm:px-3 sm:pb-3 sm:flex-row sm:items-stretch sm:gap-3 border-t border-gray-200/90 pt-2.5 sm:pt-3">
+          <form
+            onSubmit={handleGoToSubmit}
+            className="flex w-full items-center gap-2 sm:flex-1 sm:min-w-0"
+          >
+            <Search className="w-4 h-4 text-gray-500 shrink-0 hidden sm:block" aria-hidden />
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={numPages}
+              value={goToInput}
+              onChange={(e) => setGoToInput(e.target.value)}
+              placeholder="Nº da página"
+              aria-label="Ir para o número da página"
+              className="min-h-[44px] flex-1 min-w-0 px-3 py-2 text-base border border-gray-300 rounded-xl focus:ring-2 focus:ring-brand-orange/50 focus:border-brand-orange"
+            />
+            <button
+              type="submit"
+              className="min-h-[44px] shrink-0 px-4 py-2 text-base font-semibold text-white bg-brand-orange rounded-xl hover:bg-brand-orange/90 active:scale-[0.98] touch-manipulation"
+            >
+              Ir
+            </button>
+          </form>
+
+          <div
+            className="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-end sm:border-l sm:border-gray-300 sm:pl-3 sm:shrink-0"
+            role="group"
+            aria-label="Zoom"
+          >
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              disabled={scale <= ZOOM_MIN}
+              className={btnZoomClass}
+              aria-label="Diminuir zoom"
+              title="Diminuir zoom"
+            >
+              <ZoomOut className="w-5 h-5 text-gray-800" />
+            </button>
+            <span
+              className="min-w-[3.25rem] text-center text-sm font-semibold text-gray-800 tabular-nums px-1 py-1"
+              title="Nível de zoom"
+            >
+              {Math.round(scale * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              disabled={scale >= ZOOM_MAX}
+              className={btnZoomClass}
+              aria-label="Aumentar zoom"
+              title="Aumentar zoom"
+            >
+              <ZoomIn className="w-5 h-5 text-gray-800" />
+            </button>
+            {manualScale !== null && (
+              <button
+                type="button"
+                onClick={handleZoomReset}
+                className="min-h-[44px] px-3 text-xs font-medium text-gray-700 border border-gray-200 rounded-xl bg-white hover:bg-gray-50 active:bg-gray-100 touch-manipulation"
+                title="Ajustar à tela"
+              >
+                Ajustar
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

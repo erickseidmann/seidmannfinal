@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Buscar enrollments ativos com pelo menos uma aula futura em [agora, limite]
     const lessons = await prisma.lesson.findMany({
       where: {
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         startAt: { gte: agora, lte: limite },
         enrollment: { status: 'ACTIVE' },
       },
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
       const last = await prisma.lesson.findFirst({
         where: {
           enrollmentId: eid,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
         },
         orderBy: { startAt: 'desc' },
         select: { startAt: true },

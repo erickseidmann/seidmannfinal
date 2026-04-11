@@ -6,7 +6,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { BookOpen, Loader2, X, AlertCircle } from 'lucide-react'
 
@@ -68,9 +68,10 @@ export default function MaterialProfessorPage() {
     setViewingBook(null)
   }
 
-  const pdfUrl = viewingBook
-    ? `/api/professor/books/${viewingBook.id}/pdf?t=${Date.now()}`
-    : ''
+  const pdfUrl = useMemo(
+    () => (viewingBook ? `/api/professor/books/${viewingBook.id}/pdf` : ''),
+    [viewingBook?.id]
+  )
 
   return (
     <div className="space-y-6">

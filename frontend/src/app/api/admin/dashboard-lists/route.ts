@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { INACTIVE_REASON_LABELS } from '@/lib/inactive-reason'
 import { findLessonsPendingRecord, PENDING_RECORD_LOOKBACK_DAYS } from '@/lib/lesson-pending-record'
+import { isLessonScheduledStatus, LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 const NOW = new Date()
 
@@ -163,7 +164,7 @@ export async function GET(request: NextRequest) {
       const lessonsSemProfessor = await prisma.lesson.findMany({
         where: {
           teacherId: null,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: hoje },
         },
         select: {
@@ -201,7 +202,7 @@ export async function GET(request: NextRequest) {
         const lessons = await prisma.lesson.findMany({
           where: {
             teacherId: teacher.id,
-            status: { not: 'CANCELLED' },
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
             startAt: { gte: hoje },
           },
           select: {
@@ -263,7 +264,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'studentsWithoutLesson') {
-      const activeStatuses: EnrollmentStatus[] = ['REGISTERED', 'CONTRACT_ACCEPTED', 'ACTIVE', 'PAYMENT_PENDING']
+      const activeStatuses: EnrollmentStatus[] = ['ACTIVE', 'PAYMENT_PENDING']
       const enrollments = await prisma.enrollment.findMany({
         where: { status: { in: activeStatuses } },
         select: {
@@ -302,8 +303,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: list })
     }
 
-    if (type === 'inactiveStudents') {
-      /** Mesmo critério do resumo em Admin › Alunos: matrículas inativas (Enrollment) */
+    if (type === 'inactiveStudents' || type === 'enrollmentsInactive') {
+      /** Matrículas inativas: dashboard (`inactiveStudents`) e cubo em Admin › Alunos (`enrollmentsInactive`) */
       const enrollments = await prisma.enrollment.findMany({
         where: { status: 'INACTIVE' },
         select: {
@@ -656,15 +657,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: enrollments })
     }
 
-    if (type === 'enrollmentsInactive') {
-      const enrollments = await prisma.enrollment.findMany({
-        where: { status: 'INACTIVE' },
-        select: { id: true, nome: true },
-        orderBy: { nome: 'asc' },
-      })
-      return NextResponse.json({ ok: true, data: enrollments })
-    }
-
     if (type === 'enrollmentsPaused') {
       const enrollments = await prisma.enrollment.findMany({
         where: { status: 'PAUSED' },
@@ -677,27 +669,45 @@ export async function GET(request: NextRequest) {
     if (type === 'studentsBolsistas') {
       const enrollments = await prisma.enrollment.findMany({
         where: { bolsista: true },
-        select: { id: true, nome: true, escolaMatricula: true, escolaMatriculaOutro: true },
+        select: {
+          id: true,
+          nome: true,
+          escolaMatricula: true,
+          escolaMatriculaOutro: true,
+          frequenciaSemanal: true,
+          tempoAulaMinutos: true,
+        },
         orderBy: { nome: 'asc' },
       })
       return NextResponse.json({
         ok: true,
-        data: enrollments.map((e) => ({
-          id: e.id,
-          nome: e.nome,
-          escola:
-            e.escolaMatricula === 'OUTRO' && e.escolaMatriculaOutro
-              ? e.escolaMatriculaOutro
-              : e.escolaMatricula === 'SEIDMANN'
-                ? 'Seidmann'
-                : e.escolaMatricula === 'YOUBECOME'
-                  ? 'Youbecome'
-                  : e.escolaMatricula === 'HIGHWAY'
-                    ? 'Highway'
-                    : e.escolaMatricula === 'OUTRO'
-                      ? 'Outro'
-                      : 'Não especificado',
-        })),
+        data: enrollments.map((e) => {
+          const freq = e.frequenciaSemanal
+          const mins = e.tempoAulaMinutos
+          const estimatedMonthlyHours =
+            freq != null && freq > 0 && mins != null && mins > 0
+              ? Math.round(freq * (mins / 60) * (52 / 12) * 100) / 100
+              : null
+          return {
+            id: e.id,
+            nome: e.nome,
+            escola:
+              e.escolaMatricula === 'OUTRO' && e.escolaMatriculaOutro
+                ? e.escolaMatriculaOutro
+                : e.escolaMatricula === 'SEIDMANN'
+                  ? 'Seidmann'
+                  : e.escolaMatricula === 'YOUBECOME'
+                    ? 'Youbecome'
+                    : e.escolaMatricula === 'HIGHWAY'
+                      ? 'Highway'
+                      : e.escolaMatricula === 'OUTRO'
+                        ? 'Outro'
+                        : 'Não especificado',
+            frequenciaSemanal: freq ?? null,
+            tempoAulaMinutos: mins ?? null,
+            estimatedMonthlyHours,
+          }
+        }),
       })
     }
 
@@ -744,7 +754,7 @@ export async function GET(request: NextRequest) {
       const enrollmentToGroupKey: Record<string, string> = {}
 
       for (const l of lessons) {
-        if (l.status === 'CANCELLED') continue
+        if (!isLessonScheduledStatus(l.status)) continue
         const eid = l.enrollmentId
         const enr = l.enrollment as { tipoAula?: string | null; nomeGrupo?: string | null }
         const isGroup = enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()
@@ -783,7 +793,7 @@ export async function GET(request: NextRequest) {
 
       const activeEnrollments = await prisma.enrollment.findMany({
         where: {
-          status: { in: ['ACTIVE', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING'] },
+          status: { in: ['ACTIVE', 'PAYMENT_PENDING'] },
           frequenciaSemanal: { gt: 0 }, // Fix: use gt:0 instead of not:null for Int fields
         },
         select: {

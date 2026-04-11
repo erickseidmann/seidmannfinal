@@ -28,6 +28,7 @@ import {
   Menu,
   X,
   ListTodo,
+  StickyNote,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -69,6 +70,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/cobrancas': 'financeiro-cobrancas',
   '/admin/chat': 'chat',
   '/admin/todos': 'todos',
+  '/admin/bloco-de-notas': 'bloco-notas',
 }
 
 const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
@@ -92,6 +94,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
   { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
   { href: '/admin/todos', labelKey: 'admin.todos', icon: ListTodo },
+  { href: '/admin/bloco-de-notas', labelKey: 'admin.notesPad', icon: StickyNote },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -166,8 +169,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       }
       return
     }
-    // To do list: disponível para todos os usuários admin
-    if (pageKey === 'todos') {
+    // To do list e bloco de notas: disponíveis para todos os usuários admin
+    if (pageKey === 'todos' || pageKey === 'bloco-notas') {
       return
     }
     if (!adminPages.includes(pageKey)) {
@@ -206,8 +209,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    // To do list: disponível para todos os usuários admin
-    if (pageKey === 'todos') return true
+    // To do list e bloco de notas: disponíveis para todos os usuários admin
+    if (pageKey === 'todos' || pageKey === 'bloco-notas') return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
 

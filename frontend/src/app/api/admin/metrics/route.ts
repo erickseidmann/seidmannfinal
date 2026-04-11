@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { findLessonsPendingRecord } from '@/lib/lesson-pending-record'
 import { ymdInTZ } from '@/lib/datetime'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(request: NextRequest) {
   try {
@@ -139,7 +140,7 @@ export async function GET(request: NextRequest) {
       const lessonsSemProfessor = await prisma.lesson.findMany({
         where: {
           teacherId: null,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: hoje },
         },
         select: { enrollmentId: true },
@@ -164,7 +165,7 @@ export async function GET(request: NextRequest) {
         const lessons = await prisma.lesson.findMany({
           where: {
             teacherId: teacher.id,
-            status: { not: 'CANCELLED' },
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
             startAt: { gte: hoje },
           },
           select: {

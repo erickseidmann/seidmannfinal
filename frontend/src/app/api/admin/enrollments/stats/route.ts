@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 function getMonday(d: Date): Date {
   const date = new Date(d)
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest) {
     limiteRepeticao.setHours(23, 59, 59, 999)
     const lessonsEndingSoon = await prisma.lesson.findMany({
       where: {
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         startAt: { gte: agora, lte: limiteRepeticao },
         enrollment: { status: 'ACTIVE' },
       },
@@ -148,7 +149,7 @@ export async function GET(request: NextRequest) {
     let repetitionEndingSoonCount = 0
     for (const eid of enrollmentIdsWithLessonsEndingSoon) {
       const last = await prisma.lesson.findFirst({
-        where: { enrollmentId: eid, status: { not: 'CANCELLED' } },
+        where: { enrollmentId: eid, status: { in: [...LESSON_STATUSES_SCHEDULED] } },
         orderBy: { startAt: 'desc' },
         select: { startAt: true },
       })

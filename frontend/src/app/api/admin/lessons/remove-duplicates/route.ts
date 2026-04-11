@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     const lessons = await prisma.lesson.findMany({
-      where: { status: { not: 'CANCELLED' } },
+      where: { status: { in: [...LESSON_STATUSES_SCHEDULED] } },
       select: { id: true, enrollmentId: true, startAt: true },
       orderBy: { id: 'asc' },
     })

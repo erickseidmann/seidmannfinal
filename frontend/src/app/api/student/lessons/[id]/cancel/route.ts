@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { isLessonCancelledFamily } from '@/lib/lesson-status'
 import { requireStudent } from '@/lib/auth'
 
 function formatarDataHora(d: Date): string {
@@ -90,7 +91,7 @@ export async function POST(
     }
 
     // Verificar se a aula já está cancelada
-    if (lesson.status === 'CANCELLED') {
+    if (isLessonCancelledFamily(lesson.status)) {
       return NextResponse.json(
         { ok: false, message: 'Esta aula já está cancelada' },
         { status: 400 }

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(
   _request: NextRequest,
@@ -43,7 +44,7 @@ export async function GET(
       where: {
         teacherId: sourceTeacherId,
         startAt: { gte: startDate },
-        status: { not: 'CANCELLED' }, // Apenas aulas não canceladas para calcular slots necessários
+        status: { in: [...LESSON_STATUSES_SCHEDULED] }, // Apenas aulas ativas para calcular slots necessários
         ...(enrollmentIdParam ? { enrollmentId: enrollmentIdParam } : {}),
       },
       select: {
@@ -96,7 +97,7 @@ export async function GET(
       const existingLessons = await prisma.lesson.findMany({
         where: {
           teacherId: teacher.id,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: startDate },
         },
         select: {

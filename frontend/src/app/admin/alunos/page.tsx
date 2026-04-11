@@ -15,7 +15,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, CircleDollarSign } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import {
@@ -98,6 +98,12 @@ const TEMPO_AULA_OPCOES = [
   { value: 120, label: '02:00' },
 ]
 
+function formatTempoAulaMinutosLabel(min: number | null | undefined): string {
+  if (min == null) return '—'
+  const opt = TEMPO_AULA_OPCOES.find((o) => o.value === min)
+  return opt ? `${opt.label} (${min} min)` : `${min} min`
+}
+
 function formatCnpjForDisplay(cnpj: string | null | undefined): string {
   if (!cnpj) return ''
   const d = (cnpj || '').replace(/\D/g, '')
@@ -164,6 +170,16 @@ const STATUS_LABELS: Record<string, string> = {
   PAUSED: 'Pausado',
   BLOCKED: 'Bloqueado',
   COMPLETED: 'Concluído',
+}
+
+const KNOWN_ENROLLMENT_STATUSES = new Set(Object.keys(STATUS_LABELS))
+
+/** Garante valor alinhado às options do select e a statusColors (evita texto/cor divergentes). */
+function normalizeEnrollmentStatus(status: string | null | undefined): string {
+  const t = String(status ?? '')
+    .trim()
+    .toUpperCase()
+  return KNOWN_ENROLLMENT_STATUSES.has(t) ? t : t || 'LEAD'
 }
 
 const MESES = [
@@ -366,6 +382,16 @@ export default function AdminAlunosPage() {
     count: number
     list: { enrollmentId: string; studentName: string; lastLessonAt: string }[]
   }>({ count: 0, list: [] })
+  const [belowHourRateStats, setBelowHourRateStats] = useState<{
+    count: number
+    list: {
+      enrollmentId: string
+      studentName: string
+      valorHora: number | null
+      tempoAulaMinutos: number | null
+      frequenciaSemanal: number | null
+    }[]
+  }>({ count: 0, list: [] })
   const [extendingRepetitionId, setExtendingRepetitionId] = useState<string | null>(null)
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
@@ -385,13 +411,27 @@ export default function AdminAlunosPage() {
   const [reportFilters, setReportFilters] = useState({ escola: '', status: '', tipo: '', mes: '', ano: '' })
   const isMinor = isMenorDeIdade(formData.dataNascimento || null)
 
-  useEffect(() => {
-    fetchStudents()
-    fetchStats()
-    fetchWrongFrequencyStats()
-    fetchWrongFrequencyStatsProximaSemana()
-    fetchRepetitionEndingStats()
-  }, [filters])
+  const fetchBelowHourRateStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/enrollments/below-hour-rate?max=30', { credentials: 'include' })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && json.data?.list) {
+          setBelowHourRateStats({
+            count: json.data.count ?? json.data.list.length,
+            list: json.data.list,
+          })
+        } else {
+          setBelowHourRateStats({ count: 0, list: [] })
+        }
+      } else {
+        setBelowHourRateStats({ count: 0, list: [] })
+      }
+    } catch (e) {
+      console.error(e)
+      setBelowHourRateStats({ count: 0, list: [] })
+    }
+  }, [])
 
   const fetchRepetitionEndingStats = useCallback(async () => {
     try {
@@ -509,7 +549,7 @@ export default function AdminAlunosPage() {
     []
   )
 
-  const fetchStudents = async () => {
+  const fetchStudents = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -525,7 +565,13 @@ export default function AdminAlunosPage() {
       }
       const json = await response.json()
       if (json.ok) {
-        setStudents(json.data.enrollments || [])
+        const list = (json.data.enrollments || []) as Student[]
+        setStudents(
+          list.map((e) => ({
+            ...e,
+            status: normalizeEnrollmentStatus(e.status),
+          }))
+        )
       } else {
         throw new Error(json.message || 'Erro ao carregar alunos')
       }
@@ -535,12 +581,19 @@ export default function AdminAlunosPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters.status, filters.search, itemsPerPage])
 
   useEffect(() => {
-    fetchStudents()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsPerPage])
+    void fetchStudents()
+  }, [fetchStudents])
+
+  useEffect(() => {
+    void fetchStats()
+    void fetchWrongFrequencyStats()
+    void fetchWrongFrequencyStatsProximaSemana()
+    void fetchRepetitionEndingStats()
+    void fetchBelowHourRateStats()
+  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchRepetitionEndingStats, fetchBelowHourRateStats])
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
@@ -642,7 +695,14 @@ export default function AdminAlunosPage() {
         if (!res.ok || !json.ok) {
           throw new Error(json.message || 'Erro ao alterar status')
         }
-        fetchStudents()
+        const enc = json.data?.enrollment as { id?: string; status?: string } | undefined
+        if (enc?.id && enc.status != null) {
+          const norm = normalizeEnrollmentStatus(enc.status)
+          setStudents((prev) =>
+            prev.map((p) => (p.id === enc.id ? { ...p, status: norm } : p))
+          )
+        }
+        await fetchStudents()
         setToast({ message: 'Status atualizado!', type: 'success' })
       } catch (err) {
         setToast({
@@ -651,7 +711,7 @@ export default function AdminAlunosPage() {
         })
       }
     },
-    []
+    [fetchStudents]
   )
 
   const openCreateAlertModal = (s: Student) => {
@@ -1192,7 +1252,7 @@ export default function AdminAlunosPage() {
       case 'agenda':
         return (s.agenda ?? '').toLowerCase()
       case 'status':
-        return s.status ?? ''
+        return normalizeEnrollmentStatus(s.status)
       case 'trackingCode':
         return s.trackingCode ?? ''
       case 'dataInicio':
@@ -1227,8 +1287,8 @@ export default function AdminAlunosPage() {
     }
     list.sort((a, b) => {
       // 1. Inativos (INACTIVE, PAUSED) sempre no final
-      const inactiveA = a.status !== 'ACTIVE' ? 1 : 0
-      const inactiveB = b.status !== 'ACTIVE' ? 1 : 0
+      const inactiveA = normalizeEnrollmentStatus(a.status) !== 'ACTIVE' ? 1 : 0
+      const inactiveB = normalizeEnrollmentStatus(b.status) !== 'ACTIVE' ? 1 : 0
       if (inactiveA !== inactiveB) return inactiveA - inactiveB
 
       // 2. Entre ativos: sem professor no topo
@@ -1466,9 +1526,10 @@ export default function AdminAlunosPage() {
       key: 'teacherNameForWeek',
       label: 'Professor',
       sortable: true,
-      sortValue: (s: Student) => (s.status === 'INACTIVE' ? '' : (s.teacherNameForWeek ?? '')).toLowerCase(),
+      sortValue: (s: Student) =>
+        (normalizeEnrollmentStatus(s.status) === 'INACTIVE' ? '' : (s.teacherNameForWeek ?? '')).toLowerCase(),
       render: (s: Student) =>
-        s.status === 'INACTIVE' ? (
+        normalizeEnrollmentStatus(s.status) === 'INACTIVE' ? (
           <span>—</span>
         ) : s.teacherNameForWeek ? (
           <span>{s.teacherNameForWeek}</span>
@@ -1495,10 +1556,12 @@ export default function AdminAlunosPage() {
       key: 'status',
       label: 'Status',
       sortable: true,
-      sortValue: (s: Student) => s.status ?? '',
-      render: (s: Student) => (
+      sortValue: (s: Student) => normalizeEnrollmentStatus(s.status),
+      render: (s: Student) => {
+        const st = normalizeEnrollmentStatus(s.status)
+        return (
         <select
-          value={s.status}
+          value={st}
           onChange={(e) => {
             const newStatus = e.target.value
             if (newStatus === 'PAUSED') {
@@ -1508,10 +1571,10 @@ export default function AdminAlunosPage() {
                 type: 'error',
               })
               // Reverter para o status anterior
-              e.target.value = s.status
+              e.target.value = st
               return
             }
-            if (newStatus === 'INACTIVE' && s.status !== 'INACTIVE') {
+            if (newStatus === 'INACTIVE' && st !== 'INACTIVE') {
               const todayIso = new Date().toISOString().slice(0, 10)
               setInactivateStudentModal({
                 student: s,
@@ -1523,14 +1586,18 @@ export default function AdminAlunosPage() {
               handleStatusChange(s, newStatus)
             }
           }}
-          className={`text-xs font-semibold rounded-full px-2 py-1 border-0 cursor-pointer ${statusColors[s.status] ?? 'bg-gray-100 text-gray-800'}`}
+          className={`text-xs font-semibold rounded-full px-2 py-1 border-0 cursor-pointer ${statusColors[st] ?? 'bg-gray-100 text-gray-800'}`}
           title="Alterar status"
         >
-          <option value="ACTIVE">Ativo</option>
-          <option value="INACTIVE">Inativo</option>
-          <option value="PAUSED">Pausado</option>
+          <option value="ACTIVE">{STATUS_LABELS.ACTIVE}</option>
+          <option value="INACTIVE">{STATUS_LABELS.INACTIVE}</option>
+          <option value="PAUSED">{STATUS_LABELS.PAUSED}</option>
+          <option value="REGISTERED">{STATUS_LABELS.REGISTERED}</option>
+          <option value="CONTRACT_ACCEPTED">{STATUS_LABELS.CONTRACT_ACCEPTED}</option>
+          <option value="PAYMENT_PENDING">{STATUS_LABELS.PAYMENT_PENDING}</option>
         </select>
-      ),
+        )
+      },
     },
     {
       key: 'trackingCode',
@@ -1838,6 +1905,30 @@ export default function AdminAlunosPage() {
               icon={<CalendarPlus className="w-5 h-5" />}
               color="indigo"
               subtitle="Aulas terminando em 1 semana ou menos"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListModal({ title: 'Alunos fora do valor', type: 'belowHourRate' })
+              setListData([])
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListModal({ title: 'Alunos fora do valor', type: 'belowHourRate' })
+                setListData([])
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Alunos fora do valor"
+              value={belowHourRateStats.count}
+              icon={<CircleDollarSign className="w-5 h-5" />}
+              color="red"
+              subtitle="Valor hora abaixo de R$ 30,00 (ativos)"
             />
           </div>
           {/* Total por escola */}
@@ -3429,6 +3520,53 @@ export default function AdminAlunosPage() {
         >
           {listLoading ? (
             <p className="text-gray-500">Carregando...</p>
+          ) : listModal?.type === 'belowHourRate' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                Matrículas <strong>ativas</strong> com valor da hora-aula (cadastro de pagamento) <strong>menor que R$ 30,00</strong>.
+                Quem não tem valor da hora preenchido não entra nesta lista.
+              </p>
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-white z-10 shadow-sm">
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Valor hora aula</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Tempo de aula</th>
+                      <th className="py-2 font-semibold text-gray-700">Frequência na semana</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {belowHourRateStats.list.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-4 text-center text-gray-500">
+                          Nenhum aluno ativo com hora-aula abaixo de R$ 30,00.
+                        </td>
+                      </tr>
+                    ) : (
+                      belowHourRateStats.list.map((item) => (
+                        <tr key={item.enrollmentId} className="border-b border-gray-100">
+                          <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
+                          <td className="py-3 pr-4 text-sm text-gray-800 tabular-nums">
+                            {item.valorHora != null
+                              ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                  item.valorHora
+                                )
+                              : '—'}
+                          </td>
+                          <td className="py-3 pr-4 text-sm text-gray-700">
+                            {formatTempoAulaMinutosLabel(item.tempoAulaMinutos)}
+                          </td>
+                          <td className="py-3 text-sm text-gray-700">
+                            {item.frequenciaSemanal != null ? `${item.frequenciaSemanal}× por semana` : '—'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           ) : listModal?.type === 'wrongFrequency' || listModal?.type === 'wrongFrequencyProximaSemana' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -3573,7 +3711,58 @@ export default function AdminAlunosPage() {
             </div>
           ) : listData.length === 0 ? (
             <p className="text-gray-500">Nenhum registro.</p>
-          ) : listModal?.type === 'studentsOutros' || listModal?.type === 'studentsBolsistas' ? (
+          ) : listModal?.type === 'studentsBolsistas' ? (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500">
+                Horas no mês: estimativa com média de 52÷12 semanas (~4,33 semanas por mês), a partir da frequência e do tempo de cada aula.
+              </p>
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-white z-10 shadow-sm">
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Nome</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Escola</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Frequência da semana</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Tempo de aula</th>
+                      <th className="py-2 font-semibold text-gray-700">Total horas estimadas no mês</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as {
+                        id: string
+                        nome: string
+                        escola?: string
+                        frequenciaSemanal?: number | null
+                        tempoAulaMinutos?: number | null
+                        estimatedMonthlyHours?: number | null
+                      }
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4 font-medium text-gray-900">{row.nome}</td>
+                          <td className="py-2 pr-4 text-sm text-gray-700">{row.escola || 'Não especificado'}</td>
+                          <td className="py-2 pr-4 text-sm text-gray-700">
+                            {row.frequenciaSemanal != null ? `${row.frequenciaSemanal}× por semana` : '—'}
+                          </td>
+                          <td className="py-2 pr-4 text-sm text-gray-700">
+                            {formatTempoAulaMinutosLabel(row.tempoAulaMinutos)}
+                          </td>
+                          <td className="py-2 text-sm text-gray-800 tabular-nums">
+                            {row.estimatedMonthlyHours != null
+                              ? `${new Intl.NumberFormat('pt-BR', {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 2,
+                                }).format(row.estimatedMonthlyHours)} h`
+                              : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : listModal?.type === 'studentsOutros' ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -3704,6 +3893,47 @@ export default function AdminAlunosPage() {
                             Designar Professor
                           </Button>
                         </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : listModal?.type === 'enrollmentsInactive' ? (
+            <div className="overflow-x-auto max-h-[min(60vh,520px)] overflow-y-auto border border-gray-100 rounded-lg">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 bg-white border-b border-gray-200 z-10">
+                  <tr>
+                    <th className="py-2 pr-4 pl-3 font-semibold text-gray-700">Nome</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Motivo</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Inativado por</th>
+                    <th className="py-2 pr-3 font-semibold text-gray-700">Data</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listData.map((item) => {
+                    const row = item as {
+                      id: string
+                      nome: string
+                      inactiveAt?: string | null
+                      inativadoPorNome?: string | null
+                      motivoInativacao?: string | null
+                    }
+                    const por = row.inativadoPorNome?.trim() ? row.inativadoPorNome : 'Não registrado'
+                    const motivo = row.motivoInativacao?.trim() ? row.motivoInativacao : '—'
+                    const dataFormatada = row.inactiveAt
+                      ? new Date(row.inactiveAt).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                        })
+                      : '—'
+                    return (
+                      <tr key={row.id} className="border-b border-gray-100">
+                        <td className="py-2 pr-4 pl-3 font-medium text-gray-900">{row.nome}</td>
+                        <td className="py-2 pr-4 text-gray-700 text-sm">{motivo}</td>
+                        <td className="py-2 pr-4 text-gray-700">{por}</td>
+                        <td className="py-2 pr-3 text-gray-600 text-sm">{dataFormatada}</td>
                       </tr>
                     )
                   })}

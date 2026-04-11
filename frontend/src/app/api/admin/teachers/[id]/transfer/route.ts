@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 function formatarDataHoraSimples(d: Date): string {
   return d.toLocaleString('pt-BR', {
@@ -143,7 +144,7 @@ export async function POST(
     const existingLessons = await prisma.lesson.findMany({
       where: {
         teacherId: targetTeacherId,
-        status: { not: 'CANCELLED' },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
         startAt: { gte: startDate },
       },
       select: {

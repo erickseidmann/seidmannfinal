@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(
   _request: NextRequest,
@@ -174,7 +175,7 @@ export async function PUT(
       const lessons = await prisma.lesson.findMany({
         where: {
           teacherId,
-          status: { not: 'CANCELLED' },
+          status: { in: [...LESSON_STATUSES_SCHEDULED] },
           startAt: { gte: hoje },
         },
         select: {

@@ -18,6 +18,13 @@ import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
 import { formatTimeInTZ, getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
+import {
+  type LessonStatusUi,
+  LESSON_STATUS_LABELS,
+  isLessonCancelledFamily,
+  isLessonScheduledStatus,
+  lessonCancelledStatusAllowsReposicao,
+} from '@/lib/lesson-status'
 
 type ViewType = 'month' | 'week' | 'day'
 
@@ -25,7 +32,7 @@ interface Lesson {
   id: string
   enrollmentId: string
   teacherId: string
-  status: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  status: LessonStatusUi
   startAt: string
   durationMinutes: number
   notes: string | null
@@ -57,6 +64,7 @@ interface Stats {
     rescheduledLessonId?: string | null
     rescheduledAt?: string | null
     rescheduledTeacherName?: string | null
+    allowsReschedule?: boolean
   }[]
   reposicaoList: { id: string; studentName: string; teacherName: string; startAt: string }[]
   wrongFrequencyList: {
@@ -315,7 +323,7 @@ export default function AdminCalendarioPage() {
   const [lessonForm, setLessonForm] = useState({
     enrollmentId: '',
     teacherId: '',
-    status: 'CONFIRMED' as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
+    status: 'CONFIRMED' as LessonStatusUi,
     startAt: '',
     durationMinutes: 30,
     notes: '',
@@ -399,7 +407,6 @@ export default function AdminCalendarioPage() {
   const [lessonStatusSearch, setLessonStatusSearch] = useState('')
   const [studentRescheduledLessons, setStudentRescheduledLessons] = useState<Lesson[]>([])
   const [viewedRescheduledLessons, setViewedRescheduledLessons] = useState<Set<string>>(new Set())
-  const [removingDuplicates, setRemovingDuplicates] = useState(false)
   const [showDurationConfirm, setShowDurationConfirm] = useState(false)
   const [durationConfirmCadastroMin, setDurationConfirmCadastroMin] = useState<number>(30)
   const durationConfirmDidKeepRef = useRef(false)
@@ -586,13 +593,9 @@ export default function AdminCalendarioPage() {
                     hour: '2-digit',
                     minute: '2-digit',
                   })
-                  const statusLabel =
-                    l.status === 'CONFIRMED'
-                      ? 'Confirmada'
-                      : l.status === 'CANCELLED'
-                        ? 'Cancelada'
-                        : 'Reposição'
-                  return `${dia} ${hora} – ${l.teacherName} (${statusLabel})`
+                  const sl =
+                    LESSON_STATUS_LABELS[l.status as LessonStatusUi] ?? l.status
+                  return `${dia} ${hora} – ${l.teacherName} (${sl})`
                 })
                 .join(' | ')}`
             : ''
@@ -620,13 +623,9 @@ export default function AdminCalendarioPage() {
                     hour: '2-digit',
                     minute: '2-digit',
                   })
-                  const statusLabel =
-                    l.status === 'CONFIRMED'
-                      ? 'Confirmada'
-                      : l.status === 'CANCELLED'
-                        ? 'Cancelada'
-                        : 'Reposição'
-                  return `${dia} ${hora} – ${l.teacherName} (${statusLabel})`
+                  const sl =
+                    LESSON_STATUS_LABELS[l.status as LessonStatusUi] ?? l.status
+                  return `${dia} ${hora} – ${l.teacherName} (${sl})`
                 })
                 .join(' | ')}`
             : ''
@@ -725,32 +724,6 @@ export default function AdminCalendarioPage() {
     [fetchStats]
   )
 
-  const removerDuplicidades = useCallback(async () => {
-    if (removingDuplicates) return
-    setRemovingDuplicates(true)
-    try {
-      const res = await fetch('/api/admin/lessons/remove-duplicates', {
-        method: 'POST',
-        credentials: 'include',
-      })
-      const json = await res.json()
-      if (json.ok) {
-        setToast({
-          message: json.message ?? `${json.deletedCount ?? 0} aula(s) duplicada(s) excluída(s).`,
-          type: 'success',
-        })
-        await fetchStats()
-        await fetchLessons()
-      } else {
-        setToast({ message: json.message ?? 'Erro ao remover duplicidades.', type: 'error' })
-      }
-    } catch (e) {
-      setToast({ message: 'Erro ao remover duplicidades.', type: 'error' })
-    } finally {
-      setRemovingDuplicates(false)
-    }
-  }, [fetchStats, fetchLessons, removingDuplicates])
-
   const fetchNovosMatriculadosCount = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/metrics', { credentials: 'include' })
@@ -808,7 +781,7 @@ export default function AdminCalendarioPage() {
   const fetchEnrollmentsAndTeachers = useCallback(async () => {
     try {
       const [enrRes, teaRes] = await Promise.all([
-        fetch('/api/admin/enrollments', { credentials: 'include' }),
+        fetch('/api/admin/enrollments?schedulingEligible=1', { credentials: 'include' }),
         fetch('/api/admin/teachers', { credentials: 'include' }),
       ])
       if (enrRes.ok) {
@@ -1318,16 +1291,33 @@ export default function AdminCalendarioPage() {
       }
 
       const raw = json.data.lesson
+      if (!lessonCancelledStatusAllowsReposicao(raw.status)) {
+        setToast({
+          message:
+            'Esta aula está marcada como cancelada sem reposição. Não é possível agendar reposição a partir dela.',
+          type: 'error',
+        })
+        return
+      }
       if (!raw.teacherId || !raw.teacher?.id) {
         setToast({ message: 'Aula sem professor definido. Ajuste o professor antes de reagendar.', type: 'error' })
         return
       }
 
+      const mappedStatus: LessonStatusUi =
+        raw.status === 'CONFIRMED' ||
+        raw.status === 'CANCELLED' ||
+        raw.status === 'CANCELLED_BY_TEACHER' ||
+        raw.status === 'CANCELLED_NO_REPLACEMENT' ||
+        raw.status === 'REPOSICAO'
+          ? raw.status
+          : 'CONFIRMED'
+
       const lessonToEdit: Lesson = {
         id: raw.id,
         enrollmentId: raw.enrollmentId,
         teacherId: raw.teacherId,
-        status: (raw.status === 'CANCELLED' || raw.status === 'REPOSICAO' ? raw.status : 'CONFIRMED') as 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO',
+        status: mappedStatus,
         startAt: raw.startAt,
         durationMinutes: raw.durationMinutes ?? 30,
         notes: raw.notes ?? null,
@@ -1362,7 +1352,7 @@ export default function AdminCalendarioPage() {
       return
     }
     // Validar reposição se estiver cancelando e marcou agendar reposição
-    if (lessonForm.status === 'CANCELLED' && agendarReposicao) {
+    if (lessonCancelledStatusAllowsReposicao(lessonForm.status) && agendarReposicao) {
       if (!reposicaoForm.startAt?.trim() || !reposicaoForm.teacherId) {
         setToast({ message: 'Preencha data/hora e professor para a reposição', type: 'error' })
         return
@@ -1488,7 +1478,12 @@ export default function AdminCalendarioPage() {
         }
         
         // Se cancelou e marcou agendar reposição, criar a reposição
-        if (lessonForm.status === 'CANCELLED' && agendarReposicao && reposicaoForm.startAt && reposicaoForm.teacherId) {
+        if (
+          lessonCancelledStatusAllowsReposicao(lessonForm.status) &&
+          agendarReposicao &&
+          reposicaoForm.startAt &&
+          reposicaoForm.teacherId
+        ) {
           const reposicaoStartAt = new Date(reposicaoForm.startAt + ':00')
           if (!Number.isNaN(reposicaoStartAt.getTime())) {
             const reposicaoRes = await fetch('/api/admin/lessons', {
@@ -1725,30 +1720,52 @@ export default function AdminCalendarioPage() {
     return map
   }, [visibleLessons])
 
-  const visibleLessonsByDaySlotKey = useMemo(() => {
-    const map: Record<string, Lesson[]> = {}
-    for (const l of visibleLessons) {
-      const dayKey = toDateKeyInTZ(l.startAt)
-      const t = getTimeInTZ(l.startAt)
-      const slotMinute = t.minute < 30 ? 0 : 30
-      const slotKey = `${dayKey}|${t.hour}:${slotMinute}`
-      if (!map[slotKey]) map[slotKey] = []
-      map[slotKey].push(l)
-    }
-    return map
-  }, [visibleLessons])
-
   const getLessonsForDay = (day: Date) =>
     visibleLessonsByDayKey[toDateKeyInTZ(day)] ?? []
 
-  /** Aula no slot de 30 min se o início (horário de Brasília) cai nesse intervalo — evita deslocamento por fuso. */
-  const getLessonsForSlot = (day: Date, slotHour: number, slotMinute: number) => {
-    const key = `${toDateKeyInTZ(day)}|${slotHour}:${slotMinute}`
-    return visibleLessonsByDaySlotKey[key] ?? []
-  }
+  /**
+   * Aulas que ocupam o bloco de 30 min [slot, slot+30) — inclui aula de 60 min que começou na meia hora anterior.
+   */
+  const getLessonsIntersectingSlot = useCallback(
+    (day: Date, slotHour: number, slotMinute: number) => {
+      const dayKey = toDateKeyInTZ(day)
+      const blockStart = new Date(day)
+      blockStart.setHours(slotHour, slotMinute, 0, 0)
+      const dayLessons = visibleLessonsByDayKey[dayKey] ?? []
+      return dayLessons.filter((l) => {
+        if (!isLessonScheduledStatus(l.status)) return false
+        const ls = new Date(l.startAt).getTime()
+        const le = ls + (l.durationMinutes ?? 60) * 60 * 1000
+        const bs = blockStart.getTime()
+        const be = bs + 30 * 60 * 1000
+        return ls < be && bs < le
+      })
+    },
+    [visibleLessonsByDayKey]
+  )
 
-  const statusLabel = (s: string) =>
-    s === 'CONFIRMED' ? 'Confirmada' : s === 'CANCELLED' ? 'Cancelada' : 'Reposição'
+  /** Com filtro de professor ou aluno: não oferecer "+ Aula" em bloco já coberto por aula desse recurso. */
+  const slotBlockedForNewLessonByFilter = useCallback(
+    (day: Date, slotHour: number, slotMinute: number) => {
+      const intersecting = getLessonsIntersectingSlot(day, slotHour, slotMinute)
+      if (
+        selectedTeacherId &&
+        intersecting.some((l) => l.teacherId === selectedTeacherId && isLessonScheduledStatus(l.status))
+      ) {
+        return true
+      }
+      if (
+        selectedStudentId &&
+        intersecting.some((l) => l.enrollmentId === selectedStudentId && isLessonScheduledStatus(l.status))
+      ) {
+        return true
+      }
+      return false
+    },
+    [getLessonsIntersectingSlot, selectedTeacherId, selectedStudentId]
+  )
+
+  const statusLabel = (s: string) => LESSON_STATUS_LABELS[s as LessonStatusUi] ?? s
 
   const isPaused = (lesson: Lesson): boolean => {
     if (lesson.enrollment?.status !== 'PAUSED' || !lesson.enrollment?.pausedAt) return false
@@ -1775,7 +1792,7 @@ export default function AdminCalendarioPage() {
     }
     return s === 'CONFIRMED'
       ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-      : s === 'CANCELLED'
+      : isLessonCancelledFamily(s)
         ? 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
         : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
   }
@@ -2147,27 +2164,6 @@ export default function AdminCalendarioPage() {
           </div>
         </div>
 
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={removerDuplicidades}
-            disabled={removingDuplicates}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {removingDuplicates ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Removendo...
-              </>
-            ) : (
-              'Tirar duplicidades de aulas'
-            )}
-          </button>
-          <span className="text-sm text-slate-600">
-            Exclui aulas duplicadas (mesmo aluno, mesmo dia/hora) em todos os meses. Use se «repetir frequência» foi aplicado mais de uma vez.
-          </span>
-        </div>
-
         {selectedTeacher && (
           <p className="mb-4 text-sm text-slate-600 bg-white/80 rounded-xl px-4 py-2 border border-slate-200/80 shadow-sm">
             Exibindo apenas aulas de <strong>{selectedTeacher.nome}</strong>. Altere em &quot;Ver por professor&quot; para ver todos.
@@ -2320,7 +2316,11 @@ export default function AdminCalendarioPage() {
                     const d = addDays(weekStart, i)
                     const isSunday = d.getDay() === 0
                     const isHoliday = holidays.has(toDateKey(d))
-                    const slotLessons = getLessonsForSlot(d, slot.hour, slot.minute)
+                    const slotLessons = getLessonsIntersectingSlot(d, slot.hour, slot.minute)
+                    const teacherSlotBad =
+                      selectedTeacherId &&
+                      !isTeacherAvailableAtSlot(d, slot.hour, slot.minute, 60)
+                    const slotBlocked = slotBlockedForNewLessonByFilter(d, slot.hour, slot.minute)
                     return (
                       <div
                         key={i}
@@ -2328,8 +2328,15 @@ export default function AdminCalendarioPage() {
                       >
                         {!isSunday && (
                           <>
-                            {selectedTeacherId && !isTeacherAvailableAtSlot(d, slot.hour, slot.minute) ? (
+                            {teacherSlotBad ? (
                               <span className="text-[10px] text-gray-400 italic">Não disponível</span>
+                            ) : slotBlocked ? (
+                              <span
+                                className="text-[10px] text-amber-700 italic"
+                                title="Horário coberto por aula existente (filtro de professor ou aluno)"
+                              >
+                                Ocupado
+                              </span>
                             ) : (
                               <button
                                 type="button"
@@ -2398,7 +2405,15 @@ export default function AdminCalendarioPage() {
             </div>
             <div className={`max-h-[70vh] overflow-y-auto ${currentDate.getDay() === 0 ? 'bg-red-50/20' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/20' : ''}`}>
               {timeSlots.map((slot) => {
-                const slotLessons = getLessonsForSlot(currentDate, slot.hour, slot.minute)
+                const slotLessons = getLessonsIntersectingSlot(currentDate, slot.hour, slot.minute)
+                const teacherSlotBad =
+                  selectedTeacherId &&
+                  !isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute, 60)
+                const slotBlocked = slotBlockedForNewLessonByFilter(
+                  currentDate,
+                  slot.hour,
+                  slot.minute
+                )
                 const isSunday = currentDate.getDay() === 0
                 const isHoliday = holidays.has(toDateKey(currentDate))
                 return (
@@ -2409,8 +2424,15 @@ export default function AdminCalendarioPage() {
                     <div className="flex-1 p-2 flex flex-col gap-1">
                       {!isSunday && (
                         <>
-                          {selectedTeacherId && !isTeacherAvailableAtSlot(currentDate, slot.hour, slot.minute) ? (
+                          {teacherSlotBad ? (
                             <span className="text-xs text-gray-400 italic">Não disponível</span>
+                          ) : slotBlocked ? (
+                            <span
+                              className="text-xs text-amber-700 italic"
+                              title="Horário coberto por aula existente (filtro de professor ou aluno)"
+                            >
+                              Ocupado
+                            </span>
                           ) : (
                             <button
                               type="button"
@@ -2719,10 +2741,21 @@ export default function AdminCalendarioPage() {
             </div>
             {/* Status – combobox (digitar + lista) */}
             {(() => {
-              const STATUS_OPCOES = [
-                { value: 'CONFIRMED' as const, label: 'Confirmada' },
-                { value: 'CANCELLED' as const, label: 'Cancelada' },
+              const statusOpcoesBase: { value: LessonStatusUi; label: string }[] = [
+                { value: 'CONFIRMED', label: LESSON_STATUS_LABELS.CONFIRMED },
+                { value: 'CANCELLED', label: LESSON_STATUS_LABELS.CANCELLED },
+                { value: 'CANCELLED_BY_TEACHER', label: LESSON_STATUS_LABELS.CANCELLED_BY_TEACHER },
+                { value: 'CANCELLED_NO_REPLACEMENT', label: LESSON_STATUS_LABELS.CANCELLED_NO_REPLACEMENT },
               ]
+              const mostrarOpcaoReposicao =
+                lessonForm.status === 'REPOSICAO' ||
+                lessonCancelledStatusAllowsReposicao(lessonForm.status)
+              const STATUS_OPCOES: { value: LessonStatusUi; label: string }[] = mostrarOpcaoReposicao
+                ? [
+                    ...statusOpcoesBase,
+                    { value: 'REPOSICAO', label: LESSON_STATUS_LABELS.REPOSICAO },
+                  ]
+                : statusOpcoesBase
               const filteredStatus = !lessonStatusSearch.trim()
                 ? STATUS_OPCOES
                 : STATUS_OPCOES.filter((o) =>
@@ -2737,7 +2770,9 @@ export default function AdminCalendarioPage() {
                       value={
                         lessonStatusDropdownOpen
                           ? lessonStatusSearch
-                          : STATUS_OPCOES.find((o) => o.value === lessonForm.status)?.label ?? ''
+                          : STATUS_OPCOES.find((o) => o.value === lessonForm.status)?.label ??
+                            LESSON_STATUS_LABELS[lessonForm.status] ??
+                            ''
                       }
                       onChange={(e) => {
                         setLessonStatusSearch(e.target.value)
@@ -2765,10 +2800,13 @@ export default function AdminCalendarioPage() {
                                 setLessonForm({ ...lessonForm, status: newStatus })
                                 setLessonStatusSearch('')
                                 setLessonStatusDropdownOpen(false)
-                                // Se mudou de CANCELLED para outro status, desmarcar agendar reposição
-                                if (lessonForm.status === 'CANCELLED' && newStatus !== 'CANCELLED') {
+                                if (!lessonCancelledStatusAllowsReposicao(newStatus)) {
                                   setAgendarReposicao(false)
-                                  setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: lessonForm.durationMinutes })
+                                  setReposicaoForm({
+                                    startAt: '',
+                                    teacherId: '',
+                                    durationMinutes: lessonForm.durationMinutes,
+                                  })
                                 }
                               }}
                               className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
@@ -2784,7 +2822,7 @@ export default function AdminCalendarioPage() {
               )
             })()}
             {/* Opção de agendar reposição quando cancelar */}
-            {lessonForm.status === 'CANCELLED' && (
+            {lessonCancelledStatusAllowsReposicao(lessonForm.status) && (
               <div className="space-y-3 pt-2 border-t border-gray-200">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -3289,7 +3327,7 @@ export default function AdminCalendarioPage() {
                           <p className="mt-1 text-xs text-red-700">Sem reagendamento</p>
                         )}
                       </div>
-                      {!item.rescheduledAt && (
+                      {item.allowsReschedule !== false && !item.rescheduledAt && (
                         <Button
                           type="button"
                           size="sm"
@@ -3300,6 +3338,11 @@ export default function AdminCalendarioPage() {
                         >
                           {reagendarCanceladaLoadingId === item.id ? 'Abrindo...' : 'Reagendar'}
                         </Button>
+                      )}
+                      {item.allowsReschedule === false && !item.rescheduledAt && (
+                        <p className="text-xs text-gray-600 shrink-0 max-w-[11rem] text-right">
+                          Sem reposição permitida
+                        </p>
                       )}
                     </div>
                   </div>
