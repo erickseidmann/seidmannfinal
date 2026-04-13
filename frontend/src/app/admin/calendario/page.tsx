@@ -1733,7 +1733,6 @@ export default function AdminCalendarioPage() {
       blockStart.setHours(slotHour, slotMinute, 0, 0)
       const dayLessons = visibleLessonsByDayKey[dayKey] ?? []
       return dayLessons.filter((l) => {
-        if (!isLessonScheduledStatus(l.status)) return false
         const ls = new Date(l.startAt).getTime()
         const le = ls + (l.durationMinutes ?? 60) * 60 * 1000
         const bs = blockStart.getTime()
