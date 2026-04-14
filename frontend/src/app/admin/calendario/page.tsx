@@ -388,6 +388,8 @@ export default function AdminCalendarioPage() {
   const [marcandoRedirectId, setMarcandoRedirectId] = useState<string | null>(null)
   const [reagendarCanceladaLoadingId, setReagendarCanceladaLoadingId] = useState<string | null>(null)
   const [holidays, setHolidays] = useState<Set<string>>(new Set())
+  const [pendingHolidays, setPendingHolidays] = useState<Set<string>>(new Set())
+  const [pendingHolidaysApprovedByMe, setPendingHolidaysApprovedByMe] = useState<Set<string>>(new Set())
   const [holidayLoading, setHolidayLoading] = useState<string | null>(null)
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
   const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
@@ -922,13 +924,15 @@ export default function AdminCalendarioPage() {
       const json = await res.json()
       if (json.ok && Array.isArray(json.data?.holidays)) {
         setHolidays(new Set(json.data.holidays))
+        setPendingHolidays(new Set(Array.isArray(json.data?.pendingHolidays) ? json.data.pendingHolidays : []))
+        setPendingHolidaysApprovedByMe(new Set(Array.isArray(json.data?.pendingHolidaysApprovedByMe) ? json.data.pendingHolidaysApprovedByMe : []))
       }
     } catch (e) {
       console.error(e)
     }
   }, [getHolidaysRange])
 
-  const toggleHoliday = useCallback(async (date: Date) => {
+  const toggleHoliday = useCallback(async (date: Date, action: 'approve' | 'deny' | 'cancel' = 'approve') => {
     const key = toDateKey(date)
     setHolidayLoading(key)
     try {
@@ -949,7 +953,7 @@ export default function AdminCalendarioPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ date: key }),
+          body: JSON.stringify({ date: key, action }),
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
@@ -2196,13 +2200,15 @@ export default function AdminCalendarioPage() {
                   const today = isToday(day)
                   const dayLessons = getLessonsForDay(day)
                   const isHoliday = holidays.has(toDateKey(day))
+                  const isPendingHoliday = pendingHolidays.has(toDateKey(day))
+                  const isPendingApprovedByMe = pendingHolidaysApprovedByMe.has(toDateKey(day))
                   const isSunday = day.getDay() === 0
                   const showDayActions = !otherMonth && !isSunday
                   return (
                     <div
                       key={`${wi}-${di}`}
                       className={`min-h-[110px] sm:min-h-[130px] border-b border-r border-slate-100 p-2 transition-colors ${
-                        otherMonth ? 'bg-slate-50/40' : isHoliday ? 'bg-amber-50/80' : di === 0 ? 'bg-red-50/50' : 'bg-white hover:bg-slate-50/50'
+                        otherMonth ? 'bg-slate-50/40' : isHoliday ? 'bg-amber-50/80' : isPendingHoliday ? 'bg-amber-50/60 animate-pulse' : di === 0 ? 'bg-red-50/50' : 'bg-white hover:bg-slate-50/50'
                       } ${di === 6 ? 'border-r-0' : ''}`}
                     >
                       <div className="flex items-center justify-between">
@@ -2227,18 +2233,29 @@ export default function AdminCalendarioPage() {
                         <div className="mt-0.5">
                           <button
                             type="button"
-                            onClick={() => toggleHoliday(day)}
+                            onClick={() => toggleHoliday(day, isPendingHoliday && isPendingApprovedByMe ? 'cancel' : 'approve')}
                             disabled={holidayLoading === toDateKey(day)}
-                            className={`text-[10px] flex items-center gap-0.5 ${isHoliday ? 'text-amber-700 hover:underline' : 'text-gray-500 hover:text-amber-600 hover:underline'}`}
-                            title={isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
+                            className={`text-[10px] flex items-center gap-0.5 ${isHoliday ? 'text-amber-700 hover:underline' : isPendingHoliday ? 'text-amber-700 animate-pulse hover:underline' : 'text-gray-500 hover:text-amber-600 hover:underline'}`}
+                            title={isHoliday ? 'Cancelar feriado' : isPendingHoliday ? (isPendingApprovedByMe ? 'Cancelar solicitação' : 'Aprovar feriado') : 'Definir feriado'}
                           >
                             {holidayLoading === toDateKey(day) ? (
                               <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
                               <CalendarOff className="w-3 h-3" />
                             )}
-                            {isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
+                            {isHoliday ? 'Cancelar feriado' : isPendingHoliday ? (isPendingApprovedByMe ? 'Cancelar pedido' : 'Aprovar feriado') : 'Definir feriado'}
                           </button>
+                          {isPendingHoliday && !isPendingApprovedByMe && (
+                            <button
+                              type="button"
+                              onClick={() => toggleHoliday(day, 'deny')}
+                              disabled={holidayLoading === toDateKey(day)}
+                              className="ml-2 text-[10px] text-red-600 hover:underline disabled:opacity-60"
+                              title="Negar solicitação de feriado"
+                            >
+                              Negar
+                            </button>
+                          )}
                         </div>
                       )}
                       <div className="mt-1.5 space-y-1">
@@ -2282,24 +2299,39 @@ export default function AdminCalendarioPage() {
               {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => {
                 const isSunday = d.getDay() === 0
                 const isHoliday = holidays.has(toDateKey(d))
+                const isPendingHoliday = pendingHolidays.has(toDateKey(d))
+                const isPendingApprovedByMe = pendingHolidaysApprovedByMe.has(toDateKey(d))
                 return (
                   <div
                     key={d.toISOString()}
-                    className={`py-3 text-center text-xs font-semibold ${isSunday ? 'text-red-600 bg-red-50/80' : isHoliday ? 'text-amber-700 bg-amber-50/80' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
+                    className={`py-3 text-center text-xs font-semibold ${isSunday ? 'text-red-600 bg-red-50/80' : isHoliday ? 'text-amber-700 bg-amber-50/80' : isPendingHoliday ? 'text-amber-700 bg-amber-50/60 animate-pulse' : isToday(d) ? 'text-brand-orange bg-orange-50' : 'text-slate-600'}`}
                   >
                     <div>{DIAS_SEMANA[d.getDay()]}</div>
                     <div className="font-normal">{d.getDate()}</div>
                     {!isSunday && (
-                      <button
-                        type="button"
-                        onClick={() => toggleHoliday(d)}
-                        disabled={holidayLoading === toDateKey(d)}
-                        className="mt-1 text-[10px] text-gray-500 hover:text-amber-600 hover:underline flex items-center justify-center gap-0.5 w-full"
-                        title={isHoliday ? 'Cancelar feriado' : 'Definir feriado'}
-                      >
-                        {holidayLoading === toDateKey(d) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
-                        {isHoliday ? 'Cancelar feriado' : 'Feriado'}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => toggleHoliday(d, isPendingHoliday && isPendingApprovedByMe ? 'cancel' : 'approve')}
+                          disabled={holidayLoading === toDateKey(d)}
+                          className={`mt-1 text-[10px] hover:underline flex items-center justify-center gap-0.5 w-full ${isHoliday ? 'text-amber-700' : isPendingHoliday ? 'text-amber-700 animate-pulse' : 'text-gray-500 hover:text-amber-600'}`}
+                          title={isHoliday ? 'Cancelar feriado' : isPendingHoliday ? (isPendingApprovedByMe ? 'Cancelar solicitação' : 'Aprovar feriado') : 'Definir feriado'}
+                        >
+                          {holidayLoading === toDateKey(d) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
+                          {isHoliday ? 'Cancelar feriado' : isPendingHoliday ? (isPendingApprovedByMe ? 'Cancelar pedido' : 'Aprovar') : 'Feriado'}
+                        </button>
+                        {isPendingHoliday && !isPendingApprovedByMe && (
+                          <button
+                            type="button"
+                            onClick={() => toggleHoliday(d, 'deny')}
+                            disabled={holidayLoading === toDateKey(d)}
+                            className="mt-1 text-[10px] text-red-600 hover:underline"
+                            title="Negar solicitação de feriado"
+                          >
+                            Negar
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 )
@@ -2385,24 +2417,69 @@ export default function AdminCalendarioPage() {
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-lg overflow-hidden">
             <div
               className={`border-b border-slate-200 px-5 py-3 text-sm font-semibold flex items-center justify-between flex-wrap gap-2 ${
-                currentDate.getDay() === 0 ? 'bg-red-50/80 text-red-700' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/80 text-amber-800' : 'bg-slate-50/80 text-slate-700'
+                currentDate.getDay() === 0
+                  ? 'bg-red-50/80 text-red-700'
+                  : holidays.has(toDateKey(currentDate))
+                    ? 'bg-amber-50/80 text-amber-800'
+                    : pendingHolidays.has(toDateKey(currentDate))
+                      ? 'bg-amber-50/60 text-amber-800 animate-pulse'
+                      : 'bg-slate-50/80 text-slate-700'
               }`}
             >
               <span>{DIAS_SEMANA[currentDate.getDay()]} – {currentDate.getDate()} {MESES[currentDate.getMonth()]}</span>
               {currentDate.getDay() !== 0 && (
-                <button
-                  type="button"
-                  onClick={() => toggleHoliday(currentDate)}
-                  disabled={holidayLoading === toDateKey(currentDate)}
-                  className="text-xs font-normal flex items-center gap-1 text-gray-600 hover:text-amber-700 hover:underline"
-                  title={holidays.has(toDateKey(currentDate)) ? 'Cancelar feriado' : 'Definir feriado'}
-                >
-                  {holidayLoading === toDateKey(currentDate) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
-                  {holidays.has(toDateKey(currentDate)) ? 'Cancelar feriado' : 'Definir feriado'}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleHoliday(currentDate, pendingHolidays.has(toDateKey(currentDate)) && pendingHolidaysApprovedByMe.has(toDateKey(currentDate)) ? 'cancel' : 'approve')}
+                    disabled={holidayLoading === toDateKey(currentDate)}
+                    className={`text-xs font-normal flex items-center gap-1 hover:underline ${
+                      holidays.has(toDateKey(currentDate))
+                        ? 'text-amber-700'
+                        : pendingHolidays.has(toDateKey(currentDate))
+                          ? 'text-amber-700 animate-pulse'
+                          : 'text-gray-600 hover:text-amber-700'
+                    }`}
+                    title={
+                      holidays.has(toDateKey(currentDate))
+                        ? 'Cancelar feriado'
+                        : pendingHolidays.has(toDateKey(currentDate))
+                          ? (pendingHolidaysApprovedByMe.has(toDateKey(currentDate)) ? 'Cancelar solicitação' : 'Aprovar feriado')
+                          : 'Definir feriado'
+                    }
+                  >
+                    {holidayLoading === toDateKey(currentDate) ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarOff className="w-3 h-3" />}
+                    {holidays.has(toDateKey(currentDate))
+                      ? 'Cancelar feriado'
+                      : pendingHolidays.has(toDateKey(currentDate))
+                        ? (pendingHolidaysApprovedByMe.has(toDateKey(currentDate)) ? 'Cancelar pedido' : 'Aprovar feriado')
+                        : 'Definir feriado'}
+                  </button>
+                  {pendingHolidays.has(toDateKey(currentDate)) && !pendingHolidaysApprovedByMe.has(toDateKey(currentDate)) && (
+                    <button
+                      type="button"
+                      onClick={() => toggleHoliday(currentDate, 'deny')}
+                      disabled={holidayLoading === toDateKey(currentDate)}
+                      className="text-xs font-normal text-red-600 hover:underline"
+                      title="Negar solicitação de feriado"
+                    >
+                      Negar
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-            <div className={`max-h-[70vh] overflow-y-auto ${currentDate.getDay() === 0 ? 'bg-red-50/20' : holidays.has(toDateKey(currentDate)) ? 'bg-amber-50/20' : ''}`}>
+            <div
+              className={`max-h-[70vh] overflow-y-auto ${
+                currentDate.getDay() === 0
+                  ? 'bg-red-50/20'
+                  : holidays.has(toDateKey(currentDate))
+                    ? 'bg-amber-50/20'
+                    : pendingHolidays.has(toDateKey(currentDate))
+                      ? 'bg-amber-50/10 animate-pulse'
+                      : ''
+              }`}
+            >
               {timeSlots.map((slot) => {
                 const slotLessons = getLessonsIntersectingSlot(currentDate, slot.hour, slot.minute)
                 const teacherSlotBad =

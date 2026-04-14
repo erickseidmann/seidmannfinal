@@ -41,7 +41,7 @@ function getApprovalState(logs: HolidayApprovalLog[]) {
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
-    if (!auth.authorized) {
+    if (!auth.authorized || !auth.session) {
       return NextResponse.json(
         { ok: false, message: auth.message || 'Não autorizado' },
         { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
@@ -65,9 +65,41 @@ export async function GET(request: NextRequest) {
       orderBy: { dateKey: 'asc' },
     })
 
+    const pendingLogs = await prisma.financeAuditLog.findMany({
+      where: {
+        entityType: 'HOLIDAY',
+        entityId: { gte: startParam, lte: endParam },
+        action: { in: ['HOLIDAY_SET_APPROVAL', 'HOLIDAY_SET_COMPLETED', 'HOLIDAY_SET_RESET'] },
+      },
+      orderBy: [{ entityId: 'asc' }, { criadoEm: 'asc' }],
+      select: { entityId: true, action: true, criadoEm: true, performedBy: true },
+    })
+
+    const holidaySet = new Set(holidays.map((h) => h.dateKey))
+    const groupedByDate = new Map<string, HolidayApprovalLog[]>()
+    for (const log of pendingLogs as Array<HolidayApprovalLog & { entityId: string }>) {
+      const list = groupedByDate.get(log.entityId) ?? []
+      list.push({ action: log.action, criadoEm: log.criadoEm, performedBy: log.performedBy })
+      groupedByDate.set(log.entityId, list)
+    }
+    const pendingHolidays: string[] = []
+    const pendingHolidaysApprovedByMe: string[] = []
+    for (const [dateKey, logs] of groupedByDate.entries()) {
+      if (holidaySet.has(dateKey)) continue
+      const { approverIds } = getApprovalState(logs)
+      if (approverIds.size > 0 && approverIds.size < 2) {
+        pendingHolidays.push(dateKey)
+        if (approverIds.has(auth.session.sub)) pendingHolidaysApprovedByMe.push(dateKey)
+      }
+    }
+
     return NextResponse.json({
       ok: true,
-      data: { holidays: holidays.map((h) => h.dateKey) },
+      data: {
+        holidays: holidays.map((h) => h.dateKey),
+        pendingHolidays,
+        pendingHolidaysApprovedByMe,
+      },
     })
   } catch (error) {
     console.error('[api/admin/holidays GET]', error)
@@ -91,6 +123,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}))
     const dateStr = body.date
+    const action = typeof body.action === 'string' ? body.action : 'approve'
     if (!dateStr || typeof dateStr !== 'string') {
       return NextResponse.json(
         { ok: false, message: 'Campo date (YYYY-MM-DD) é obrigatório' },
@@ -131,6 +164,58 @@ export async function POST(request: NextRequest) {
     })
     const { approverIds } = getApprovalState(existingLogs as HolidayApprovalLog[])
 
+    if (action === 'cancel') {
+      if (approverIds.size === 0 || approverIds.size >= 2) {
+        return NextResponse.json(
+          { ok: false, message: 'Não há solicitação pendente para cancelar.' },
+          { status: 400 }
+        )
+      }
+      if (!approverIds.has(adminId)) {
+        return NextResponse.json(
+          { ok: false, message: 'Apenas quem aprovou pode cancelar esta solicitação pendente.' },
+          { status: 403 }
+        )
+      }
+      await prisma.financeAuditLog.create({
+        data: {
+          entityType: 'HOLIDAY',
+          entityId: dateKey,
+          action: 'HOLIDAY_SET_RESET',
+          performedBy: adminId,
+          metadata: { dateKey, reason: 'cancelled_by_requester' },
+        },
+      })
+      return NextResponse.json({
+        ok: true,
+        message: 'Solicitação de feriado cancelada.',
+        data: { dateKey, requiresSecondApproval: false, approvedByCount: 0 },
+      })
+    }
+
+    if (action === 'deny') {
+      if (approverIds.size === 0 || approverIds.size >= 2) {
+        return NextResponse.json(
+          { ok: false, message: 'Não há solicitação pendente para negar.' },
+          { status: 400 }
+        )
+      }
+      await prisma.financeAuditLog.create({
+        data: {
+          entityType: 'HOLIDAY',
+          entityId: dateKey,
+          action: 'HOLIDAY_SET_RESET',
+          performedBy: adminId,
+          metadata: { dateKey, reason: 'denied_by_admin' },
+        },
+      })
+      return NextResponse.json({
+        ok: true,
+        message: 'Solicitação de feriado negada.',
+        data: { dateKey, requiresSecondApproval: false, approvedByCount: 0 },
+      })
+    }
+
     if (approverIds.has(adminId)) {
       return NextResponse.json({
         ok: true,
@@ -151,6 +236,20 @@ export async function POST(request: NextRequest) {
 
     const approvedByCount = approverIds.size + 1
     if (approvedByCount < 2) {
+      if (prisma.adminNotification) {
+        const otherAdmins = await prisma.user.findMany({
+          where: { role: 'ADMIN', id: { not: adminId } },
+          select: { id: true },
+        })
+        if (otherAdmins.length > 0) {
+          await prisma.adminNotification.createMany({
+            data: otherAdmins.map((a) => ({
+              userId: a.id,
+              message: `Feriado ${dateKey} aguardando sua 2ª aprovação.`,
+            })),
+          })
+        }
+      }
       return NextResponse.json({
         ok: true,
         message: 'Primeira aprovação registrada. É necessária a aprovação de um segundo admin para definir o feriado.',
