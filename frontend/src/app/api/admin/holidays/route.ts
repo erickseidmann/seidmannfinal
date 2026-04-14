@@ -15,6 +15,29 @@ function toDateKey(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+type HolidayApprovalLog = {
+  action: string
+  criadoEm: Date
+  performedBy: string | null
+}
+
+function getApprovalState(logs: HolidayApprovalLog[]) {
+  let baselineMs = 0
+  for (const log of logs) {
+    if (log.action === 'HOLIDAY_SET_COMPLETED' || log.action === 'HOLIDAY_SET_RESET') {
+      baselineMs = Math.max(baselineMs, new Date(log.criadoEm).getTime())
+    }
+  }
+  const approverIds = new Set<string>()
+  for (const log of logs) {
+    if (log.action !== 'HOLIDAY_SET_APPROVAL') continue
+    const createdMs = new Date(log.criadoEm).getTime()
+    if (createdMs <= baselineMs) continue
+    if (log.performedBy) approverIds.add(log.performedBy)
+  }
+  return { baselineMs, approverIds }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
@@ -58,12 +81,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
-    if (!auth.authorized) {
+    if (!auth.authorized || !auth.session) {
       return NextResponse.json(
         { ok: false, message: auth.message || 'Não autorizado' },
         { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
       )
     }
+    const adminId = auth.session.sub
 
     const body = await request.json().catch(() => ({}))
     const dateStr = body.date
@@ -83,15 +107,79 @@ export async function POST(request: NextRequest) {
     }
     const dateKey = toDateKey(d)
 
+    const alreadyHoliday = await prisma.holiday.findUnique({
+      where: { dateKey },
+      select: { id: true },
+    })
+    if (alreadyHoliday) {
+      return NextResponse.json({
+        ok: true,
+        message: 'Esta data já está definida como feriado.',
+        data: { dateKey, requiresSecondApproval: false, approvedByCount: 2 },
+      })
+    }
+
+    const existingLogs = await prisma.financeAuditLog.findMany({
+      where: {
+        entityType: 'HOLIDAY',
+        entityId: dateKey,
+        action: { in: ['HOLIDAY_SET_APPROVAL', 'HOLIDAY_SET_COMPLETED', 'HOLIDAY_SET_RESET'] },
+      },
+      orderBy: { criadoEm: 'desc' },
+      take: 200,
+      select: { action: true, criadoEm: true, performedBy: true },
+    })
+    const { approverIds } = getApprovalState(existingLogs as HolidayApprovalLog[])
+
+    if (approverIds.has(adminId)) {
+      return NextResponse.json({
+        ok: true,
+        message: 'Sua aprovação deste feriado já foi registrada. Aguardando um segundo admin.',
+        data: { dateKey, requiresSecondApproval: true, approvedByCount: approverIds.size },
+      })
+    }
+
+    await prisma.financeAuditLog.create({
+      data: {
+        entityType: 'HOLIDAY',
+        entityId: dateKey,
+        action: 'HOLIDAY_SET_APPROVAL',
+        performedBy: adminId,
+        metadata: { dateKey },
+      },
+    })
+
+    const approvedByCount = approverIds.size + 1
+    if (approvedByCount < 2) {
+      return NextResponse.json({
+        ok: true,
+        message: 'Primeira aprovação registrada. É necessária a aprovação de um segundo admin para definir o feriado.',
+        data: { dateKey, requiresSecondApproval: true, approvedByCount },
+      })
+    }
+
     try {
       await prisma.holiday.create({ data: { dateKey } })
     } catch (createError: unknown) {
-      // P2002 = unique constraint (já existe feriado nessa data)
       const code = (createError as { code?: string })?.code
       if (code !== 'P2002') throw createError
     }
 
-    return NextResponse.json({ ok: true, data: { dateKey } })
+    await prisma.financeAuditLog.create({
+      data: {
+        entityType: 'HOLIDAY',
+        entityId: dateKey,
+        action: 'HOLIDAY_SET_COMPLETED',
+        performedBy: adminId,
+        metadata: { dateKey, approvedByCount },
+      },
+    })
+
+    return NextResponse.json({
+      ok: true,
+      message: 'Feriado definido após aprovação de 2 admins.',
+      data: { dateKey, requiresSecondApproval: false, approvedByCount },
+    })
   } catch (error) {
     console.error('[api/admin/holidays POST]', error)
     return NextResponse.json(
@@ -104,12 +192,13 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireAdmin(request)
-    if (!auth.authorized) {
+    if (!auth.authorized || !auth.session) {
       return NextResponse.json(
         { ok: false, message: auth.message || 'Não autorizado' },
         { status: auth.message?.includes('Não autenticado') ? 401 : 403 }
       )
     }
+    const adminId = auth.session.sub
 
     const { searchParams } = new URL(request.url)
     const dateStr = searchParams.get('date')
@@ -122,6 +211,16 @@ export async function DELETE(request: NextRequest) {
 
     await prisma.holiday.deleteMany({
       where: { dateKey: dateStr },
+    })
+
+    await prisma.financeAuditLog.create({
+      data: {
+        entityType: 'HOLIDAY',
+        entityId: dateStr,
+        action: 'HOLIDAY_SET_RESET',
+        performedBy: adminId,
+        metadata: { dateKey: dateStr },
+      },
     })
 
     return NextResponse.json({ ok: true, message: 'Feriado removido' })

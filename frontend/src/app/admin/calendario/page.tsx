@@ -943,7 +943,7 @@ export default function AdminCalendarioPage() {
           setToast({ message: json.message || 'Erro ao remover feriado', type: 'error' })
           return
         }
-        setToast({ message: 'Feriado removido', type: 'success' })
+        setToast({ message: json.message || 'Feriado removido', type: 'success' })
       } else {
         const res = await fetch('/api/admin/holidays', {
           method: 'POST',
@@ -956,7 +956,7 @@ export default function AdminCalendarioPage() {
           setToast({ message: json.message || 'Erro ao definir feriado', type: 'error' })
           return
         }
-        setToast({ message: 'Feriado definido', type: 'success' })
+        setToast({ message: json.message || 'Feriado definido', type: 'success' })
       }
       await fetchHolidays()
     } catch (e) {
