@@ -74,6 +74,8 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         whatsapp: normalizedWhatsapp,
         senha: passwordHash,
+        role: 'STUDENT',
+        status: 'ACTIVE',
       },
     })
 

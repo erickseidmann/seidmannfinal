@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
+import { resolveTeacherProofTargetMonthKey } from '@/lib/teacher-payment-month-resolve'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = [
@@ -61,15 +62,23 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null
     const mensagem = (formData.get('mensagem') as string)?.trim() || null
 
-    const year = yearParam != null ? parseInt(String(yearParam), 10) : null
-    const month = monthParam != null ? parseInt(String(monthParam), 10) : null
+    const bodyYear = yearParam != null ? parseInt(String(yearParam), 10) : null
+    const bodyMonth = monthParam != null ? parseInt(String(monthParam), 10) : null
 
-    if (year == null || month == null || month < 1 || month > 12) {
+    if (bodyYear == null || bodyMonth == null || bodyMonth < 1 || bodyMonth > 12) {
       return NextResponse.json(
         { ok: false, message: 'Ano e mês são obrigatórios e válidos' },
         { status: 400 }
       )
     }
+
+    const now = new Date()
+    const { year, month } = await resolveTeacherProofTargetMonthKey(
+      teacher.id,
+      bodyYear,
+      bodyMonth,
+      now
+    )
 
     if (!file || !(file instanceof Blob) || file.size === 0) {
       return NextResponse.json(
@@ -142,6 +151,8 @@ export async function POST(request: NextRequest) {
       data: {
         message: 'Comprovante anexado no sistema com sucesso. Agora você pode confirmar o valor a receber.',
         fileUrl,
+        year,
+        month,
       },
     })
   } catch (error) {

@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getInvoice } from '@/lib/cora'
 import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
-import { emitirNfseParaAluno } from '@/lib/nfse/service'
+import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
 import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
 
 const CORA_WEBHOOK_UA = 'Cora-Webhook'
@@ -167,21 +167,26 @@ async function handleInvoicePaid(coraInvoiceId: string): Promise<void> {
             ? Number(enrollment.paymentInfo.valorMensal)
             : null
       if ((finance.cpf || finance.cnpj) && valorMensalidade && valorMensalidade > 0) {
-        await emitirNfseParaAluno({
-          enrollmentId,
-          studentName: finance.nome,
-          cpf: finance.cpf || undefined,
-          cnpj: finance.cnpj || undefined,
-          email: finance.email || undefined,
-          amount: valorMensalidade,
-          year,
-          month,
-          alunoNome: enrollment.nome,
-          frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
-          curso: enrollment.curso ?? undefined,
-          customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
-        })
-        console.log(`[Cora] NFSe emitida para ${finance.nome} (${year}/${month})`)
+        const jaAutorizada = await obterNfAutorizadaExistente(enrollmentId, year, month)
+        if (jaAutorizada) {
+          console.log(`[Cora] NFSe já autorizada para ${finance.nome} (${year}/${month}) — sem reemitir`)
+        } else {
+          await emitirNfseParaAluno({
+            enrollmentId,
+            studentName: finance.nome,
+            cpf: finance.cpf || undefined,
+            cnpj: finance.cnpj || undefined,
+            email: finance.email || undefined,
+            amount: valorMensalidade,
+            year,
+            month,
+            alunoNome: enrollment.nome,
+            frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
+            curso: enrollment.curso ?? undefined,
+            customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
+          })
+          console.log(`[Cora] NFSe emitida para ${finance.nome} (${year}/${month})`)
+        }
       }
     } catch (nfseError) {
       console.error('[Cora] Erro ao emitir NFSe:', nfseError)
@@ -362,20 +367,23 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
                 ? Number(enrollmentCompleto.paymentInfo.valorMensal)
                 : null
           if ((finance.cpf || finance.cnpj) && valorMensalidade && valorMensalidade > 0) {
-            await emitirNfseParaAluno({
-              enrollmentId: code,
-              studentName: finance.nome,
-              cpf: finance.cpf || undefined,
-              cnpj: finance.cnpj || undefined,
-              email: finance.email || undefined,
-              amount: valorMensalidade,
-              year,
-              month,
-              alunoNome: enrollmentCompleto.nome,
-              frequenciaSemanal: enrollmentCompleto.frequenciaSemanal ?? undefined,
-              curso: enrollmentCompleto.curso ?? undefined,
-              customDescricaoEmpresa: enrollmentCompleto.faturamentoDescricaoNfse ?? undefined,
-            })
+            const jaAutorizada = await obterNfAutorizadaExistente(code, year, month)
+            if (!jaAutorizada) {
+              await emitirNfseParaAluno({
+                enrollmentId: code,
+                studentName: finance.nome,
+                cpf: finance.cpf || undefined,
+                cnpj: finance.cnpj || undefined,
+                email: finance.email || undefined,
+                amount: valorMensalidade,
+                year,
+                month,
+                alunoNome: enrollmentCompleto.nome,
+                frequenciaSemanal: enrollmentCompleto.frequenciaSemanal ?? undefined,
+                curso: enrollmentCompleto.curso ?? undefined,
+                customDescricaoEmpresa: enrollmentCompleto.faturamentoDescricaoNfse ?? undefined,
+              })
+            }
           }
         } catch {
           /* ignore */

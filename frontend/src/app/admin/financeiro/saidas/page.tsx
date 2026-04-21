@@ -5,13 +5,13 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Plus, Trash2, Calendar, ChevronDown, ChevronRight, FileDown } from 'lucide-react'
+import { Plus, Trash2, Calendar, ChevronDown, ChevronRight, FileDown, Upload, Download } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -35,6 +35,14 @@ interface ExpenseRow {
   paidAt?: string | null
   receiptUrl?: string | null
   fixedSeriesId?: string | null
+}
+
+interface BankExtratoItem {
+  id: string
+  originalFilename: string
+  fileUrl: string
+  criadoEm: string
+  sizeBytes: number | null
 }
 
 function formatMoney(n: number): string {
@@ -75,6 +83,32 @@ export default function FinanceiroSaidasPage() {
   const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(10)
   const [itemsPerPageFixed, setItemsPerPageFixed] = useState(10)
 
+  const [extratos, setExtratos] = useState<BankExtratoItem[]>([])
+  const [extratosLoading, setExtratosLoading] = useState(false)
+  const [extratoUploading, setExtratoUploading] = useState(false)
+  const [extratoDownloading, setExtratoDownloading] = useState(false)
+  const extratoInputRef = useRef<HTMLInputElement | null>(null)
+
+  const fetchExtratos = useCallback(async (ano: number, mes: number) => {
+    setExtratosLoading(true)
+    try {
+      const res = await fetch(
+        `/api/admin/financeiro/administracao/bank-extratos?year=${ano}&month=${mes}`,
+        { credentials: 'include' }
+      )
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setExtratos([])
+        return
+      }
+      setExtratos(json.data?.items ?? [])
+    } catch {
+      setExtratos([])
+    } finally {
+      setExtratosLoading(false)
+    }
+  }, [])
+
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
     try {
@@ -95,6 +129,10 @@ export default function FinanceiroSaidasPage() {
   useEffect(() => {
     fetchData(selectedAno, selectedMes)
   }, [selectedAno, selectedMes, fetchData])
+
+  useEffect(() => {
+    fetchExtratos(selectedAno, selectedMes)
+  }, [selectedAno, selectedMes, fetchExtratos])
 
   useEffect(() => {
     if (modalMarkPaid) {
@@ -326,6 +364,107 @@ export default function FinanceiroSaidasPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleExtratoFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setExtratoUploading(true)
+    setToast(null)
+    try {
+      const fd = new FormData()
+      fd.append('year', String(selectedAno))
+      fd.append('month', String(selectedMes))
+      fd.append('file', file)
+      const res = await fetch('/api/admin/financeiro/administracao/bank-extratos', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao importar extrato.', type: 'error' })
+        return
+      }
+      const created = typeof json.data?.expensesCreated === 'number' ? json.data.expensesCreated : 0
+      const note = typeof json.data?.parseNote === 'string' ? json.data.parseNote : ''
+      let msg =
+        created > 0
+          ? `Extrato salvo. ${created} despesa(s) lançada(s) em Outras despesas (${MESES_LABELS[selectedMes]}/${selectedAno}).`
+          : note || 'Extrato salvo.'
+      if (created > 0 && json.data?.parseFormat && json.data.parseFormat !== 'none') {
+        msg += ` (${json.data.parseFormat.toUpperCase()})`
+      }
+      setToast({ message: msg, type: 'success' })
+      await fetchExtratos(selectedAno, selectedMes)
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao importar extrato.', type: 'error' })
+    } finally {
+      setExtratoUploading(false)
+    }
+  }
+
+  const downloadExtratosMes = async () => {
+    if (extratos.length === 0) {
+      setToast({ message: 'Nenhum extrato para este mês.', type: 'error' })
+      return
+    }
+    setExtratoDownloading(true)
+    setToast(null)
+    try {
+      const res = await fetch(
+        `/api/admin/financeiro/administracao/bank-extratos/download?year=${selectedAno}&month=${selectedMes}`,
+        { credentials: 'include' }
+      )
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { message?: string }
+        setToast({ message: j.message || 'Erro ao baixar extratos.', type: 'error' })
+        return
+      }
+      const blob = await res.blob()
+      const disp = res.headers.get('Content-Disposition')
+      let filename = `extratos-banco_${selectedAno}-${String(selectedMes).padStart(2, '0')}.zip`
+      const m = disp?.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i)
+      const raw = m?.[1] || m?.[2]
+      if (raw) {
+        try {
+          filename = decodeURIComponent(raw.trim())
+        } catch {
+          filename = raw
+        }
+      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setToast({ message: 'Erro ao baixar extratos.', type: 'error' })
+    } finally {
+      setExtratoDownloading(false)
+    }
+  }
+
+  const removeExtrato = async (id: string) => {
+    if (!confirm('Remover este extrato deste mês?')) return
+    try {
+      const res = await fetch(`/api/admin/financeiro/administracao/bank-extratos/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao remover.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Extrato removido.', type: 'success' })
+      await fetchExtratos(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao remover extrato.', type: 'error' })
+    }
+  }
+
   return (
     <AdminLayout>
       <div className="space-y-8">
@@ -334,6 +473,85 @@ export default function FinanceiroSaidasPage() {
           <p className="text-gray-600 mt-1 text-sm md:text-base">
             Despesas fixas e outras despesas (avulsas). Controle por mês/ano.
           </p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Extratos bancários</p>
+              <p className="text-xs text-gray-500 mt-1">
+                <strong>OFX, QFX ou CSV</strong> do banco geram lançamentos em Outras despesas no mês selecionado. PDF e imagem
+                apenas anexam o arquivo. O download reúne todos os arquivos do{' '}
+                <strong>
+                  {MESES_LABELS[selectedMes]} de {selectedAno}
+                </strong>{' '}
+                (ZIP se houver mais de um).
+              </p>
+              <p className="text-sm text-gray-700 mt-2">
+                {extratosLoading
+                  ? 'Carregando lista…'
+                  : extratos.length === 0
+                    ? 'Nenhum extrato neste mês.'
+                    : `${extratos.length} arquivo(s) neste mês.`}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <input
+                ref={extratoInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.ofx,.qfx,.csv,.txt,image/png,image/jpeg,image/webp"
+                onChange={handleExtratoFileSelected}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={extratos.length === 0 || extratoDownloading || extratosLoading}
+                onClick={() => void downloadExtratosMes()}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                {extratoDownloading ? 'Baixando…' : 'Download extratos do mês'}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                disabled={extratoUploading}
+                onClick={() => extratoInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {extratoUploading ? 'Importando…' : 'Importar extrato'}
+              </Button>
+            </div>
+          </div>
+          {!extratosLoading && extratos.length > 0 ? (
+            <ul className="mt-4 pt-4 border-t border-gray-100 space-y-2">
+              {extratos.map((ex) => (
+                <li
+                  key={ex.id}
+                  className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-800"
+                >
+                  <a
+                    href={ex.fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand-orange hover:underline font-medium truncate min-w-0"
+                  >
+                    {ex.originalFilename}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void removeExtrato(ex.id)}
+                    className="inline-flex items-center gap-1 text-red-600 hover:text-red-800 shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Remover
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -410,7 +628,7 @@ export default function FinanceiroSaidasPage() {
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-base font-semibold text-gray-800">Despesas fixas</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="text-xs text-gray-500">Itens por página</label>
               <select value={itemsPerPageFixed} onChange={(e) => setItemsPerPageFixed(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
                 <option value={3}>3</option>
@@ -421,6 +639,17 @@ export default function FinanceiroSaidasPage() {
               <Button variant="outline" size="sm" onClick={() => exportCsv(fixedExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={extratoUploading}
+                title="Anexar extrato bancário ao mês selecionado (competência)"
+                onClick={() => extratoInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {extratoUploading ? 'Importando…' : 'Importar extrato'}
               </Button>
               <Button variant="primary" size="sm" onClick={() => openModalDespesa(true)}>
                 <Plus className="w-4 h-4 mr-2" />
@@ -452,7 +681,7 @@ export default function FinanceiroSaidasPage() {
               <h2 className="text-base font-semibold text-gray-800">Outras despesas</h2>
               <p className="text-sm text-gray-600 mt-0.5">Despesas avulsas para este mês/ano.</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="text-xs text-gray-500">Itens por página</label>
               <select value={itemsPerPageExpenses} onChange={(e) => setItemsPerPageExpenses(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
                 <option value={3}>3</option>
@@ -463,6 +692,17 @@ export default function FinanceiroSaidasPage() {
               <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={extratoUploading}
+                title="Anexar extrato bancário ao mês selecionado (competência)"
+                onClick={() => extratoInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {extratoUploading ? 'Importando…' : 'Importar extrato'}
               </Button>
               <Button variant="primary" size="sm" onClick={() => openModalDespesa(false)}>
                 <Plus className="w-4 h-4 mr-2" />

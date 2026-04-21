@@ -255,8 +255,7 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                {/* Botões */}
-                <div className="flex flex-col gap-4 pt-4">
+                <div className="pt-4">
                   <Button
                     type="submit"
                     variant="primary"
@@ -266,22 +265,8 @@ export default function LoginPage() {
                   >
                     {isSubmitting ? t('login.entering') : t('login.enter')}
                   </Button>
-                  <Button
-                    href="/cadastro"
-                    variant="outline"
-                    size="lg"
-                    className="w-full"
-                  >
-                    {t('login.createAccount')}
-                  </Button>
                 </div>
               </form>
-
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <p className="text-xs text-gray-500 text-center">
-                  {t('login.accessNotReleased')}
-                </p>
-              </div>
             </Card>
           )}
         </div>

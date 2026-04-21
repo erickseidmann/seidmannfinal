@@ -106,6 +106,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
       { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
       { href: '/admin/financeiro/saidas', labelKey: 'admin.financeiroSaidas' },
       { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
+      { href: '/admin/financeiro/nfse', labelKey: 'admin.financeiroNfse' },
       { href: '/admin/financeiro/cupons', labelKey: 'admin.financeiroCupons' },
     ],
   },

@@ -9,7 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateStudentPaymentSchema, getEnrollmentFinanceData } from '@/lib/finance'
 import { cancelInvoice } from '@/lib/cora/client'
-import { emitirNfseParaAluno } from '@/lib/nfse/service'
+import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
 import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
 
 const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
@@ -211,20 +211,23 @@ export async function PATCH(
 
           if (!isBolsista && NFSE_ENABLED && (finance.cpf || finance.cnpj) && amount > 0) {
             try {
-              const nota = await emitirNfseParaAluno({
-                enrollmentId,
-                studentName: finance.nome,
-                cpf: finance.cpf || undefined,
-                cnpj: finance.cnpj || undefined,
-                email: finance.email || undefined,
-                amount,
-                year,
-                month,
-                alunoNome: enrollmentFull.nome,
-                frequenciaSemanal: enrollmentFull.frequenciaSemanal ?? undefined,
-                curso: enrollmentFull.curso ?? undefined,
-                customDescricaoEmpresa: enrollmentFull.faturamentoDescricaoNfse ?? undefined,
-              })
+              let nota = await obterNfAutorizadaExistente(enrollmentId, year, month)
+              if (!nota) {
+                nota = await emitirNfseParaAluno({
+                  enrollmentId,
+                  studentName: finance.nome,
+                  cpf: finance.cpf || undefined,
+                  cnpj: finance.cnpj || undefined,
+                  email: finance.email || undefined,
+                  amount,
+                  year,
+                  month,
+                  alunoNome: enrollmentFull.nome,
+                  frequenciaSemanal: enrollmentFull.frequenciaSemanal ?? undefined,
+                  curso: enrollmentFull.curso ?? undefined,
+                  customDescricaoEmpresa: enrollmentFull.faturamentoDescricaoNfse ?? undefined,
+                })
+              }
               if (nota.status === 'autorizado' && nota.numero) {
                 nfInfo = {
                   numero: nota.numero,

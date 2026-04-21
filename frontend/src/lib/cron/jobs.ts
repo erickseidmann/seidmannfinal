@@ -98,34 +98,63 @@ export async function runMarkOverdue(): Promise<{
   }
 }
 
-export async function runNfseStatus(): Promise<{
+const NFSE_STATUS_MANUAL_MAX = 500
+const NFSE_STATUS_MANUAL_DELAY_MS = 350
+
+export async function runNfseStatus(options?: { manual?: boolean }): Promise<{
   ok: boolean
   processadas: number
   autorizadas: number
   erros: number
   pendentes: number
   message?: string
+  truncadas?: boolean
+  totalElegiveis?: number
 }> {
   if (process.env.NFSE_ENABLED !== 'true') {
     return { ok: true, processadas: 0, autorizadas: 0, erros: 0, pendentes: 0, message: 'NFSe desabilitada' }
   }
 
+  const manual = options?.manual === true
   const doisMinutosAtras = new Date()
   doisMinutosAtras.setMinutes(doisMinutosAtras.getMinutes() - 2)
 
-  const notasPendentes = await prisma.nfseInvoice.findMany({
-    where: {
-      status: 'processando_autorizacao',
-      criadoEm: { lt: doisMinutosAtras },
+  /** Cron: só processando_autorizacao com +2 min (Focus costuma ser assíncrono). Manual: tudo exceto autorizada ativa. */
+  const whereManual = {
+    NOT: {
+      AND: [{ status: 'autorizado' as const }, { cancelledAt: null }],
     },
-    select: { id: true, focusRef: true, studentName: true },
-  })
+  }
+
+  let notasPendentes: Array<{ id: string; focusRef: string; studentName: string }>
+  let totalElegiveis: number | undefined
+  let truncadas = false
+
+  if (manual) {
+    totalElegiveis = await prisma.nfseInvoice.count({ where: whereManual })
+    notasPendentes = await prisma.nfseInvoice.findMany({
+      where: whereManual,
+      select: { id: true, focusRef: true, studentName: true },
+      take: NFSE_STATUS_MANUAL_MAX,
+      orderBy: { atualizadoEm: 'asc' },
+    })
+    truncadas = totalElegiveis > NFSE_STATUS_MANUAL_MAX
+  } else {
+    notasPendentes = await prisma.nfseInvoice.findMany({
+      where: {
+        status: 'processando_autorizacao',
+        criadoEm: { lt: doisMinutosAtras },
+      },
+      select: { id: true, focusRef: true, studentName: true },
+    })
+  }
 
   let processadas = 0
   let autorizadas = 0
   let erros = 0
 
-  for (const nota of notasPendentes) {
+  for (let i = 0; i < notasPendentes.length; i++) {
+    const nota = notasPendentes[i]
     try {
       const notaAtualizada = await atualizarStatusNfse(nota.focusRef)
       processadas++
@@ -133,6 +162,9 @@ export async function runNfseStatus(): Promise<{
       else if (notaAtualizada.status === 'erro_autorizacao') erros++
     } catch {
       // ignore
+    }
+    if (manual && i < notasPendentes.length - 1) {
+      await sleep(NFSE_STATUS_MANUAL_DELAY_MS)
     }
   }
 
@@ -142,6 +174,7 @@ export async function runNfseStatus(): Promise<{
     autorizadas,
     erros,
     pendentes: notasPendentes.length,
+    ...(manual && totalElegiveis != null ? { totalElegiveis, truncadas } : {}),
   }
 }
 

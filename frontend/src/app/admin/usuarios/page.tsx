@@ -33,6 +33,7 @@ const ADMIN_PAGES = [
   { key: 'financeiro-administracao', label: 'Financeiro – Administração' },
   { key: 'financeiro-saidas', label: 'Financeiro – Saídas' },
   { key: 'financeiro-relatorios', label: 'Financeiro – Relatórios' },
+  { key: 'financeiro-nfse', label: 'Financeiro – Notas Fiscais' },
   { key: 'financeiro-cupons', label: 'Financeiro – Cupons' },
 ] as const
 

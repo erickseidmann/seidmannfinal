@@ -91,7 +91,7 @@ model User {
   whatsapp     String
   senha        String       @map("password_hash") // Hash da senha (bcrypt)
   role         UserRole     @default(STUDENT) // ADMIN, TEACHER, STUDENT
-  status       UserStatus   @default(PENDING) // PENDING, ACTIVE, BLOCKED
+  status       UserStatus   @default(ACTIVE) // Aluno/prof/admin: ACTIVE para poder logar; INACTIVE/BLOCKED bloqueiam
   funcao       String?      @db.VarChar(255) @map("funcao") // Fun├º├úo/cargo (para usu├írios do ADM)
   emailPessoal String?      @map("email_pessoal") @db.VarChar(255) // Email pessoal (para usu├írios do ADM)
   adminPages   Json?        @map("admin_pages") // P├íginas do dashboard que pode acessar (array de strings)
@@ -216,6 +216,21 @@ model AdminExpense {
   @@index([year, month])
   @@index([fixedSeriesId])
   @@map("admin_expenses")
+}
+
+/** Extratos bancários enviados por competência (mês/ano) — um ou mais arquivos por mês */
+model AdminBankExtrato {
+  id               String   @id @default(cuid())
+  year             Int
+  month            Int // 1-12
+  originalFilename String   @map("original_filename") @db.VarChar(255)
+  fileUrl          String   @map("file_url") @db.VarChar(512)
+  mimeType         String?  @map("mime_type") @db.VarChar(128)
+  sizeBytes        Int?     @map("size_bytes")
+  criadoEm         DateTime @default(now()) @map("created_at")
+
+  @@index([year, month])
+  @@map("admin_bank_extratos")
 }
 
 // Cupom de desconto: define valor por hora-aula e validade

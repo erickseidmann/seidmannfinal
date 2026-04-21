@@ -2,7 +2,11 @@
  * Descobre qual year/month de TeacherPaymentMonth usar para “hoje”.
  * - Período em aberto que contém hoje tem prioridade.
  * - Se o período que contém hoje está PAGO, usa o próximo período EM_ABERTO (para não manter alertas/registros do ciclo já pago).
+ *
+ * `todayKey` usa ymdUtc para alinhar com dataInicio/dataTermino do GET financeiro (componentes UTC).
  */
+
+import { ymdUtc } from '@/lib/datetime'
 
 export type ProfessorFinanceiroPayload = { ok: boolean; data?: Record<string, unknown> }
 
@@ -17,14 +21,14 @@ type PeriodRow = {
 
 function monthCandidatesAroundToday(spanEachSide: number): { year: number; month: number }[] {
   const now = new Date()
-  const baseY = now.getFullYear()
-  const baseM = now.getMonth() + 1
+  const baseY = now.getUTCFullYear()
+  const baseM = now.getUTCMonth() + 1
   const seen = new Set<string>()
   const out: { year: number; month: number }[] = []
   for (let delta = -spanEachSide; delta <= spanEachSide + 4; delta++) {
-    const d = new Date(baseY, baseM - 1 + delta, 1)
-    const y = d.getFullYear()
-    const m = d.getMonth() + 1
+    const d = new Date(Date.UTC(baseY, baseM - 1 + delta, 1))
+    const y = d.getUTCFullYear()
+    const m = d.getUTCMonth() + 1
     const key = `${y}-${m}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -62,7 +66,7 @@ export async function resolveProfessorFinanceiroForToday(
   fetchImpl: typeof fetch
 ): Promise<ProfessorFinanceiroPayload | null> {
   const now = new Date()
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const todayKey = ymdUtc(now)
 
   const valid = await fetchFinanceiroMonths(fetchImpl, monthCandidatesAroundToday(1))
   if (valid.length === 0) return null

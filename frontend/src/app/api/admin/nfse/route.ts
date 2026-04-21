@@ -1,7 +1,8 @@
 /**
- * GET /api/admin/nfse?year=2026&month=1
+ * GET /api/admin/nfse?all=true — lista todas as NFSe emitidas (até 10 mil, mais recentes primeiro)
+ * GET /api/admin/nfse?year=2026&month=1 — filtra por competência (mês opcional: ano inteiro)
  * POST /api/admin/nfse
- * 
+ *
  * Listar e emitir NFSe (individual ou em lote).
  */
 
@@ -15,6 +16,8 @@ import { emitirNfseParaAluno, listarNfseDoMes } from '@/lib/nfse/service'
 import { NfseRecord } from '@/lib/nfse/types'
 
 const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
+
+const LIST_ALL_MAX = 10_000
 
 const querySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100),
@@ -49,34 +52,40 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const parsed = querySchema.safeParse({
-      year: searchParams.get('year'),
-      month: searchParams.get('month'),
-    })
+    const allParam = searchParams.get('all')
+    const listAll = allParam === '1' || allParam === 'true'
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, message: 'Parâmetros inválidos', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+    let notas: Awaited<ReturnType<typeof prisma.nfseInvoice.findMany>>
+
+    if (listAll) {
+      notas = await prisma.nfseInvoice.findMany({
+        orderBy: [{ year: 'desc' }, { month: 'desc' }, { criadoEm: 'desc' }],
+        take: LIST_ALL_MAX,
+      })
+    } else {
+      const parsed = querySchema.safeParse({
+        year: searchParams.get('year'),
+        month: searchParams.get('month'),
+      })
+
+      if (!parsed.success) {
+        return NextResponse.json(
+          { ok: false, message: 'Use all=true ou informe year (e opcionalmente month)', details: parsed.error.flatten() },
+          { status: 400 }
+        )
+      }
+
+      const { year, month } = parsed.data
+      const where: { year: number; month?: number } = { year }
+      if (month != null) {
+        where.month = month
+      }
+
+      notas = await prisma.nfseInvoice.findMany({
+        where,
+        orderBy: [{ year: 'desc' }, { month: 'desc' }, { criadoEm: 'desc' }],
+      })
     }
-
-    const { year, month } = parsed.data
-
-    // Busca todas as notas do mês (ou do ano se month não especificado)
-    const where: any = { year }
-    if (month) {
-      where.month = month
-    }
-
-    const notas = await prisma.nfseInvoice.findMany({
-      where,
-      orderBy: [
-        { year: 'desc' },
-        { month: 'desc' },
-        { criadoEm: 'desc' },
-      ],
-    })
 
     const notasMapeadas: NfseRecord[] = notas.map((n) => ({
       id: n.id,

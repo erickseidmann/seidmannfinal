@@ -1,12 +1,16 @@
 /**
  * POST /api/professor/financeiro/confirm
  * Professor confirma o valor a receber do mês. No admin aparece "pagamento pronto para fazer".
+ *
+ * O par year/month efetivo é o TeacherPaymentMonth cujo [periodoInicio, periodoTermino) contém agora;
+ * se não houver linhas com datas, usa year/month do body (legado).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
+import { resolveTeacherPaymentMonthKeyContaining } from '@/lib/teacher-payment-month-resolve'
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,13 +34,25 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const year = body.year != null ? Number(body.year) : null
-    const month = body.month != null ? Number(body.month) : null
-    if (year == null || month == null || month < 1 || month > 12) {
-      return NextResponse.json(
-        { ok: false, message: 'Ano e mês são obrigatórios (year, month)' },
-        { status: 400 }
-      )
+    const now = new Date()
+    const resolved = await resolveTeacherPaymentMonthKeyContaining(teacher.id, now)
+
+    let year: number
+    let month: number
+    if (resolved) {
+      year = resolved.year
+      month = resolved.month
+    } else {
+      const y = body.year != null ? Number(body.year) : null
+      const m = body.month != null ? Number(body.month) : null
+      if (y == null || m == null || m < 1 || m > 12) {
+        return NextResponse.json(
+          { ok: false, message: 'Ano e mês são obrigatórios (year, month) ou cadastre período no financeiro.' },
+          { status: 400 }
+        )
+      }
+      year = y
+      month = m
     }
 
     const MESES_NOMES: Record<number, string> = {
@@ -45,7 +61,6 @@ export async function POST(request: NextRequest) {
     }
     const mesNome = MESES_NOMES[month] || String(month)
 
-    const now = new Date()
     await prisma.teacherPaymentMonth.upsert({
       where: {
         teacherId_year_month: { teacherId: teacher.id, year, month },
@@ -64,7 +79,7 @@ export async function POST(request: NextRequest) {
       entityId: teacher.id,
       action: 'TEACHER_CONFIRMED',
       performedBy: auth.session?.userId ?? null,
-      metadata: { year, month },
+      metadata: { year, month, resolvedFromPeriod: !!resolved },
     })
 
     // Notificar admins: professor confirmou valor (pronto para pagar)
@@ -85,7 +100,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      data: { teacherConfirmedAt: now.toISOString() },
+      data: { teacherConfirmedAt: now.toISOString(), year, month },
       message: 'Valor confirmado. O admin verá "pagamento pronto para fazer".',
     })
   } catch (error) {

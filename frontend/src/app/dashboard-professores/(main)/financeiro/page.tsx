@@ -10,6 +10,7 @@ import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
+import { resolveProfessorFinanceiroForToday } from '@/lib/professor-fin-period'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -173,6 +174,7 @@ export default function FinanceiroPage() {
   const mesAtual = new Date().getMonth() + 1
   const [selectedAno, setSelectedAno] = useState<number>(anoAtual)
   const [selectedMes, setSelectedMes] = useState<number>(mesAtual)
+  const [initialMonthResolved, setInitialMonthResolved] = useState(false)
 
   const [data, setData] = useState<FinanceiroData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -207,9 +209,32 @@ export default function FinanceiroPage() {
     }
   }, [])
 
+  const resolveCurrentPeriodMonth = useCallback(async () => {
+    try {
+      const fj = await resolveProfessorFinanceiroForToday(fetch)
+      if (fj?.ok && fj.data) {
+        const y = fj.data.year
+        const m = fj.data.month
+        if (typeof y === 'number' && typeof m === 'number') {
+          setSelectedAno(y)
+          setSelectedMes(m)
+        }
+      }
+    } catch {
+      // mantém mês civil inicial
+    }
+    setInitialMonthResolved(true)
+  }, [])
+
   useEffect(() => {
+    if (initialMonthResolved) return
+    resolveCurrentPeriodMonth()
+  }, [initialMonthResolved, resolveCurrentPeriodMonth])
+
+  useEffect(() => {
+    if (!initialMonthResolved) return
     fetchData(selectedAno, selectedMes)
-  }, [selectedAno, selectedMes, fetchData])
+  }, [initialMonthResolved, selectedAno, selectedMes, fetchData])
 
   const parseMoedaDigitada = (raw: string): number | null => {
     const normalized = raw.replace(/\s/g, '').replace('R$', '').replace(/\./g, '').replace(',', '.')
@@ -286,6 +311,12 @@ export default function FinanceiroPage() {
         setToast({ message: jsonConfirm.message || 'Comprovante anexado, mas houve erro ao confirmar o valor.', type: 'error' })
         return
       }
+      const cy = jsonConfirm.data?.year
+      const cm = jsonConfirm.data?.month
+      if (typeof cy === 'number' && typeof cm === 'number') {
+        setSelectedAno(cy)
+        setSelectedMes(cm)
+      }
       setToast({ message: 'Valor confirmado e comprovante anexado no sistema com sucesso.', type: 'success' })
       setComprovanteModalOpen(false)
       setConfirmacaoStep(1)
@@ -324,6 +355,12 @@ export default function FinanceiroPage() {
       if (!resSend.ok || !jsonSend.ok) {
         setToast({ message: jsonSend.message || 'Erro ao reenviar comprovante', type: 'error' })
         return
+      }
+      const sy = jsonSend.data?.year
+      const sm = jsonSend.data?.month
+      if (typeof sy === 'number' && typeof sm === 'number') {
+        setSelectedAno(sy)
+        setSelectedMes(sm)
       }
       setToast({ message: 'Comprovante reenviado e anexado no sistema com sucesso.', type: 'success' })
       setComprovanteModalOpen(false)

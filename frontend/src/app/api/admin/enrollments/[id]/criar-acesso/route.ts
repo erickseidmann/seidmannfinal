@@ -71,6 +71,7 @@ export async function POST(
     }
 
     const passwordHash = await bcrypt.hash(SENHA_PADRAO_ALUNO, 10)
+    // User.status = ACTIVE (não PENDING): login só libera ACTIVE; matrícula já é controlada no painel.
     const user = await prisma.user.create({
       data: {
         nome: enrollment.nome,

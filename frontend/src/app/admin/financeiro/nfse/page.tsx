@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
@@ -22,6 +22,7 @@ import {
   Clock,
   XCircle,
   Ban,
+  DollarSign,
 } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
@@ -43,6 +44,71 @@ const ANOS_DISPONIVEIS = (() => {
   const current = new Date().getFullYear()
   return Array.from({ length: current - 2024 + 2 }, (_, i) => 2024 + i)
 })()
+
+type ExportErrorPayload = { message?: string; installCommand?: string }
+
+/**
+ * Baixa o arquivo de exportação com feedback de progresso: estimativa enquanto o servidor prepara
+ * a resposta; depois percentual real se houver Content-Length, senão estimativa suave até concluir.
+ */
+async function downloadExportBlobWithProgress(
+  url: string,
+  setPercent: (n: number) => void
+): Promise<Blob> {
+  let waitTimer: ReturnType<typeof setInterval> | null = null
+  let headersReceived = false
+  const startWait = Date.now()
+
+  waitTimer = setInterval(() => {
+    if (headersReceived) return
+    const t = (Date.now() - startWait) / 1000
+    const p = Math.min(78, Math.round(78 * (1 - Math.exp(-t / 2.2))))
+    setPercent(p)
+  }, 120)
+
+  const res = await fetch(url, { credentials: 'include' })
+  headersReceived = true
+  if (waitTimer) clearInterval(waitTimer)
+
+  if (!res.ok) {
+    setPercent(0)
+    const json = (await res.json().catch(() => ({}))) as ExportErrorPayload
+    const err = new Error(json.message || 'Erro na exportação') as Error & { payload?: ExportErrorPayload }
+    err.payload = json
+    throw err
+  }
+
+  const lenHeader = res.headers.get('content-length')
+  const total = lenHeader ? parseInt(lenHeader, 10) : 0
+  const body = res.body
+  if (!body) {
+    setPercent(100)
+    return res.blob()
+  }
+
+  const reader = body.getReader()
+  const chunks: BlobPart[] = []
+  let received = 0
+  const dlStart = Date.now()
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) {
+      chunks.push(value)
+      received += value.length
+      if (total > 0) {
+        setPercent(Math.min(99, 78 + Math.round((22 * received) / total)))
+      } else {
+        const t = (Date.now() - dlStart) / 1000
+        setPercent(Math.min(99, 78 + Math.round(21 * (1 - Math.exp(-t / 1.2)))))
+      }
+    }
+  }
+
+  setPercent(100)
+  return new Blob(chunks)
+}
 
 interface NfseRecord {
   id: string
@@ -79,6 +145,27 @@ interface NfseListResponse {
 function formatMoney(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return '—'
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
+}
+
+/** Alinha ao contador de erros da API (erro_autorizacao e variantes). */
+function notaStatusErro(status: string): boolean {
+  return status === 'erro_autorizacao' || status === 'erro'
+}
+
+function notaAutorizadaAtiva(n: NfseRecord): boolean {
+  return n.status === 'autorizado' && !n.cancelledAt
+}
+
+function notaPendenteEmissao(n: NfseRecord): boolean {
+  return n.status === 'processando_autorizacao'
+}
+
+type FiltroResumoNfse = 'todos' | 'erros' | 'autorizadas' | 'pendentes'
+
+const FILTRO_VAZIO_TEXTO: Record<Exclude<FiltroResumoNfse, 'todos'>, string> = {
+  erros: 'com erro de autorização',
+  autorizadas: 'autorizadas (ativas)',
+  pendentes: 'em processamento na prefeitura',
 }
 
 function maskCPF(cpf: string | null): string {
@@ -130,6 +217,80 @@ function getStatusBadge(status: string, cancelledAt?: string) {
   }
 }
 
+function NfseExportMenu({
+  onExportXml,
+  onExportCsv,
+  align = 'right',
+  disabled = false,
+}: {
+  onExportXml: () => void
+  onExportCsv: () => void
+  align?: 'left' | 'right'
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        title="Exportar"
+        aria-label="Exportar notas"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="inline-flex items-center justify-center w-11 h-11 rounded-lg border-2 border-brand-orange text-brand-orange hover:bg-brand-orange hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-orange focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none disabled:hover:bg-transparent disabled:hover:text-brand-orange"
+      >
+        <Download className="w-5 h-5" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={`absolute top-full mt-1 py-1 min-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg z-[60] ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-gray-50 flex items-center gap-2"
+            onClick={() => {
+              setOpen(false)
+              onExportXml()
+            }}
+          >
+            <Download className="w-4 h-4 shrink-0 text-brand-orange" />
+            Exportar XMLs (ZIP)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-gray-50 flex items-center gap-2"
+            onClick={() => {
+              setOpen(false)
+              onExportCsv()
+            }}
+          >
+            <FileDown className="w-4 h-4 shrink-0 text-brand-orange" />
+            Exportar CSV
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function FinanceiroNfsePage() {
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
@@ -141,19 +302,12 @@ export default function FinanceiroNfsePage() {
   /** NFSe habilitada no servidor (null = ainda não veio resposta da API) */
   const [nfseEnabled, setNfseEnabled] = useState<boolean | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const [emitirModalOpen, setEmitirModalOpen] = useState(false)
-  const [emitindo, setEmitindo] = useState(false)
   const [cancelarModalOpen, setCancelarModalOpen] = useState(false)
   const [notaParaCancelar, setNotaParaCancelar] = useState<NfseRecord | null>(null)
   const [justificativa, setJustificativa] = useState('')
   const [cancelando, setCancelando] = useState(false)
   const [atualizandoRef, setAtualizandoRef] = useState<string | null>(null)
   const [retryingId, setRetryingId] = useState<string | null>(null)
-  const [emitirResultado, setEmitirResultado] = useState<{
-    emitidas: number
-    erros: number
-    detalhes: Array<{ aluno: string; status: string; erro?: string }>
-  } | null>(null)
   const [manualModalOpen, setManualModalOpen] = useState(false)
   const [enrollmentsList, setEnrollmentsList] = useState<Array<{ id: string; nome: string; valorMensal: number | null }>>([])
   const [manualEnrollmentId, setManualEnrollmentId] = useState('')
@@ -162,9 +316,10 @@ export default function FinanceiroNfsePage() {
   const [manualYear, setManualYear] = useState(anoAtual)
   const [manualMonth, setManualMonth] = useState(mesAtual)
   const [manualEmitting, setManualEmitting] = useState(false)
-  const [pendingList, setPendingList] = useState<Array<{ enrollmentId: string; nome: string; valor: number }>>([])
-  const [observacoes, setObservacoes] = useState<Record<string, string>>({})
-  const [pendingLoading, setPendingLoading] = useState(false)
+  const [atualizandoStatusTodas, setAtualizandoStatusTodas] = useState(false)
+  const [filtroResumo, setFiltroResumo] = useState<FiltroResumoNfse>('todos')
+  const [exporting, setExporting] = useState<null | 'xml' | 'csv'>(null)
+  const [exportPercent, setExportPercent] = useState(0)
 
   const fetchNotas = useCallback(async () => {
     setLoading(true)
@@ -202,37 +357,35 @@ export default function FinanceiroNfsePage() {
     fetchNotas()
   }, [fetchNotas])
 
-  const handleEmitirLote = async () => {
-    setEmitindo(true)
-    setEmitirResultado(null)
-    try {
-      const res = await fetch('/api/admin/nfse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ year, month, observacoes }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao emitir notas', type: 'error' })
-        return
-      }
-      setEmitirResultado({
-        emitidas: json.emitidas || 0,
-        erros: json.erros || 0,
-        detalhes: json.detalhes || [],
-      })
-      if (json.erros === 0) {
-        setToast({ message: `${json.emitidas} nota(s) emitida(s) com sucesso`, type: 'success' })
-        setEmitirModalOpen(false)
-        fetchNotas()
-      }
-    } catch {
-      setToast({ message: 'Erro ao emitir notas', type: 'error' })
-    } finally {
-      setEmitindo(false)
-    }
+  useEffect(() => {
+    setFiltroResumo('todos')
+  }, [year, month])
+
+  const setFiltroOuToggle = (next: FiltroResumoNfse) => {
+    setFiltroResumo((prev) => {
+      if (next === 'todos') return 'todos'
+      return prev === next ? 'todos' : next
+    })
   }
+
+  const valorTotalAutorizadas = useMemo(
+    () =>
+      notas.filter(notaAutorizadaAtiva).reduce((sum, n) => sum + Number(n.amount), 0),
+    [notas]
+  )
+
+  const notasExibidas = useMemo(() => {
+    switch (filtroResumo) {
+      case 'erros':
+        return notas.filter((n) => notaStatusErro(n.status))
+      case 'autorizadas':
+        return notas.filter(notaAutorizadaAtiva)
+      case 'pendentes':
+        return notas.filter(notaPendenteEmissao)
+      default:
+        return notas
+    }
+  }, [notas, filtroResumo])
 
   const handleCancelar = async () => {
     if (!notaParaCancelar || justificativa.length < 15) return
@@ -315,28 +468,6 @@ export default function FinanceiroNfsePage() {
     else setEnrollmentsList([])
   }, [])
 
-  const loadPending = useCallback(async () => {
-    setPendingLoading(true)
-    try {
-      const res = await fetch(`/api/admin/nfse/pending?year=${year}&month=${month}`, { credentials: 'include' })
-      const json = await res.json()
-      if (json.ok && json.pendentes) {
-        setPendingList(json.pendentes)
-        setObservacoes({})
-      } else {
-        setPendingList([])
-      }
-    } finally {
-      setPendingLoading(false)
-    }
-  }, [year, month])
-
-  const handleOpenEmitirModal = () => {
-    setEmitirModalOpen(true)
-    setEmitirResultado(null)
-    loadPending()
-  }
-
   const handleEmitirManual = async () => {
     if (!manualEnrollmentId.trim()) {
       setToast({ message: 'Selecione um aluno', type: 'error' })
@@ -382,23 +513,13 @@ export default function FinanceiroNfsePage() {
   }
 
   const handleExportXml = async () => {
+    setExporting('xml')
+    setExportPercent(0)
     try {
-      const res = await fetch(`/api/admin/nfse/export?year=${year}&month=${month}&format=xml`, {
-        credentials: 'include',
-      })
-      if (!res.ok) {
-        const json = await res.json()
-        if (json.installCommand) {
-          setToast({
-            message: 'Biblioteca archiver não instalada. Instale: npm install archiver @types/archiver',
-            type: 'error',
-          })
-        } else {
-          setToast({ message: json.message || 'Erro ao exportar XMLs', type: 'error' })
-        }
-        return
-      }
-      const blob = await res.blob()
+      const blob = await downloadExportBlobWithProgress(
+        `/api/admin/nfse/export?year=${year}&month=${month}&format=xml`,
+        setExportPercent
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -406,21 +527,31 @@ export default function FinanceiroNfsePage() {
       a.click()
       URL.revokeObjectURL(url)
       setToast({ message: 'XMLs exportados com sucesso', type: 'success' })
-    } catch {
-      setToast({ message: 'Erro ao exportar XMLs', type: 'error' })
+      await new Promise((r) => setTimeout(r, 450))
+    } catch (e: unknown) {
+      const err = e as Error & { payload?: ExportErrorPayload }
+      if (err.payload?.installCommand) {
+        setToast({
+          message: 'Biblioteca archiver não instalada. Instale: npm install archiver @types/archiver',
+          type: 'error',
+        })
+      } else {
+        setToast({ message: err.message || 'Erro ao exportar XMLs', type: 'error' })
+      }
+    } finally {
+      setExporting(null)
+      setExportPercent(0)
     }
   }
 
   const handleExportCsv = async () => {
+    setExporting('csv')
+    setExportPercent(0)
     try {
-      const res = await fetch(`/api/admin/nfse/export?year=${year}&month=${month}&format=csv`, {
-        credentials: 'include',
-      })
-      if (!res.ok) {
-        setToast({ message: 'Erro ao exportar CSV', type: 'error' })
-        return
-      }
-      const blob = await res.blob()
+      const blob = await downloadExportBlobWithProgress(
+        `/api/admin/nfse/export?year=${year}&month=${month}&format=csv`,
+        setExportPercent
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -428,12 +559,15 @@ export default function FinanceiroNfsePage() {
       a.click()
       URL.revokeObjectURL(url)
       setToast({ message: 'CSV exportado com sucesso', type: 'success' })
-    } catch {
-      setToast({ message: 'Erro ao exportar CSV', type: 'error' })
+      await new Promise((r) => setTimeout(r, 450))
+    } catch (e: unknown) {
+      const err = e as Error & { payload?: ExportErrorPayload }
+      setToast({ message: err.message || 'Erro ao exportar CSV', type: 'error' })
+    } finally {
+      setExporting(null)
+      setExportPercent(0)
     }
   }
-
-  const valorTotal = notas.filter((n) => n.status === 'autorizado' && !n.cancelledAt).reduce((sum, n) => sum + n.amount, 0)
 
   return (
     <AdminLayout>
@@ -442,7 +576,8 @@ export default function FinanceiroNfsePage() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Notas Fiscais</h1>
           <p className="text-gray-600 mt-1 text-sm md:text-base">
-            Gerenciar emissão, consulta e cancelamento de Notas Fiscais de Serviço (NFSe).
+            Gerenciar emissão, consulta e cancelamento de Notas Fiscais de Serviço (NFSe). A tabela e os totais seguem o{' '}
+            <strong>ano e mês de competência</strong> selecionados abaixo.
           </p>
         </div>
 
@@ -461,8 +596,18 @@ export default function FinanceiroNfsePage() {
           </div>
         )}
 
-        {/* Seletor de Mês/Ano */}
+        {/* Competência: filtra lista, cards e exportação */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <p className="text-xs text-gray-500 mb-3">
+            <span className="font-semibold text-gray-700">Competência</span> — altere o ano ou o mês para ver as notas daquele
+            período; o mesmo período vale para exportação XML/CSV e emissão manual.
+          </p>
+          <p className="text-xs text-gray-500 mb-3">
+            O status das NF em <strong>processamento</strong> ou <strong>erro</strong> é consultado na prefeitura{' '}
+            <strong>automaticamente a cada 5 minutos</strong>. O botão &quot;Atualizar status de todas&quot; força a consulta
+            agora para <strong>todas as notas, exceto as já autorizadas</strong> (até 500 por clique; se houver mais, clique de
+            novo).
+          </p>
           <div className="flex flex-wrap items-end gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Ano</label>
@@ -495,76 +640,184 @@ export default function FinanceiroNfsePage() {
             <div className="ml-auto flex gap-2">
               <Button
                 variant="outline"
+                disabled={atualizandoStatusTodas}
                 onClick={async () => {
+                  setAtualizandoStatusTodas(true)
                   try {
                     const res = await fetch('/api/cron/nfse-status', {
                       method: 'POST',
                       credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ manual: true }),
                     })
                     const json = await res.json()
                     if (!res.ok || !json.ok) {
-                      alert(json.message || 'Erro ao atualizar status das NFSe')
+                      setToast({ message: json.message || 'Erro ao atualizar status das NFSe', type: 'error' })
                       return
                     }
+                    let msg = `${json.processadas ?? 0} nota(s) consultada(s) na prefeitura`
+                    if (typeof json.autorizadas === 'number' && json.autorizadas > 0) {
+                      msg += ` (${json.autorizadas} passaram a autorizada nesta rodada)`
+                    }
+                    msg += '.'
+                    if (json.truncadas) {
+                      msg +=
+                        ' Ainda há mais notas elegíveis (limite 500 por vez) — clique de novo para continuar, se necessário.'
+                    }
+                    setToast({ message: msg, type: 'success' })
                     await fetchNotas()
                   } catch {
-                    alert('Erro ao atualizar status das NFSe')
+                    setToast({ message: 'Erro ao atualizar status das NFSe', type: 'error' })
+                  } finally {
+                    setAtualizandoStatusTodas(false)
                   }
                 }}
               >
-                <FileText className="w-4 h-4 mr-2" />
+                {atualizandoStatusTodas ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FileText className="w-4 h-4 mr-2" />
+                )}
                 Atualizar status de todas
-              </Button>
-              <Button variant="primary" onClick={handleOpenEmitirModal}>
-                <FileText className="w-4 h-4 mr-2" />
-                Emitir Notas do Mês
               </Button>
               <Button variant="outline" onClick={() => { setManualModalOpen(true); loadEnrollments(); setManualYear(year); setManualMonth(month); setManualEnrollmentId(''); setManualAmount(''); setManualExtraDesc(''); }}>
                 <FileText className="w-4 h-4 mr-2" />
                 Emitir Nota Manual
               </Button>
-              <Button variant="outline" onClick={handleExportXml} title="Baixar todos os XMLs para enviar ao contador">
-                <Download className="w-4 h-4 mr-2" />
-                Exportar XMLs
-              </Button>
-              <Button variant="ghost" onClick={handleExportCsv}>
-                <FileDown className="w-4 h-4 mr-2" />
-                Exportar CSV
-              </Button>
+              <NfseExportMenu
+                onExportXml={handleExportXml}
+                onExportCsv={handleExportCsv}
+                align="right"
+                disabled={!!exporting}
+              />
             </div>
           </div>
         </div>
 
-        {/* Cards Resumo */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+        {/* Cards Resumo — clique para filtrar a tabela (Total / Valor = mostrar todas) */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          <button
+            type="button"
+            onClick={() => setFiltroResumo('todos')}
+            title="Mostrar todas as notas do período"
+            className={`rounded-xl border shadow-sm p-4 text-left w-full transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 focus-visible:ring-offset-2 bg-white ${
+              filtroResumo === 'todos'
+                ? 'ring-2 ring-gray-400 border-gray-300'
+                : 'border-gray-200 hover:border-gray-300'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <FileText className="w-5 h-5 text-gray-600" />
               <p className="text-xs font-semibold text-gray-500 uppercase">Total</p>
             </div>
             <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-green-200 shadow-sm p-4 bg-green-50">
+            <p className="text-[10px] text-gray-600 mt-1">Ver todas no período</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroResumo('todos')}
+            title="Mostrar todas as notas do período"
+            className={`rounded-xl border shadow-sm p-4 text-left w-full transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 bg-indigo-50/80 ${
+              filtroResumo === 'todos'
+                ? 'ring-2 ring-indigo-400 border-indigo-300'
+                : 'border-indigo-200 hover:border-indigo-300'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="w-5 h-5 text-indigo-600" />
+              <p className="text-xs font-semibold text-indigo-800 uppercase">Valor total NF</p>
+            </div>
+            <p className="text-xl font-bold text-indigo-950 tabular-nums">{formatMoney(valorTotalAutorizadas)}</p>
+            <p className="text-[10px] text-indigo-700/90 mt-1">Soma só das autorizadas · clique para ver todas</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroOuToggle('autorizadas')}
+            disabled={stats.autorizadas === 0 && filtroResumo !== 'autorizadas'}
+            title={
+              stats.autorizadas === 0 && filtroResumo !== 'autorizadas'
+                ? 'Não há notas autorizadas neste período'
+                : filtroResumo === 'autorizadas'
+                  ? 'Clique para voltar a ver todas'
+                  : 'Filtrar só autorizadas'
+            }
+            className={`rounded-xl border shadow-sm p-4 text-left w-full transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 bg-green-50 ${
+              stats.autorizadas === 0 && filtroResumo !== 'autorizadas'
+                ? 'border-green-100 opacity-70 cursor-not-allowed'
+                : filtroResumo === 'autorizadas'
+                  ? 'ring-2 ring-green-500 border-green-400'
+                  : 'border-green-200 hover:border-green-300'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <CheckCircle2 className="w-5 h-5 text-green-600" />
               <p className="text-xs font-semibold text-green-700 uppercase">Autorizadas</p>
             </div>
             <p className="text-2xl font-bold text-green-900">{stats.autorizadas}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-yellow-200 shadow-sm p-4 bg-yellow-50">
+            <p className="text-[10px] text-green-800/90 mt-1">
+              {filtroResumo === 'autorizadas' ? 'Filtro ativo — clique para sair' : 'Clique para filtrar'}
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroOuToggle('pendentes')}
+            disabled={stats.pendentes === 0 && filtroResumo !== 'pendentes'}
+            title={
+              stats.pendentes === 0 && filtroResumo !== 'pendentes'
+                ? 'Não há notas pendentes neste período'
+                : filtroResumo === 'pendentes'
+                  ? 'Clique para voltar a ver todas'
+                  : 'Filtrar só em processamento'
+            }
+            className={`rounded-xl border shadow-sm p-4 text-left w-full transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-600 focus-visible:ring-offset-2 bg-yellow-50 ${
+              stats.pendentes === 0 && filtroResumo !== 'pendentes'
+                ? 'border-yellow-100 opacity-70 cursor-not-allowed'
+                : filtroResumo === 'pendentes'
+                  ? 'ring-2 ring-yellow-500 border-yellow-400'
+                  : 'border-yellow-200 hover:border-yellow-300'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <Clock className="w-5 h-5 text-yellow-600" />
               <p className="text-xs font-semibold text-yellow-700 uppercase">Pendentes</p>
             </div>
             <p className="text-2xl font-bold text-yellow-900">{stats.pendentes}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-red-200 shadow-sm p-4 bg-red-50">
+            <p className="text-[10px] text-yellow-800/90 mt-1">
+              {filtroResumo === 'pendentes' ? 'Filtro ativo — clique para sair' : 'Clique para filtrar'}
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltroOuToggle('erros')}
+            disabled={stats.erros === 0 && filtroResumo !== 'erros'}
+            title={
+              stats.erros === 0 && filtroResumo !== 'erros'
+                ? 'Não há notas com erro neste período'
+                : filtroResumo === 'erros'
+                  ? 'Clique para voltar a ver todas'
+                  : 'Filtrar só com erro'
+            }
+            className={`rounded-xl border shadow-sm p-4 text-left w-full transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 bg-red-50 ${
+              stats.erros === 0 && filtroResumo !== 'erros'
+                ? 'border-red-100 opacity-70 cursor-not-allowed'
+                : filtroResumo === 'erros'
+                  ? 'ring-2 ring-red-400 border-red-400'
+                  : 'border-red-200 hover:border-red-300'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <XCircle className="w-5 h-5 text-red-600" />
               <p className="text-xs font-semibold text-red-700 uppercase">Erros</p>
             </div>
             <p className="text-2xl font-bold text-red-900">{stats.erros}</p>
-          </div>
+            <p className="text-[10px] text-red-800/90 mt-1">
+              {stats.erros === 0 && filtroResumo !== 'erros'
+                ? 'Sem erros neste período'
+                : filtroResumo === 'erros'
+                  ? 'Filtro ativo — clique para sair'
+                  : 'Clique para filtrar'}
+            </p>
+          </button>
         </div>
 
         {stats.erros > 0 && (
@@ -592,8 +845,62 @@ export default function FinanceiroNfsePage() {
               Nenhuma nota encontrada para {MESES_LABELS[month]} de {year}.
             </p>
           </div>
+        ) : notasExibidas.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center space-y-3">
+            <p className="text-gray-600">
+              Nenhuma nota{' '}
+              {filtroResumo !== 'todos' ? FILTRO_VAZIO_TEXTO[filtroResumo] : ''} em {MESES_LABELS[month]} de {year}.
+            </p>
+            {filtroResumo !== 'todos' && (
+              <Button type="button" variant="outline" onClick={() => setFiltroResumo('todos')}>
+                Ver todas as notas do período
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {filtroResumo === 'erros' && (
+              <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-sm text-red-900 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Mostrando apenas notas com <strong>erro de autorização</strong>.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFiltroResumo('todos')}
+                  className="text-red-700 font-semibold underline hover:text-red-900"
+                >
+                  Limpar filtro
+                </button>
+              </div>
+            )}
+            {filtroResumo === 'autorizadas' && (
+              <div className="px-4 py-2 bg-green-50 border-b border-green-100 text-sm text-green-900 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Mostrando apenas notas <strong>autorizadas</strong> (não canceladas).
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFiltroResumo('todos')}
+                  className="text-green-800 font-semibold underline hover:text-green-950"
+                >
+                  Limpar filtro
+                </button>
+              </div>
+            )}
+            {filtroResumo === 'pendentes' && (
+              <div className="px-4 py-2 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-950 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Mostrando apenas notas <strong>em processamento</strong> na prefeitura.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFiltroResumo('todos')}
+                  className="text-yellow-900 font-semibold underline hover:text-yellow-950"
+                >
+                  Limpar filtro
+                </button>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -601,6 +908,7 @@ export default function FinanceiroNfsePage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">#</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Aluno</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">CPF</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Competência</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Valor</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nº Nota</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
@@ -608,7 +916,7 @@ export default function FinanceiroNfsePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {notas.map((nota, idx) => {
+                  {notasExibidas.map((nota, idx) => {
                     const statusBadge = getStatusBadge(nota.status, nota.cancelledAt)
                     const StatusIcon = statusBadge.icon
                     return (
@@ -616,6 +924,9 @@ export default function FinanceiroNfsePage() {
                         <td className="px-4 py-3 text-sm text-gray-700">{idx + 1}</td>
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">{nota.studentName}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{maskCPF(nota.cpf)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                          {MESES_LABELS[nota.month] ?? nota.month}/{nota.year}
+                        </td>
                         <td className="px-4 py-3 text-sm text-gray-700">{formatMoney(nota.amount)}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{nota.numero || '—'}</td>
                         <td className="px-4 py-3">
@@ -705,127 +1016,6 @@ export default function FinanceiroNfsePage() {
             </div>
           </div>
         )}
-
-        {/* Seção Enviar para Contador */}
-        {stats.autorizadas > 0 && (
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
-            <div className="flex items-start gap-3 mb-4">
-              <FileText className="w-6 h-6 text-blue-600 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="font-semibold text-blue-900 mb-1">Enviar para Contador</h3>
-                <p className="text-sm text-blue-700">
-                  {stats.autorizadas} nota(s) autorizada(s) em {MESES_LABELS[month]} de {year}
-                </p>
-                <p className="text-sm font-medium text-blue-900 mt-1">Valor total: {formatMoney(valorTotal)}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="primary" onClick={handleExportXml}>
-                <Download className="w-4 h-4 mr-2" />
-                Baixar ZIP com XMLs
-              </Button>
-              <Button variant="outline" onClick={handleExportCsv}>
-                <FileDown className="w-4 h-4 mr-2" />
-                Baixar CSV de controle
-              </Button>
-            </div>
-            <p className="text-xs text-blue-600 mt-3 flex items-center gap-1">
-              <AlertCircle className="w-3.5 h-3.5" />
-              Envie o arquivo ZIP com os XMLs ao seu contador mensalmente para escrituração.
-            </p>
-          </div>
-        )}
-
-        {/* Modal Emitir Notas do Mês (lote) */}
-        <Modal
-          isOpen={emitirModalOpen}
-          onClose={() => {
-            if (!emitindo) {
-              setEmitirModalOpen(false)
-              setEmitirResultado(null)
-            }
-          }}
-          title="Emitir Notas Fiscais do Mês"
-          size="lg"
-          footer={
-            <>
-              <Button variant="outline" onClick={() => setEmitirModalOpen(false)} disabled={!!emitindo}>
-                Cancelar
-              </Button>
-              <Button variant="primary" onClick={handleEmitirLote} disabled={!!emitindo || pendingLoading || pendingList.length === 0}>
-                {emitindo ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Emitir ({pendingList.length} nota(s))
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-gray-700">
-              Pagamentos confirmados de <strong>{MESES_LABELS[month]} de {year}</strong> que ainda não possuem nota.
-              Opcionalmente adicione uma observação extra à descrição de cada nota.
-            </p>
-            {pendingLoading ? (
-              <div className="flex items-center gap-2 text-gray-600">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Carregando lista...
-              </div>
-            ) : pendingList.length === 0 ? (
-              <p className="text-gray-500 text-sm">Nenhum pagamento confirmado pendente de NFSe para este mês.</p>
-            ) : (
-              <div className="max-h-[320px] overflow-y-auto border border-gray-200 rounded-lg">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Aluno</th>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Valor</th>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Observação extra (opcional)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {pendingList.map((p) => (
-                      <tr key={p.enrollmentId}>
-                        <td className="px-3 py-2 font-medium text-gray-900">{p.nome}</td>
-                        <td className="px-3 py-2 text-gray-700">{formatMoney(p.valor)}</td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="text"
-                            value={observacoes[p.enrollmentId] ?? ''}
-                            onChange={(e) => setObservacoes((prev) => ({ ...prev, [p.enrollmentId]: e.target.value }))}
-                            className="input w-full text-sm"
-                            placeholder="Ex: Referente a material"
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {emitirResultado && (
-              <div className="border-t border-gray-200 pt-4">
-                <p className="text-sm font-semibold text-gray-700 mb-2">
-                  Resultado: {emitirResultado.emitidas} emitida(s), {emitirResultado.erros} erro(s)
-                </p>
-                {emitirResultado.erros > 0 && (
-                  <details className="mt-2">
-                    <summary className="text-sm text-red-600 cursor-pointer hover:text-red-800">
-                      Ver erros ({emitirResultado.erros})
-                    </summary>
-                    <ul className="mt-2 space-y-1 text-sm text-gray-600">
-                      {emitirResultado.detalhes
-                        .filter((d) => d.status === 'erro')
-                        .map((d, idx) => (
-                          <li key={idx}>
-                            • {d.aluno}: {d.erro || 'Erro desconhecido'}
-                          </li>
-                        ))}
-                    </ul>
-                  </details>
-                )}
-              </div>
-            )}
-          </div>
-        </Modal>
 
         {/* Modal Emitir Nota Manual */}
         <Modal
@@ -984,7 +1174,40 @@ export default function FinanceiroNfsePage() {
           )}
         </Modal>
 
-        <Toast message={toast?.message || ""} type={toast?.type || "error"} onClose={() => setToast(null)} />
+        {exporting && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-[2px]"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-100 p-8 text-center space-y-5">
+              <div className="flex justify-center">
+                <Loader2 className="w-12 h-12 text-brand-orange animate-spin" aria-hidden />
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-gray-900">Exportando notas</p>
+                <p className="text-sm text-gray-600 mt-1">
+                  {exporting === 'xml' ? 'Gerando arquivo ZIP com os XMLs…' : 'Gerando planilha CSV…'}
+                </p>
+                <p className="text-sm font-medium text-brand-orange mt-3">
+                  Faltam {Math.max(0, 100 - exportPercent)}%
+                </p>
+              </div>
+              <div>
+                <div className="h-2.5 w-full rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-brand-orange transition-[width] duration-200 ease-out"
+                    style={{ width: `${exportPercent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-2">{exportPercent}% concluído</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </div>
     </AdminLayout>
   )

@@ -83,6 +83,8 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         whatsapp: normalizedWhatsapp,
         senha: senhaHash,
+        role: 'STUDENT',
+        status: 'ACTIVE',
       },
     })
 

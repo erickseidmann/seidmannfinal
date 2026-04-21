@@ -305,3 +305,23 @@ function mapToNfseRecord(prismaRecord: {
     cancelReason: prismaRecord.cancelReason || undefined,
   }
 }
+
+/**
+ * Se já existe NF autorizada e não cancelada para a competência, retorna sem chamar a prefeitura.
+ * Usado ao marcar PAGO (NF emitida antes do pagamento) para não reemitir nem refazer requisição à Focus.
+ */
+export async function obterNfAutorizadaExistente(
+  enrollmentId: string,
+  year: number,
+  month: number
+): Promise<NfseRecord | null> {
+  const existente = await prisma.nfseInvoice.findUnique({
+    where: {
+      enrollmentId_year_month: { enrollmentId, year, month },
+    },
+  })
+  if (!existente || existente.status !== 'autorizado' || existente.cancelledAt) {
+    return null
+  }
+  return mapToNfseRecord(existente)
+}
