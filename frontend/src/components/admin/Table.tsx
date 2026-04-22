@@ -37,6 +37,11 @@ interface TableProps<T> {
   onVisibleColumnsChange?: (keys: string[]) => void
   /** Classe CSS adicional por linha (ex: destaque por nota). */
   getRowClassName?: (item: T) => string
+  /**
+   * Altura do viewport rolável do corpo (ex.: 7 linhas). Com valor, o cabeçalho fica sticky e aparece barra de rolagem se necessário.
+   * Use classes Tailwind, ex.: h-[calc(7*5.75rem)] max-h-[calc(7*5.75rem)]
+   */
+  scrollBodyHeightClass?: string
 }
 
 export default function Table<T extends { id: string }>({
@@ -51,6 +56,7 @@ export default function Table<T extends { id: string }>({
   visibleColumnKeys,
   onVisibleColumnsChange,
   getRowClassName,
+  scrollBodyHeightClass,
 }: TableProps<T>) {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; maxHeight: number; openUpward?: boolean } | null>(null)
@@ -181,7 +187,13 @@ export default function Table<T extends { id: string }>({
           </div>
         </div>
       )}
-      <div className="overflow-x-auto -mx-4 sm:mx-0 rounded-lg border border-gray-200 bg-white shadow-sm">
+      <div
+        className={`-mx-4 sm:mx-0 rounded-lg border border-gray-200 bg-white shadow-sm min-w-0 ${
+          scrollBodyHeightClass
+            ? `overflow-auto ${scrollBodyHeightClass} [scrollbar-width:thin] [scrollbar-color:rgb(209_213_219)_rgb(243_244_246)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400`
+            : 'overflow-x-auto'
+        }`}
+      >
         <div className="min-w-full inline-block">
           <table className="w-full min-w-[640px]">
             <thead>
@@ -194,7 +206,7 @@ export default function Table<T extends { id: string }>({
                   return (
                     <th
                       key={column.key}
-                      className={`whitespace-nowrap ${alignClass} py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
+                      className={`whitespace-nowrap ${alignClass} py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${scrollBodyHeightClass ? 'sticky top-0 z-10 bg-gray-50 shadow-[inset_0_-1px_0_0_rgb(229_231_235)]' : ''} ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
                       onClick={() => canSort && onSort(column.key)}
                     >
                       <span className="inline-flex items-center gap-1">

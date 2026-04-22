@@ -32,11 +32,18 @@ export async function PATCH(
     }
     const data = parsed.data
     const updateData: {
+      name?: string
+      description?: string | null
       valor?: number
       paymentStatus?: string
       paidAt?: Date | null
       receiptUrl?: string | null
     } = {}
+    if (data.name !== undefined) updateData.name = data.name.trim()
+    if (data.description !== undefined) {
+      const desc = data.description?.trim()
+      updateData.description = desc ? desc : null
+    }
     if (data.valor !== undefined) updateData.valor = data.valor
     if (data.paymentStatus === 'EM_ABERTO') {
       updateData.paymentStatus = 'EM_ABERTO'

@@ -12,6 +12,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Plus, Trash2, Calendar, ChevronDown, ChevronRight, FileDown, Upload, Download } from 'lucide-react'
+import { shouldIncludeValorInTotalEntradaRegis } from '@/lib/admin-movimentacao'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -45,6 +46,19 @@ interface BankExtratoItem {
   sizeBytes: number | null
 }
 
+interface AdminUserRow {
+  id: string
+  valor: number | null
+  valorRepetido?: number | null
+  paymentStatus: string | null
+}
+
+interface ProfessorRow {
+  id: string
+  valorAPagar: number
+  statusPagamento: 'PAGO' | 'EM_ABERTO' | 'NF_OK_AGUARDANDO' | 'AGUARDANDO_REENVIO'
+}
+
 function formatMoney(n: number): string {
   return `R$ ${Number(n).toFixed(2).replace('.', ',')}`
 }
@@ -53,6 +67,55 @@ function formatDateIso(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function extractMarker(description: string | null, marker: string): string {
+  if (!description) return ''
+  const m = description.match(new RegExp(`\\[${marker}:([^\\]]+)\\]`, 'i'))
+  return m?.[1]?.trim() || ''
+}
+
+function isExtratoSaida(description: string | null): boolean {
+  const tipo = extractMarker(description, 'TIPO').toUpperCase()
+  return tipo === 'SAIDA'
+}
+
+function humanDescription(description: string | null): string {
+  if (!description) return '—'
+  const transacao = extractMarker(description, 'TRANSACAO')
+  const identificacao = extractMarker(description, 'IDENTIFICACAO')
+  const data = extractMarker(description, 'DATA')
+  if (transacao || identificacao || data) {
+    return [transacao, identificacao, data].filter(Boolean).join(' · ')
+  }
+  const cleaned = description
+    .replace(/\[[^\]]+\]\s*/g, '')
+    .trim()
+  return cleaned || '—'
+}
+
+function getCategoriaSaida(row: ExpenseRow): string {
+  if (row.isFixed) return 'Saídas fixas'
+  const nome = (row.name || '').trim()
+  const normalized = nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+  if (normalized.startsWith('infraestrutura -')) {
+    return nome
+  }
+  if (normalized.startsWith('banco -')) {
+    return nome
+  }
+  if (normalized.includes('pag professor')) return 'Pag Professor'
+  if (normalized === 'adm' || normalized.includes('administr')) return 'ADM'
+  if (normalized.includes('adiant')) return 'Adiantamento'
+  if (normalized.includes('devol')) return 'Devolução'
+  if (normalized.includes('repasse')) return 'Repasse'
+  if (normalized.includes('sistema')) return 'Sistema'
+  const transacao = extractMarker(row.description, 'TRANSACAO')
+  if (transacao) return transacao
+  return nome || 'Outros'
 }
 
 export default function FinanceiroSaidasPage() {
@@ -80,14 +143,18 @@ export default function FinanceiroSaidasPage() {
   const [markPaidSaving, setMarkPaidSaving] = useState(false)
 
   const [showPeriodo, setShowPeriodo] = useState(true)
-  const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(10)
-  const [itemsPerPageFixed, setItemsPerPageFixed] = useState(10)
+  const [itemsPerPageExpenses, setItemsPerPageExpenses] = useState(7)
+  const [itemsPerPageFixed, setItemsPerPageFixed] = useState(7)
 
   const [extratos, setExtratos] = useState<BankExtratoItem[]>([])
   const [extratosLoading, setExtratosLoading] = useState(false)
   const [extratoUploading, setExtratoUploading] = useState(false)
   const [extratoDownloading, setExtratoDownloading] = useState(false)
   const extratoInputRef = useRef<HTMLInputElement | null>(null)
+  const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([])
+  const [professores, setProfessores] = useState<ProfessorRow[]>([])
+  const [showBankBreakdown, setShowBankBreakdown] = useState(false)
+  const [showCategoryBreakdown, setShowCategoryBreakdown] = useState(false)
 
   const fetchExtratos = useCallback(async (ano: number, mes: number) => {
     setExtratosLoading(true)
@@ -112,15 +179,28 @@ export default function FinanceiroSaidasPage() {
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/financeiro/administracao?year=${ano}&month=${mes}`)
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
+      const [resAdm, resProf] = await Promise.all([
+        fetch(`/api/admin/financeiro/administracao?year=${ano}&month=${mes}`),
+        fetch(`/api/admin/financeiro/professores?year=${ano}&month=${mes}`),
+      ])
+      const [jsonAdm, jsonProf] = await Promise.all([resAdm.json(), resProf.json()])
+      if (!resAdm.ok || !jsonAdm.ok) {
         setExpenses([])
+        setAdminUsers([])
+        setProfessores([])
         return
       }
-      setExpenses(json.data?.expenses ?? [])
+      setExpenses(jsonAdm.data?.expenses ?? [])
+      setAdminUsers(jsonAdm.data?.adminUsers ?? [])
+      if (resProf.ok && jsonProf.ok) {
+        setProfessores(jsonProf.data?.professores ?? [])
+      } else {
+        setProfessores([])
+      }
     } catch {
       setExpenses([])
+      setAdminUsers([])
+      setProfessores([])
     } finally {
       setLoading(false)
     }
@@ -144,14 +224,41 @@ export default function FinanceiroSaidasPage() {
     }
   }, [modalMarkPaid])
 
-  const fixedExpenses = expenses.filter((e) => e.isFixed === true)
-  const otherExpenses = expenses.filter((e) => e.isFixed !== true)
-  const totalDespesas = expenses.reduce((s, e) => s + e.valor, 0)
-  const totalPagoDespesas = expenses
+  /** Créditos de extrato/movimentação (mesma regra da coluna Tipo transação) não são despesa — não entram nos totais de saída. */
+  const despesasSomenteSaidas = expenses.filter((e) => !shouldIncludeValorInTotalEntradaRegis(e.description))
+  const fixedExpenses = despesasSomenteSaidas.filter((e) => e.isFixed === true)
+  const extratoSaidas = despesasSomenteSaidas.filter((e) => e.isFixed !== true && isExtratoSaida(e.description))
+  const totalDespesas = despesasSomenteSaidas.reduce((s, e) => s + e.valor, 0)
+  const totalEmAbertoDespesas = despesasSomenteSaidas
+    .filter((e) => e.paymentStatus !== 'PAGO')
+    .reduce((s, e) => s + e.valor, 0)
+  const totalPagoDespesas = despesasSomenteSaidas
     .filter((e) => e.paymentStatus === 'PAGO')
     .reduce((s, e) => s + e.valor, 0)
+  const totalSaidasFixas = fixedExpenses.reduce((s, e) => s + e.valor, 0)
+  const totalSaidasProfessores = professores
+    .filter((p) => p.statusPagamento === 'PAGO')
+    .reduce((s, p) => s + Number(p.valorAPagar || 0), 0)
+  const totalSaidasAdministracao = adminUsers
+    .filter((u) => u.paymentStatus === 'PAGO')
+    .reduce((s, u) => s + Number(u.valor ?? u.valorRepetido ?? 0), 0)
+  const saidasPorBancoMap = extratoSaidas.reduce<Record<string, number>>((acc, row) => {
+    const bancoRaw = extractMarker(row.description, 'BANCO')
+    const banco = bancoRaw ? bancoRaw.replace(/-/g, ' ') : 'não identificado'
+    acc[banco] = (acc[banco] || 0) + row.valor
+    return acc
+  }, {})
+  const totalSaidasPorBancos = Object.values(saidasPorBancoMap).reduce((s, n) => s + n, 0)
+  const saidasPorCategoriaMap = despesasSomenteSaidas.reduce<Record<string, number>>((acc, row) => {
+    const categoria = getCategoriaSaida(row)
+    acc[categoria] = (acc[categoria] || 0) + row.valor
+    return acc
+  }, {})
+  const totalSaidasPorCategoria = Object.values(saidasPorCategoriaMap).reduce((s, n) => s + n, 0)
+  const categoriasOrdenadas = Object.entries(saidasPorCategoriaMap).sort((a, b) => b[1] - a[1])
+  const maxCategoria = categoriasOrdenadas[0]?.[1] || 0
   const displayedFixedExpenses = fixedExpenses.slice(0, itemsPerPageFixed)
-  const displayedOtherExpenses = otherExpenses.slice(0, itemsPerPageExpenses)
+  const displayedExtratoSaidas = extratoSaidas.slice(0, itemsPerPageExpenses)
 
   const openModalDespesa = (asFixed = false) => {
     setModalIsFixedExpense(asFixed)
@@ -296,7 +403,10 @@ export default function FinanceiroSaidasPage() {
 
   const expenseColumns: Column<ExpenseRow>[] = [
     { key: 'name', label: 'Nome', render: (row) => row.name },
-    { key: 'description', label: 'Descrição', render: (row) => row.description ?? '—' },
+    { key: 'description', label: 'Descrição', render: (row) => humanDescription(row.description) },
+    { key: 'dataExtrato', label: 'Data', render: (row) => extractMarker(row.description, 'DATA') || '—' },
+    { key: 'transacaoExtrato', label: 'Transação', render: (row) => extractMarker(row.description, 'TRANSACAO') || '—' },
+    { key: 'identificacaoExtrato', label: 'Identificação', render: (row) => extractMarker(row.description, 'IDENTIFICACAO') || '—' },
     { key: 'valor', label: 'Valor', render: (row) => formatMoney(row.valor) },
     {
       key: 'paymentStatus',
@@ -612,26 +722,110 @@ export default function FinanceiroSaidasPage() {
         </div>
 
         <section>
-          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <h2 className="text-base font-semibold text-gray-800 mb-1">Resumo do mês</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Créditos de extrato/movimentação não entram aqui (só saídas e despesas). Professores e administração mostram apenas valores já marcados como pagos.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Total despesas</p>
+              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Saídas totais</p>
               <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(totalDespesas)}</p>
             </div>
+            <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Saídas em aberto</p>
+              <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(totalEmAbertoDespesas)}</p>
+            </div>
             <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Já pago</p>
+              <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Saídas pagas</p>
               <p className="mt-1 text-xl font-bold text-emerald-900">{loading ? '—' : formatMoney(totalPagoDespesas)}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowBankBreakdown((v) => !v)}
+              className="text-left rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm hover:bg-indigo-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Saídas por bancos</p>
+              <p className="mt-1 text-xl font-bold text-indigo-900">{loading ? '—' : formatMoney(totalSaidasPorBancos)}</p>
+              <p className="text-xs text-indigo-700 mt-1">{showBankBreakdown ? 'Ocultar detalhe' : 'Clique para ver detalhe'}</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCategoryBreakdown((v) => !v)}
+              className="text-left rounded-xl border-2 border-violet-200 bg-violet-50 p-4 shadow-sm hover:bg-violet-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-violet-800 uppercase tracking-wide">Saídas por categoria</p>
+              <p className="mt-1 text-xl font-bold text-violet-900">{loading ? '—' : formatMoney(totalSaidasPorCategoria)}</p>
+              <p className="text-xs text-violet-700 mt-1">{showCategoryBreakdown ? 'Ocultar detalhe' : 'Clique para ver detalhe'}</p>
+            </button>
+            <div className="rounded-xl border-2 border-cyan-200 bg-cyan-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-cyan-800 uppercase tracking-wide">Saídas fixas</p>
+              <p className="mt-1 text-xl font-bold text-cyan-900">{loading ? '—' : formatMoney(totalSaidasFixas)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-fuchsia-200 bg-fuchsia-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-fuchsia-800 uppercase tracking-wide">Saídas professores</p>
+              <p className="mt-1 text-xl font-bold text-fuchsia-900">{loading ? '—' : formatMoney(totalSaidasProfessores)}</p>
+            </div>
+            <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-rose-800 uppercase tracking-wide">Saídas administração</p>
+              <p className="mt-1 text-xl font-bold text-rose-900">{loading ? '—' : formatMoney(totalSaidasAdministracao)}</p>
+            </div>
           </div>
+          {showBankBreakdown && (
+            <div className="mt-3 rounded-xl border border-indigo-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-indigo-900 mb-2">Total por banco (saídas do extrato)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {Object.keys(saidasPorBancoMap).length === 0 ? (
+                  <p className="text-sm text-gray-600">Sem saídas de extrato com banco identificado no período.</p>
+                ) : (
+                  Object.entries(saidasPorBancoMap)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([bank, total]) => (
+                      <div key={bank} className="rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-xs uppercase text-gray-500">{bank}</p>
+                        <p className="text-sm font-semibold text-gray-900">{formatMoney(total)}</p>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          )}
+          {showCategoryBreakdown && (
+            <div className="mt-3 rounded-xl border border-violet-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-violet-900 mb-2">Total gasto por categoria</h3>
+              {categoriasOrdenadas.length === 0 ? (
+                <p className="text-sm text-gray-600">Sem saídas no período.</p>
+              ) : (
+                <div className="space-y-2">
+                  {categoriasOrdenadas.map(([cat, total]) => {
+                    const pct = maxCategoria > 0 ? Math.max(2, Math.round((total / maxCategoria) * 100)) : 0
+                    return (
+                      <div key={cat} className="rounded-lg border border-gray-200 p-2">
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className="font-medium text-gray-800 truncate">{cat}</span>
+                          <span className="font-semibold text-violet-900">{formatMoney(total)}</span>
+                        </div>
+                        <div className="mt-1 h-2 w-full rounded-full bg-gray-100 overflow-hidden">
+                          <div
+                            className="h-full bg-violet-500 transition-all duration-300 ease-out"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-gray-800">Despesas fixas</h2>
+            <h2 className="text-base font-semibold text-gray-800">Saídas fixas</h2>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="text-xs text-gray-500">Itens por página</label>
               <select value={itemsPerPageFixed} onChange={(e) => setItemsPerPageFixed(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
-                <option value={3}>3</option>
+                <option value={7}>7</option>
                 <option value={10}>10</option>
                 <option value={20}>20</option>
                 <option value={100}>100</option>
@@ -666,11 +860,12 @@ export default function FinanceiroSaidasPage() {
             columns={expenseColumns}
             data={displayedFixedExpenses}
             loading={loading}
-            emptyMessage="Nenhuma despesa fixa neste mês."
+            emptyMessage="Nenhuma saída fixa neste mês."
+            scrollBodyHeightClass="h-[calc(7*6.25rem)] max-h-[calc(7*6.25rem)]"
           />
           {fixedExpenses.length > itemsPerPageFixed && (
             <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
-              Mostrando {displayedFixedExpenses.length} de {fixedExpenses.length} despesas fixas
+              Mostrando {displayedFixedExpenses.length} de {fixedExpenses.length} saídas fixas
             </div>
           )}
         </section>
@@ -678,47 +873,35 @@ export default function FinanceiroSaidasPage() {
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-gray-800">Outras despesas</h2>
-              <p className="text-sm text-gray-600 mt-0.5">Despesas avulsas para este mês/ano.</p>
+              <h2 className="text-base font-semibold text-gray-800">Saídas do extrato</h2>
+              <p className="text-sm text-gray-600 mt-0.5">
+                Saídas importadas no Financeiro – Movimentação para este mês/ano.
+              </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="text-xs text-gray-500">Itens por página</label>
               <select value={itemsPerPageExpenses} onChange={(e) => setItemsPerPageExpenses(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
-                <option value={3}>3</option>
+                <option value={7}>7</option>
                 <option value={10}>10</option>
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
-              <Button variant="outline" size="sm" onClick={() => exportCsv(otherExpenses, ['Nome', 'Descrição', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, r.description ?? '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
+              <Button variant="outline" size="sm" onClick={() => exportCsv(extratoSaidas, ['Nome', 'Descrição', 'Data', 'Transação', 'Identificação', 'Valor', 'Pagamento', 'Data pagamento'], (r) => [r.name, humanDescription(r.description), extractMarker(r.description, 'DATA') || '', extractMarker(r.description, 'TRANSACAO') || '', extractMarker(r.description, 'IDENTIFICACAO') || '', formatMoney(r.valor), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto', r.paidAt ? formatDateIso(r.paidAt) : ''])}>
                 <FileDown className="w-4 h-4 mr-2" />
                 Exportar
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={extratoUploading}
-                title="Anexar extrato bancário ao mês selecionado (competência)"
-                onClick={() => extratoInputRef.current?.click()}
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                {extratoUploading ? 'Importando…' : 'Importar extrato'}
-              </Button>
-              <Button variant="primary" size="sm" onClick={() => openModalDespesa(false)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar despesa
               </Button>
             </div>
           </div>
           <Table<ExpenseRow>
             columns={expenseColumns}
-            data={displayedOtherExpenses}
+            data={displayedExtratoSaidas}
             loading={loading}
-            emptyMessage="Nenhuma despesa avulsa neste mês."
+            emptyMessage="Nenhuma saída de extrato neste mês."
+            scrollBodyHeightClass="h-[calc(7*6.25rem)] max-h-[calc(7*6.25rem)]"
           />
-          {otherExpenses.length > itemsPerPageExpenses && (
+          {extratoSaidas.length > itemsPerPageExpenses && (
             <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
-              Mostrando {displayedOtherExpenses.length} de {otherExpenses.length} despesas
+              Mostrando {displayedExtratoSaidas.length} de {extratoSaidas.length} saídas
             </div>
           )}
         </section>

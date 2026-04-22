@@ -7,24 +7,50 @@ export type ParsedExtratoLine = {
   name: string
   description: string | null
   valor: number
+  movementType: 'ENTRADA' | 'SAIDA'
+  rawDate?: string | null
+  rawTransaction?: string | null
+  rawTransactionType?: string | null
+  rawIdentification?: string | null
   /** Ano/mês da data do lançamento (OFX DTPOSTED ou CSV) */
   year: number
   month: number
 }
 
-const INCOME_TRNTYPES = new Set(['CREDIT', 'DEP', 'DIRECTDEP', 'INT', 'DIV'])
+/**
+ * Valor no CSV do banco: pode vir como "1.234,56" (BR), "260" ou "-986.52" / "270.23" (ponto = decimal, ex.: Cora).
+ * Remover todos os pontos quebra o último caso (virava -98652).
+ */
+function parseValorCampoExtratoCsv(raw: string): number | null {
+  let s = raw.replace(/R\$\s*/gi, '').trim()
+  if (!s) return null
+  const negative = /^-/.test(s)
+  s = s.replace(/^[-+]\s*/, '')
 
-const EXPENSE_TRNTYPES = new Set([
-  'DEBIT',
-  'POS',
-  'ATM',
-  'CHECK',
-  'FEE',
-  'SRVCHG',
-  'PAYMENT',
-  'WITHDRAWAL',
-  'XFER',
-])
+  const hasComma = s.includes(',')
+  const dotCount = (s.match(/\./g) || []).length
+
+  if (hasComma) {
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (dotCount === 1) {
+    const [whole, frac = ''] = s.split('.')
+    if (frac.length >= 1 && frac.length <= 2 && /^\d+$/.test(whole) && /^\d+$/.test(frac)) {
+      s = `${whole}.${frac}`
+    } else if (frac.length === 3 && /^\d+$/.test(whole) && /^\d+$/.test(frac)) {
+      s = whole + frac
+    } else if (frac === '') {
+      s = whole
+    } else {
+      s = whole + frac
+    }
+  } else if (dotCount > 1) {
+    s = s.replace(/\./g, '')
+  }
+
+  const n = Number.parseFloat((negative ? '-' : '') + s.replace(/[^\d.]/g, ''))
+  if (Number.isNaN(n) || n === 0) return null
+  return n
+}
 
 function parseOfxDate(dt: string): { year: number; month: number; day: number } | null {
   const cleaned = dt.replace(/\[.*?\]$/, '').trim()
@@ -66,10 +92,44 @@ function splitOfxStmtTrn(content: string): string[] {
   return blocks
 }
 
+/**
+ * Classifica crédito/débito OFX priorizando TRNTYPE; só usa o sinal de TRNAMT se o tipo for ambíguo.
+ * Evita marcar pagamentos/débitos como ENTRADA quando o banco segue o padrão OFX mas o sinal veio invertido.
+ */
+function movementTypeFromOfxTrntype(trntypeRaw: string, amount: number): 'ENTRADA' | 'SAIDA' {
+  const tt = trntypeRaw.trim().toUpperCase()
+  if (!tt) return amount < 0 ? 'SAIDA' : 'ENTRADA'
+
+  const debitLike =
+    tt.includes('DEBIT') ||
+    tt.includes('DEBITO') ||
+    tt === 'ATM' ||
+    tt === 'POS' ||
+    tt === 'FEE' ||
+    tt === 'SRVCHG' ||
+    tt === 'SRVCHARG' ||
+    tt === 'CHECK' ||
+    tt.includes('WITHDRAW')
+  const creditLike =
+    tt.includes('CREDIT') ||
+    tt.includes('CREDITO') ||
+    tt === 'DEP' ||
+    tt === 'DIRECTDEP' ||
+    tt === 'INT' ||
+    tt === 'DIV' ||
+    tt.includes('INTEREST')
+
+  if (debitLike && !creditLike) return 'SAIDA'
+  if (creditLike && !debitLike) return 'ENTRADA'
+
+  if (tt === 'XFER' || tt === 'PAYMENT') return amount < 0 ? 'SAIDA' : 'ENTRADA'
+
+  return amount < 0 ? 'SAIDA' : 'ENTRADA'
+}
+
 function pushOfxBlock(
   block: string,
-  out: ParsedExtratoLine[],
-  relaxedAmount: boolean
+  out: ParsedExtratoLine[]
 ): void {
   const trntype = getTag(block, 'TRNTYPE').toUpperCase()
   const trnamtRaw = getTag(block, 'TRNAMT')
@@ -85,20 +145,19 @@ function pushOfxBlock(
   const dateParsed = dtposted ? parseOfxDate(dtposted) : null
   if (!dateParsed) return
 
-  const t = trntype || 'OTHER'
-  if (INCOME_TRNTYPES.has(t) && amount > 0) return
-
-  if (!relaxedAmount) {
-    if (amount > 0 && !EXPENSE_TRNTYPES.has(t)) return
-  }
-
   const valor = Math.abs(amount)
+  const movementType = movementTypeFromOfxTrntype(trntype, amount)
   const label = (memo || nameTag || 'Movimentação').slice(0, 200)
-  const descParts = [fitid ? `FITID ${fitid}` : null, dtposted.slice(0, 8)].filter(Boolean)
+  const descParts = [fitid ? `FITID ${fitid}` : null, dtposted.slice(0, 8), trntype || null].filter(Boolean)
   out.push({
     name: label || 'Movimentação',
     description: descParts.length ? descParts.join(' · ') : null,
     valor: Math.round(valor * 100) / 100,
+    movementType,
+    rawDate: dtposted ? `${dtposted.slice(6, 8)}/${dtposted.slice(4, 6)}/${dtposted.slice(0, 4)}` : null,
+    rawTransaction: memo || nameTag || null,
+    rawTransactionType: trntype || null,
+    rawIdentification: fitid || null,
     year: dateParsed.year,
     month: dateParsed.month,
   })
@@ -108,12 +167,7 @@ export function parseOfxContent(text: string): ParsedExtratoLine[] {
   const blocks = splitOfxStmtTrn(text)
   const out: ParsedExtratoLine[] = []
   for (const block of blocks) {
-    pushOfxBlock(block, out, false)
-  }
-  if (blocks.length > 0 && out.length === 0) {
-    for (const block of blocks) {
-      pushOfxBlock(block, out, true)
-    }
+    pushOfxBlock(block, out)
   }
   return out
 }
@@ -128,7 +182,9 @@ export function parseBankCsvContent(text: string): ParsedExtratoLine[] {
 
   const dateIdx = header.findIndex((h) => /data|date|dt|lan[cç]amento/i.test(h))
   const valueIdx = header.findIndex((h) => /valor|amount|value|d[eé]bito|cr[eé]dito/i.test(h))
-  const histIdx = header.findIndex((h) => /hist|descri|memo|detalhe|lan[cç]amento/i.test(h))
+  const transacaoIdx = header.findIndex((h) => /transa[cç][aã]o|hist|descri|memo|detalhe|lan[cç]amento/i.test(h))
+  const tipoTransacaoIdx = header.findIndex((h) => /tipo.*transa[cç][aã]o|d[eé]bito|cr[eé]dito|tipo/i.test(h))
+  const identificacaoIdx = header.findIndex((h) => /identifica[cç][aã]o|favorecido|nome|documento/i.test(h))
 
   if (dateIdx >= 0 && valueIdx >= 0) {
     const rows: ParsedExtratoLine[] = []
@@ -136,16 +192,25 @@ export function parseBankCsvContent(text: string): ParsedExtratoLine[] {
       const cols = splitCsvLine(line, sep)
       if (cols.length <= Math.max(dateIdx, valueIdx)) continue
       const dateStr = cols[dateIdx]?.trim() ?? ''
-      let valStr = cols[valueIdx]?.trim() ?? ''
-      valStr = valStr.replace(/R\$\s*/gi, '').replace(/\./g, '').replace(',', '.')
-      const hist = histIdx >= 0 ? cols[histIdx]?.trim() : null
+      const valStr = cols[valueIdx]?.trim() ?? ''
+      const hist = transacaoIdx >= 0 ? cols[transacaoIdx]?.trim() : null
+      const tipoRaw = tipoTransacaoIdx >= 0 ? cols[tipoTransacaoIdx]?.trim() : ''
+      const identificacao = identificacaoIdx >= 0 ? cols[identificacaoIdx]?.trim() : null
       const d = parseBrOrIsoDate(dateStr)
-      const valor = Number.parseFloat(valStr.replace(/[^\d.-]/g, ''))
-      if (!d || Number.isNaN(valor) || valor === 0) continue
+      const valor = parseValorCampoExtratoCsv(valStr)
+      if (!d || valor == null) continue
+      const tipoNorm = tipoRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+      const movementType: 'ENTRADA' | 'SAIDA' =
+        tipoNorm.includes('CREDITO') ? 'ENTRADA' : (tipoNorm.includes('DEBITO') ? 'SAIDA' : (valor < 0 ? 'SAIDA' : 'ENTRADA'))
       rows.push({
-        name: (hist || 'Movimentação').slice(0, 200),
-        description: dateStr,
+        name: (identificacao || hist || 'Movimentação').slice(0, 200),
+        description: [hist, identificacao].filter(Boolean).join(' · ') || null,
         valor: Math.round(Math.abs(valor) * 100) / 100,
+        movementType,
+        rawDate: dateStr || null,
+        rawTransaction: hist || null,
+        rawTransactionType: tipoRaw || null,
+        rawIdentification: identificacao || null,
         year: d.year,
         month: d.month,
       })
@@ -198,10 +263,9 @@ function tryDetectCsvWithoutHeader(lines: string[], sep: string): ParsedExtratoL
     const d = parseBrOrIsoDate(dateM[1])
     if (!d) continue
     const nums = line.match(/-?\s*R\$\s*([\d.,]+)|(-?[\d.,]+)\s*$/)
-    let valStr = nums?.[1] || nums?.[2] || ''
-    valStr = valStr.replace(/\./g, '').replace(',', '.')
-    const valor = Number.parseFloat(valStr)
-    if (Number.isNaN(valor) || valor === 0) continue
+    const valStr = nums?.[1] || nums?.[2] || ''
+    const valor = parseValorCampoExtratoCsv(valStr)
+    if (valor == null) continue
     const name = line
       .replace(dateM[0], '')
       .replace(nums?.[0] || '', '')
@@ -212,6 +276,11 @@ function tryDetectCsvWithoutHeader(lines: string[], sep: string): ParsedExtratoL
       name: name || 'Movimentação',
       description: dateM[1],
       valor: Math.round(Math.abs(valor) * 100) / 100,
+      movementType: valor < 0 ? 'SAIDA' : 'ENTRADA',
+      rawDate: dateM[1],
+      rawTransaction: name || 'Movimentação',
+      rawTransactionType: valor < 0 ? 'DÉBITO' : 'CRÉDITO',
+      rawIdentification: null,
       year: d.year,
       month: d.month,
     })

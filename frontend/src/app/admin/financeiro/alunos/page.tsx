@@ -749,7 +749,7 @@ export default function FinanceiroAlunosPage() {
   const [filterQuemPaga, setFilterQuemPaga] = useState<string>('')
   const [filterInfoPagamento, setFilterInfoPagamento] = useState<string>('')
   const [filterEscola, setFilterEscola] = useState<string>('')
-  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(7)
   const [showDicas, setShowDicas] = useState(false)
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const [showPeriodo, setShowPeriodo] = useState(false)
@@ -2260,7 +2260,7 @@ export default function FinanceiroAlunosPage() {
                       onChange={(e) => setItemsPerPage(Number(e.target.value))}
                       className="input min-w-[72px] text-sm py-1.5"
                     >
-                      <option value={5}>5</option>
+                      <option value={7}>7</option>
                       <option value={30}>30</option>
                       <option value={500}>500</option>
                     </select>
@@ -2367,9 +2367,13 @@ export default function FinanceiroAlunosPage() {
                 )}
                 </div>
               </div>
-              <div className={`overflow-x-auto px-5 pb-5 ${fullTableView ? 'flex-1 overflow-y-auto' : ''}`}>
+              <div
+                className={`overflow-x-auto px-5 pb-5 [scrollbar-width:thin] ${
+                  fullTableView ? 'flex-1 min-h-0 overflow-y-auto' : 'max-h-[calc(7*6.25rem)] overflow-y-auto'
+                }`}
+              >
             <table className="w-full min-w-[1400px]">
-              <thead>
+              <thead className="sticky top-0 z-20 bg-gray-50 shadow-[inset_0_-1px_0_0_rgb(229_231_235)]">
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
                     {/* coluna de seleção */}

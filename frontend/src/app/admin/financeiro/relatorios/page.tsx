@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Button from '@/components/ui/Button'
-import { Loader2, Search, Download, HeartPulse, Lightbulb } from 'lucide-react'
+import { Loader2, Search, Download, HeartPulse, Lightbulb, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -281,6 +281,24 @@ interface ResumoAnualPayload {
   valorPerdidoAno: number
 }
 
+interface MovimentacaoSaidaLinhaRelatorio {
+  id: string
+  name: string
+  valor: number
+  data: string
+  transacao: string
+  identificacao: string
+  year: number
+  month: number
+}
+
+interface EntradaAlunoPagoLinhaRelatorio {
+  aluno: string
+  valor: number
+  year: number
+  month: number
+}
+
 interface GeralData {
   items?: GeralItem[]
   /** Preenchidos pela API quando há mês específico (Visão geral) */
@@ -288,6 +306,14 @@ interface GeralData {
   matriculadosValorTotal?: number
   inativadosCount?: number
   valorPerdidoInativos?: number
+  /** Soma das movimentações tipo Entrada (administração) no período filtrado */
+  totalEntradaRegis?: number
+  /** Soma das saídas (Débito / Saída) alinhada à tela Movimentações */
+  totalSaidaRegis?: number
+  movimentacoesSaidaLinhas?: MovimentacaoSaidaLinhaRelatorio[]
+  /** Total pago pelos alunos no período (mesma base do cubo Receita) */
+  totalPagoAlunos?: number
+  entradasAlunosPagosLinhas?: EntradaAlunoPagoLinhaRelatorio[]
   /** Visão anual: KPIs por mês + resumo */
   kpisPorMes?: KpisMesItem[]
   resumoAnual?: ResumoAnualPayload
@@ -470,6 +496,122 @@ function CuboSaudeEscola({ saude, descricaoIndicador }: { saude: EscolaSaudePayl
   )
 }
 
+const SCROLL_LIST_RELATORIO_7 =
+  'max-h-[calc(7*3.25rem)] overflow-y-auto rounded-lg border border-gray-200/90 bg-white/80 [scrollbar-width:thin] [scrollbar-color:rgb(209_213_219)_rgb(243_244_246)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-gray-100'
+
+function CubosSaidasMovimentacaoEEntradasAlunos({
+  totalSaidaRegis,
+  movimentacoesSaidaLinhas,
+  totalPagoAlunos,
+  entradasAlunosPagosLinhas,
+  hasMonth,
+}: {
+  totalSaidaRegis: number
+  movimentacoesSaidaLinhas: MovimentacaoSaidaLinhaRelatorio[]
+  totalPagoAlunos: number
+  entradasAlunosPagosLinhas: EntradaAlunoPagoLinhaRelatorio[]
+  hasMonth: boolean
+}) {
+  const [abrirSaidas, setAbrirSaidas] = useState(false)
+  const [abrirEntradas, setAbrirEntradas] = useState(false)
+
+  const nSaidas = movimentacoesSaidaLinhas.length
+  const nEntradas = entradasAlunosPagosLinhas.length
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4 shadow-sm">
+        <p className="text-xs font-semibold text-rose-900 uppercase">Saídas registradas (movimentações)</p>
+        <p className="text-xl font-bold text-rose-950 mt-1 tabular-nums">{formatMoney(totalSaidaRegis)}</p>
+        <p className="text-xs font-normal text-rose-900/90 mt-2">
+          Soma das linhas em que o tipo de transação é <strong>Débito</strong> (ou Saída manual sem extrato), com a mesma
+          deduplicação da tela Movimentações.
+        </p>
+        {nSaidas > 0 ? (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setAbrirSaidas((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-rose-200 bg-white/90 px-3 py-2 text-left text-xs font-medium text-rose-900 shadow-sm hover:bg-white"
+            >
+              <span className="flex items-center gap-2">
+                {abrirSaidas ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                {abrirSaidas ? 'Ocultar lançamentos' : `Ver lançamentos (${nSaidas})`}
+              </span>
+            </button>
+            {abrirSaidas ? (
+              <>
+                <ul className={`mt-2 space-y-0 divide-y divide-rose-100 px-2 py-1 text-xs text-rose-950 ${SCROLL_LIST_RELATORIO_7}`}>
+                  {movimentacoesSaidaLinhas.map((l) => (
+                    <li key={l.id} className="flex flex-col gap-0.5 py-2 pr-1">
+                      <span className="font-medium text-gray-900 break-words">{l.identificacao}</span>
+                      <span className="text-gray-600 line-clamp-2">
+                        {[l.data, l.transacao].filter(Boolean).join(' · ') || l.name}
+                        {!hasMonth ? (
+                          <span className="text-rose-700/90">
+                            {' '}
+                            · {MESES_LABELS[l.month] ?? l.month}/{l.year}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-sm font-semibold text-rose-900 tabular-nums">{formatMoney(l.valor)}</span>
+                    </li>
+                  ))}
+                </ul>
+                {!hasMonth ? (
+                  <p className="mt-1 text-[10px] text-rose-800/75">Até 120 lançamentos do período filtrado, ordenados por data.</p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-rose-800/80 rounded-lg border border-rose-100 bg-white/50 px-2 py-2">
+            Nenhuma saída registrada neste período.
+          </p>
+        )}
+      </div>
+      <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+        <p className="text-xs font-semibold text-emerald-900 uppercase">Entradas (pagamentos de alunos)</p>
+        <p className="text-xl font-bold text-emerald-950 mt-1 tabular-nums">{formatMoney(totalPagoAlunos)}</p>
+        <p className="text-xs font-normal text-emerald-900/90 mt-2">
+          Total <strong>pago</strong> no mês competência (status PAGO nos pagamentos mensais dos alunos). Equivale ao valor
+          do cubo <strong>Receita</strong> quando o filtro é um mês.
+        </p>
+        {hasMonth && nEntradas > 0 ? (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setAbrirEntradas((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-white/90 px-3 py-2 text-left text-xs font-medium text-emerald-900 shadow-sm hover:bg-white"
+            >
+              <span className="flex items-center gap-2">
+                {abrirEntradas ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                {abrirEntradas ? 'Ocultar alunos' : `Ver alunos pagos (${nEntradas})`}
+              </span>
+            </button>
+            {abrirEntradas ? (
+              <ul className={`mt-2 space-y-0 divide-y divide-emerald-100 px-2 py-1 text-xs text-emerald-950 ${SCROLL_LIST_RELATORIO_7}`}>
+                {entradasAlunosPagosLinhas.map((l, idx) => (
+                  <li key={`${l.aluno}-${idx}`} className="flex items-start justify-between gap-2 py-2 pr-1">
+                    <span className="font-medium text-gray-900 break-words min-w-0">{l.aluno}</span>
+                    <span className="shrink-0 text-sm font-semibold text-emerald-900 tabular-nums">{formatMoney(l.valor)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-emerald-800/80 rounded-lg border border-emerald-100 bg-white/50 px-2 py-2">
+            {hasMonth
+              ? 'Nenhum pagamento com status PAGO neste mês.'
+              : 'Selecione um mês no filtro para listar os alunos com mensalidade paga. O total acima é a soma de todo o ano.'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // --- Geral ---
 function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMonth: boolean; month: number; year: number }) {
   const items = data?.items ?? []
@@ -497,7 +639,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase">Receita</p>
             <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(i?.receita)}</p>
@@ -512,7 +654,23 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
               {formatMoney(i?.saldo)}
             </p>
           </div>
+          <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+            <p className="text-xs font-semibold text-violet-800 uppercase">Total Entrada Regis</p>
+            <p className="text-xl font-bold text-violet-900 mt-1">{formatMoney(md.totalEntradaRegis ?? 0)}</p>
+            <p className="text-xs font-normal text-violet-800/90 mt-2">
+              Soma apenas das linhas em que o tipo de transação é <strong>Crédito</strong> (como na tabela de
+              Movimentações). Lançamentos manuais sem extrato seguem o tipo Entrada/Saída.
+            </p>
+          </div>
         </div>
+
+        <CubosSaidasMovimentacaoEEntradasAlunos
+          totalSaidaRegis={data.totalSaidaRegis ?? 0}
+          movimentacoesSaidaLinhas={data.movimentacoesSaidaLinhas ?? []}
+          totalPagoAlunos={data.totalPagoAlunos ?? 0}
+          entradasAlunosPagosLinhas={data.entradasAlunosPagosLinhas ?? []}
+          hasMonth
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
@@ -573,7 +731,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase">Receita Total</p>
             <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(receitaTotal)}</p>
@@ -586,7 +744,22 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
             <p className="text-xs font-semibold uppercase">Saldo</p>
             <p className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? 'text-green-900' : 'text-red-900'}`}>{formatMoney(saldoTotal)}</p>
           </div>
+          <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+            <p className="text-xs font-semibold text-violet-800 uppercase">Total Entrada Regis</p>
+            <p className="text-xl font-bold text-violet-900 mt-1">{formatMoney(data.totalEntradaRegis ?? 0)}</p>
+            <p className="text-xs font-normal text-violet-800/90 mt-2">
+              No ano, só entram linhas com tipo de transação <strong>Crédito</strong> (ou Entrada manual sem extrato).
+            </p>
+          </div>
         </div>
+
+        <CubosSaidasMovimentacaoEEntradasAlunos
+          totalSaidaRegis={data.totalSaidaRegis ?? 0}
+          movimentacoesSaidaLinhas={data.movimentacoesSaidaLinhas ?? []}
+          totalPagoAlunos={data.totalPagoAlunos ?? 0}
+          entradasAlunosPagosLinhas={data.entradasAlunosPagosLinhas ?? []}
+          hasMonth={false}
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4">
@@ -673,7 +846,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
           <p className="text-xs font-semibold text-green-800 uppercase">Receita Total</p>
           <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(receitaTotal)}</p>
@@ -686,7 +859,23 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
           <p className="text-xs font-semibold uppercase">Saldo</p>
           <p className={`text-xl font-bold mt-1 ${saldoTotal >= 0 ? 'text-green-900' : 'text-red-900'}`}>{formatMoney(saldoTotal)}</p>
         </div>
+        <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
+          <p className="text-xs font-semibold text-violet-800 uppercase">Total Entrada Regis</p>
+          <p className="text-xl font-bold text-violet-900 mt-1">{formatMoney(data.totalEntradaRegis ?? 0)}</p>
+          <p className="text-xs font-normal text-violet-800/90 mt-2">
+            Apenas <strong>Crédito</strong> no período (mesma regra da coluna Tipo Transação em Movimentações).
+          </p>
+        </div>
       </div>
+
+      <CubosSaidasMovimentacaoEEntradasAlunos
+        totalSaidaRegis={data.totalSaidaRegis ?? 0}
+        movimentacoesSaidaLinhas={data.movimentacoesSaidaLinhas ?? []}
+        totalPagoAlunos={data.totalPagoAlunos ?? 0}
+        entradasAlunosPagosLinhas={data.entradasAlunosPagosLinhas ?? []}
+        hasMonth={hasMonth}
+      />
+
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="w-full min-w-[800px]">
           <thead>

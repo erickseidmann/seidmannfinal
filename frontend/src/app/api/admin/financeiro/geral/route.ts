@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
 import { calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
+import { shouldIncludeValorInTotalEntradaRegis } from '@/lib/admin-movimentacao'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -302,6 +303,7 @@ export async function GET(request: NextRequest) {
         let gastosAPagar = 0
         for (const e of expenses) {
           if (e.year !== year || e.month !== month) continue
+          if (shouldIncludeValorInTotalEntradaRegis(e.description)) continue
           const v = Number(e.valor)
           if (e.paymentStatus === 'PAGO') gastosPago += v
           else gastosAPagar += v

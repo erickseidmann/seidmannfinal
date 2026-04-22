@@ -1,6 +1,6 @@
 /**
- * GET /api/admin/enrollments/below-hour-rate?max=30
- * Matrículas ativas com valor da hora-aula (PaymentInfo.valorHora) estritamente menor que o limite (padrão R$ 30).
+ * GET /api/admin/enrollments/below-hour-rate?max=35
+ * Matrículas ativas com valor da hora-aula (PaymentInfo.valorHora) estritamente menor que o limite (padrão R$ 35).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const maxRaw = searchParams.get('max')
-    const max = maxRaw != null && maxRaw !== '' ? Number(maxRaw) : 30
+    const max = maxRaw != null && maxRaw !== '' ? Number(maxRaw) : 35
     if (!Number.isFinite(max) || max <= 0) {
       return NextResponse.json({ ok: false, message: 'Parâmetro max inválido' }, { status: 400 })
     }

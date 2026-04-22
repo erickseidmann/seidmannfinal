@@ -11,7 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Users, Wallet, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown, Paperclip, Loader2 } from 'lucide-react'
+import { Users, Wallet, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown, Paperclip, Loader2, Link2, Unlink } from 'lucide-react'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -29,6 +29,11 @@ interface AdminUserRow {
   email: string
   funcao: string | null
   emailPessoal: string | null
+  linkedTeacherId: string | null
+  linkedTeacherNome: string | null
+  teacherPaymentDueDay: number | null
+  adminPaymentDueDay: number | null
+  valorProfessorAulas: number | null
   valor: number | null
   paymentStatus: string | null
   paidAt: string | null
@@ -72,23 +77,37 @@ export default function FinanceiroAdministracaoPage() {
   const [sendingNotify, setSendingNotify] = useState(false)
 
   const [showPeriodo, setShowPeriodo] = useState(true)
-  const [itemsPerPageAdmin, setItemsPerPageAdmin] = useState(10)
+  const [itemsPerPageAdmin, setItemsPerPageAdmin] = useState(7)
   const [coraGastos, setCoraGastos] = useState<number>(0)
   const [coraLoading, setCoraLoading] = useState(false)
   const [uploadingReceiptUserId, setUploadingReceiptUserId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingReceiptRowRef = useRef<AdminUserRow | null>(null)
 
+  const [connectModalUser, setConnectModalUser] = useState<AdminUserRow | null>(null)
+  const [teachersPickList, setTeachersPickList] = useState<{ id: string; nome: string }[]>([])
+  const [teachersPickLoading, setTeachersPickLoading] = useState(false)
+  const [selectedTeacherToLink, setSelectedTeacherToLink] = useState('')
+  const [savingTeacherLink, setSavingTeacherLink] = useState(false)
+
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/financeiro/administracao?year=${ano}&month=${mes}`)
+      const res = await fetch(`/api/admin/financeiro/administracao?year=${ano}&month=${mes}`, { credentials: 'include' })
       const json = await res.json()
       if (!res.ok || !json.ok) {
         setAdminUsers([])
         return
       }
-      setAdminUsers(json.data?.adminUsers ?? [])
+      const rows: AdminUserRow[] = (json.data?.adminUsers ?? []).map((r: AdminUserRow) => ({
+        ...r,
+        linkedTeacherId: r.linkedTeacherId ?? null,
+        linkedTeacherNome: r.linkedTeacherNome ?? null,
+        teacherPaymentDueDay: r.teacherPaymentDueDay ?? null,
+        adminPaymentDueDay: r.adminPaymentDueDay ?? null,
+        valorProfessorAulas: r.valorProfessorAulas ?? null,
+      }))
+      setAdminUsers(rows)
       setCurrentUserIsSuperAdmin(!!json.data?.currentUserIsSuperAdmin)
     } catch {
       setAdminUsers([])
@@ -122,6 +141,12 @@ export default function FinanceiroAdministracaoPage() {
   const displayedAdminUsers = adminUsers.slice(0, itemsPerPageAdmin)
 
   const valorExibido = (u: AdminUserRow) => u.valor ?? u.valorRepetido ?? 0
+  const roundMoney = (n: number) => Math.round(n * 100) / 100
+  /** Com professor vinculado: salário ADM do mês + valor a pagar (aulas). Sem vínculo: só ADM. */
+  const totalAPagarAdmRow = (u: AdminUserRow) =>
+    u.linkedTeacherId != null
+      ? roundMoney(valorExibido(u) + (u.valorProfessorAulas ?? 0))
+      : valorExibido(u)
   const totalAdminValor = adminUsers.reduce((s, u) => s + valorExibido(u), 0)
   const totalPagoAdmin = adminUsers
     .filter((u) => u.paymentStatus === 'PAGO')
@@ -241,13 +266,28 @@ export default function FinanceiroAdministracaoPage() {
 
   const openNotifyModal = (row: AdminUserRow) => {
     const mesNome = MESES_LABELS[selectedMes] ?? String(selectedMes)
-    const valorAtual = row.valor ?? row.valorRepetido
-    const valorStr =
-      valorAtual != null ? Number(valorAtual).toFixed(2).replace('.', ',') : '--'
-    const defaultMessage = `Olá,
+    const adm = valorExibido(row)
+    const aulas = row.valorProfessorAulas ?? 0
+    const fmt = (n: number) => n.toFixed(2).replace('.', ',')
+    const defaultMessage =
+      row.linkedTeacherId != null
+        ? `Olá,
 
 Informamos que o pagamento referente à prestação de serviços de ${mesNome} de ${selectedAno} foi confirmado.
-O valor é de R$ ${valorStr}.
+
+Salário administrativo: R$ ${fmt(adm)}
+Pagamento de aulas (professor): R$ ${fmt(aulas)}
+
+Total: R$ ${fmt(roundMoney(adm + aulas))}.
+
+Em caso de dúvidas, entre em contato com a gestão financeira.
+
+Atenciosamente,
+Equipe Seidmann Institute`
+        : `Olá,
+
+Informamos que o pagamento referente à prestação de serviços de ${mesNome} de ${selectedAno} foi confirmado.
+O valor é de R$ ${fmt(adm)}.
 
 Em caso de dúvidas, entre em contato com a gestão financeira.
 
@@ -338,9 +378,173 @@ Equipe Seidmann Institute`
     }
   }
 
+  const openConnectModal = async (row: AdminUserRow) => {
+    setConnectModalUser(row)
+    setSelectedTeacherToLink(row.linkedTeacherId ?? '')
+    setTeachersPickLoading(true)
+    setTeachersPickList([])
+    try {
+      const res = await fetch(
+        `/api/admin/financeiro/professores?year=${selectedAno}&month=${selectedMes}`,
+        { credentials: 'include' }
+      )
+      const json = await res.json()
+      if (res.ok && json.ok && Array.isArray(json.data?.professores)) {
+        setTeachersPickList(
+          json.data.professores.map((p: { id: string; nome: string }) => ({ id: p.id, nome: p.nome }))
+        )
+      } else {
+        setToast({ message: 'Não foi possível carregar a lista de professores.', type: 'error' })
+      }
+    } catch {
+      setToast({ message: 'Erro ao carregar professores.', type: 'error' })
+    } finally {
+      setTeachersPickLoading(false)
+    }
+  }
+
+  const saveTeacherLink = async () => {
+    if (!connectModalUser || !selectedTeacherToLink) {
+      setToast({ message: 'Selecione um professor.', type: 'error' })
+      return
+    }
+    setSavingTeacherLink(true)
+    setToast(null)
+    try {
+      const res = await fetch(`/api/admin/financeiro/administracao/users/${connectModalUser.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkedTeacherId: selectedTeacherToLink }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao vincular.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Professor vinculado. O dia de pagamento e o valor de aulas seguem o cadastro do professor.', type: 'success' })
+      setConnectModalUser(null)
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao vincular.', type: 'error' })
+    } finally {
+      setSavingTeacherLink(false)
+    }
+  }
+
+  const unlinkTeacher = async (row: AdminUserRow) => {
+    setToast(null)
+    try {
+      const res = await fetch(`/api/admin/financeiro/administracao/users/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkedTeacherId: null }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao desvincular.', type: 'error' })
+        return
+      }
+      setToast({ message: 'Vínculo com professor removido.', type: 'success' })
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao desvincular.', type: 'error' })
+    }
+  }
+
+  const saveAdminDueDay = async (userId: string, raw: string) => {
+    const t = raw.trim()
+    if (t === '') {
+      await patchAdminDueDayApi(userId, null)
+      return
+    }
+    const n = Number(t)
+    if (!Number.isInteger(n) || n < 1 || n > 31) {
+      setToast({ message: 'Dia inválido. Use um número de 1 a 31.', type: 'error' })
+      await fetchData(selectedAno, selectedMes)
+      return
+    }
+    await patchAdminDueDayApi(userId, n)
+  }
+
+  const patchAdminDueDayApi = async (userId: string, day: number | null) => {
+    try {
+      const res = await fetch(`/api/admin/financeiro/administracao/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminPaymentDueDay: day }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao salvar dia de pagamento.', type: 'error' })
+        return
+      }
+      await fetchData(selectedAno, selectedMes)
+    } catch {
+      setToast({ message: 'Erro ao salvar dia de pagamento.', type: 'error' })
+    }
+  }
+
   const adminColumns: Column<AdminUserRow>[] = [
     { key: 'nome', label: 'Nome', render: (row) => row.nome },
     { key: 'funcao', label: 'Função', render: (row) => row.funcao ?? '—' },
+    {
+      key: 'professorVinculo',
+      label: 'Professor',
+      render: (row) =>
+        row.linkedTeacherId ? (
+          <div className="flex flex-col gap-1.5 max-w-[220px]">
+            <span className="text-sm font-medium text-gray-900">{row.linkedTeacherNome ?? '—'}</span>
+            <button
+              type="button"
+              onClick={() => void unlinkTeacher(row)}
+              className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+            >
+              <Unlink className="w-3.5 h-3.5" />
+              Desconectar
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void openConnectModal(row)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-100"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+            Conectar professor
+          </button>
+        ),
+    },
+    {
+      key: 'diaPagamento',
+      label: 'Dia pagamento',
+      render: (row) =>
+        row.linkedTeacherId ? (
+          <div className="text-sm text-gray-900">
+            {row.teacherPaymentDueDay != null ? (
+              <>
+                Dia <span className="font-semibold">{row.teacherPaymentDueDay}</span>
+              </>
+            ) : (
+              '—'
+            )}
+            <p className="text-[10px] text-gray-500 mt-0.5">Mesmo do professor vinculado</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            <input
+              type="number"
+              min={1}
+              max={31}
+              placeholder="1–31"
+              className="w-20 rounded border border-gray-300 px-2 py-1 text-sm"
+              defaultValue={row.adminPaymentDueDay ?? ''}
+              key={`adm-due-${row.id}-${row.adminPaymentDueDay ?? 'empty'}`}
+              onBlur={(e) => void saveAdminDueDay(row.id, e.target.value)}
+            />
+            <span className="text-[10px] text-gray-500">Só ADM (sem aulas)</span>
+          </div>
+        ),
+    },
     {
       key: 'valor',
       label: 'Valor (R$)',
@@ -365,6 +569,18 @@ Equipe Seidmann Institute`
               <Pencil className="w-4 h-4" />
             </button>
           </span>
+          {row.linkedTeacherId != null && row.valorProfessorAulas != null ? (
+            <p className="text-xs font-semibold text-indigo-900 bg-indigo-50 rounded-md px-2 py-1 border border-indigo-100">
+              Valor a pagar (aulas): {formatMoney(row.valorProfessorAulas)}
+            </p>
+          ) : null}
+          {row.linkedTeacherId != null ? (
+            <p className="text-xs font-bold text-gray-900 mt-1 pt-1 border-t border-gray-100">
+              Total a pagar:{' '}
+              <span className="text-orange-700">{formatMoney(totalAPagarAdmRow(row))}</span>
+              <span className="block font-normal text-[10px] text-gray-500">ADM + aulas (mês)</span>
+            </p>
+          ) : null}
           {row.valorPendente != null && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-800">
@@ -580,19 +796,39 @@ Equipe Seidmann Institute`
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500">Itens por página</label>
               <select value={itemsPerPageAdmin} onChange={(e) => setItemsPerPageAdmin(Number(e.target.value))} className="input min-w-[72px] text-sm py-1.5">
-                <option value={3}>3</option>
+                <option value={7}>7</option>
                 <option value={10}>10</option>
                 <option value={20}>20</option>
                 <option value={100}>100</option>
               </select>
             </div>
-            <Button variant="outline" size="sm" onClick={() => exportCsv(adminUsers as any[], ['Nome', 'Função', 'Valor', 'Pagamento'], (r: any) => [r.nome, r.funcao ?? '', formatMoney(valorExibido(r as AdminUserRow)), r.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto'])}>
+            <Button variant="outline" size="sm" onClick={() => exportCsv(adminUsers as any[], ['Nome', 'Função', 'Professor', 'Dia pagamento', 'Valor ADM', 'Valor aulas', 'Total a pagar', 'Pagamento'], (r: any) => {
+              const row = r as AdminUserRow
+              const dia =
+                row.linkedTeacherId != null
+                  ? (row.teacherPaymentDueDay != null ? String(row.teacherPaymentDueDay) : '')
+                  : (row.adminPaymentDueDay != null ? String(row.adminPaymentDueDay) : '')
+              return [
+                row.nome,
+                row.funcao ?? '',
+                row.linkedTeacherNome ?? '',
+                dia,
+                formatMoney(valorExibido(row)),
+                row.valorProfessorAulas != null ? formatMoney(row.valorProfessorAulas) : '',
+                formatMoney(totalAPagarAdmRow(row)),
+                row.paymentStatus === 'PAGO' ? 'Pago' : 'Em aberto',
+              ]
+            })}>
               <FileDown className="w-4 h-4 mr-2" />
               Exportar Excel
             </Button>
           </div>
           <div className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">
-            Defina o valor mensal de cada usuário administrativo (exceto o super admin). O status de pagamento pode ser alterado aqui. Use &quot;Anexar NF ou recibo&quot; para salvar o arquivo diretamente no sistema.
+            Defina o valor mensal de cada usuário administrativo (exceto o super admin). Quem também dá aulas pode ser{' '}
+            <strong>vinculado a um professor</strong>: nesse caso aparecem o <strong>valor a pagar (aulas)</strong> (mesma regra do
+            Financeiro – Professores no mês) e o <strong>dia de pagamento</strong> igual ao do cadastro do professor. Sem vínculo,
+            use o campo numérico em &quot;Dia pagamento&quot; só para o salário ADM. O status de pagamento pode ser alterado aqui.
+            Use &quot;Anexar NF ou recibo&quot; para salvar o arquivo diretamente no sistema.
           </div>
           <input
             ref={fileInputRef}
@@ -607,6 +843,7 @@ Equipe Seidmann Institute`
             data={displayedAdminUsers}
             loading={loading}
             emptyMessage="Nenhum usuário administrativo (exceto super admin)."
+            scrollBodyHeightClass="h-[calc(7*6.25rem)] max-h-[calc(7*6.25rem)]"
           />
           {adminUsers.length > itemsPerPageAdmin && (
             <div className="px-5 py-2 text-sm text-gray-500 border-t border-gray-100">
@@ -617,6 +854,51 @@ Equipe Seidmann Institute`
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </div>
+
+      <Modal
+        isOpen={!!connectModalUser}
+        onClose={() => setConnectModalUser(null)}
+        title={connectModalUser ? `Vincular professor – ${connectModalUser.nome}` : 'Vincular professor'}
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConnectModalUser(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void saveTeacherLink()} disabled={savingTeacherLink || !selectedTeacherToLink}>
+              {savingTeacherLink ? 'Salvando...' : 'Vincular'}
+            </Button>
+          </>
+        }
+      >
+        {connectModalUser && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Escolha o cadastro de professor correspondente. O <strong>valor a pagar (aulas)</strong> e o{' '}
+              <strong>dia de pagamento</strong> passam a ser os mesmos do Financeiro – Professores neste mês.
+            </p>
+            {teachersPickLoading ? (
+              <p className="text-sm text-gray-500">Carregando professores...</p>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Professor</label>
+                <select
+                  value={selectedTeacherToLink}
+                  onChange={(e) => setSelectedTeacherToLink(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Selecione...</option>
+                  {teachersPickList.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={!!editValorUser}

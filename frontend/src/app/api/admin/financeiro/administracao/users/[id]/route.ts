@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin, isSuperAdminEmail } from '@/lib/auth'
+import { markLinkedTeacherPaidForAdminCompetenceMonth } from '@/lib/finance/sync-linked-teacher-paid-from-admin'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -39,7 +40,69 @@ export async function PATCH(
     }
 
     const body = await request.json().catch(() => ({}))
-    const { year: bodyYear, month: bodyMonth, valor, paymentStatus, receiptUrl, applyToAllMonthsInYear, approveValorPendente } = body
+    const {
+      year: bodyYear,
+      month: bodyMonth,
+      valor,
+      paymentStatus,
+      receiptUrl,
+      applyToAllMonthsInYear,
+      approveValorPendente,
+      linkedTeacherId: bodyLinkedTeacherId,
+      adminPaymentDueDay: bodyAdminDueDay,
+    } = body
+
+    const touchLink = bodyLinkedTeacherId !== undefined
+    const touchDue = bodyAdminDueDay !== undefined
+
+    if (touchLink || touchDue) {
+      const data: { linkedTeacherId?: string | null; adminPaymentDueDay?: number | null } = {}
+      if (touchLink) {
+        if (bodyLinkedTeacherId === null || bodyLinkedTeacherId === '') {
+          data.linkedTeacherId = null
+        } else if (typeof bodyLinkedTeacherId === 'string') {
+          const tid = bodyLinkedTeacherId.trim()
+          if (!tid) {
+            data.linkedTeacherId = null
+          } else {
+            const t = await prisma.teacher.findUnique({ where: { id: tid } })
+            if (!t) {
+              return NextResponse.json({ ok: false, message: 'Professor não encontrado.' }, { status: 404 })
+            }
+            data.linkedTeacherId = tid
+          }
+        }
+      }
+      if (touchDue) {
+        if (bodyAdminDueDay === null || bodyAdminDueDay === '') {
+          data.adminPaymentDueDay = null
+        } else {
+          const d = Number(bodyAdminDueDay)
+          if (!Number.isInteger(d) || d < 1 || d > 31) {
+            return NextResponse.json(
+              { ok: false, message: 'Dia de pagamento deve ser um inteiro entre 1 e 31.' },
+              { status: 400 }
+            )
+          }
+          data.adminPaymentDueDay = d
+        }
+      }
+      if (Object.keys(data).length > 0) {
+        await prisma.user.update({ where: { id: userId }, data })
+      }
+      const needsMonthForPayment =
+        bodyYear != null ||
+        bodyMonth != null ||
+        valor !== undefined ||
+        paymentStatus !== undefined ||
+        receiptUrl !== undefined ||
+        applyToAllMonthsInYear === true ||
+        approveValorPendente === true
+      if (!needsMonthForPayment) {
+        return NextResponse.json({ ok: true, message: 'Dados atualizados.' })
+      }
+    }
+
     const year = bodyYear != null ? Number(bodyYear) : null
     const month = bodyMonth != null ? Number(bodyMonth) : null
     if (year == null || month == null || month < 1 || month > 12) {
@@ -160,6 +223,20 @@ export async function PATCH(
           receiptUrl: paymentStatusVal === 'PAGO' ? receiptUrlVal : null,
         },
       })
+      if (paymentStatusVal === 'PAGO') {
+        const u = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { linkedTeacherId: true },
+        })
+        if (u?.linkedTeacherId) {
+          await markLinkedTeacherPaidForAdminCompetenceMonth({
+            teacherId: u.linkedTeacherId,
+            competenceYear: year,
+            competenceMonth: month,
+            performedByUserId: auth.session?.sub ?? null,
+          })
+        }
+      }
       return NextResponse.json({ ok: true, message: 'Status de pagamento atualizado.' })
     }
 

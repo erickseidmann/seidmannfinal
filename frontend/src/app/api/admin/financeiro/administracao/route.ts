@@ -9,6 +9,31 @@ import { requireAdmin, isSuperAdminEmail } from '@/lib/auth'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
+/** Reutiliza o cálculo de Financeiro – Professores (mesmo mês) para valor a pagar por aulas. */
+async function fetchProfessoresValorMap(
+  request: NextRequest,
+  year: number,
+  month: number
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  try {
+    const origin = request.nextUrl.origin
+    const cookie = request.headers.get('cookie') ?? ''
+    const res = await fetch(`${origin}/api/admin/financeiro/professores?year=${year}&month=${month}`, {
+      headers: { cookie },
+      cache: 'no-store',
+    })
+    const json = await res.json()
+    if (!json.ok || !Array.isArray(json.data?.professores)) return map
+    for (const p of json.data.professores as { id: string; valorAPagar?: number }[]) {
+      map.set(p.id, typeof p.valorAPagar === 'number' ? p.valorAPagar : 0)
+    }
+  } catch (e) {
+    console.error('[administracao GET] fetchProfessoresValorMap', e)
+  }
+  return map
+}
+
 /** Gera linha do mês para cada despesa fixa (série) ainda sem registro em year/month */
 async function ensureFixedExpenseRowsForMonth(year: number, month: number) {
   if (!prisma.adminExpense) return
@@ -39,6 +64,42 @@ async function ensureFixedExpenseRowsForMonth(year: number, month: number) {
         isFixed: true,
         fixedSeriesId: sid,
       },
+    })
+  }
+}
+
+/** Extrato importado já é considerado pago (compatibilidade com imports antigos). */
+async function ensureImportedExtratoExpensesPaid(year: number, month: number) {
+  if (!prisma.adminExpense) return
+  const rows = await prisma.adminExpense.findMany({
+    where: {
+      year,
+      month,
+      description: { contains: '[EXTRATO_ID:' },
+      OR: [{ paymentStatus: null }, { paymentStatus: { not: 'PAGO' } }],
+    },
+    select: {
+      id: true,
+      description: true,
+      paidAt: true,
+    },
+  })
+
+  for (const row of rows) {
+    const dataTag = row.description?.match(/\[DATA:(\d{1,2}\/\d{1,2}\/\d{4})\]/i)?.[1]
+    let paidAt = row.paidAt ?? new Date()
+    if (!row.paidAt && dataTag) {
+      const m = dataTag.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+      if (m) {
+        const day = Number(m[1])
+        const mo = Number(m[2])
+        const y = Number(m[3])
+        paidAt = new Date(Date.UTC(y, mo - 1, day, 12, 0, 0))
+      }
+    }
+    await prisma.adminExpense.update({
+      where: { id: row.id },
+      data: { paymentStatus: 'PAGO', paidAt },
     })
   }
 }
@@ -77,6 +138,11 @@ export async function GET(request: NextRequest) {
         email: true,
         funcao: true,
         emailPessoal: true,
+        linkedTeacherId: true,
+        adminPaymentDueDay: true,
+        linkedTeacher: {
+          select: { id: true, nome: true, paymentDueDay: true },
+        },
       },
       orderBy: { nome: 'asc' },
     })
@@ -89,6 +155,11 @@ export async function GET(request: NextRequest) {
       email: string
       funcao: string | null
       emailPessoal: string | null
+      linkedTeacherId: string | null
+      linkedTeacherNome: string | null
+      teacherPaymentDueDay: number | null
+      adminPaymentDueDay: number | null
+      valorProfessorAulas: number | null
       valor: number | null
       paymentStatus: string | null
       paidAt: string | null
@@ -103,6 +174,11 @@ export async function GET(request: NextRequest) {
       email: u.email,
       funcao: u.funcao ?? null,
       emailPessoal: u.emailPessoal ?? null,
+      linkedTeacherId: u.linkedTeacherId ?? null,
+      linkedTeacherNome: u.linkedTeacher?.nome ?? null,
+      teacherPaymentDueDay: u.linkedTeacher?.paymentDueDay ?? null,
+      adminPaymentDueDay: u.adminPaymentDueDay ?? null,
+      valorProfessorAulas: null,
       valor: null,
       paymentStatus: null,
       paidAt: null,
@@ -153,6 +229,11 @@ export async function GET(request: NextRequest) {
           email: u.email,
           funcao: u.funcao ?? null,
           emailPessoal: u.emailPessoal ?? null,
+          linkedTeacherId: u.linkedTeacherId ?? null,
+          linkedTeacherNome: u.linkedTeacher?.nome ?? null,
+          teacherPaymentDueDay: u.linkedTeacher?.paymentDueDay ?? null,
+          adminPaymentDueDay: u.adminPaymentDueDay ?? null,
+          valorProfessorAulas: null,
           valor,
           paymentStatus: pm?.paymentStatus ?? null,
           paidAt: pm?.paidAt?.toISOString() ?? null,
@@ -164,6 +245,14 @@ export async function GET(request: NextRequest) {
         }
       })
     }
+
+    const temVinculoProfessor = adminUsersWithPayment.some((row) => row.linkedTeacherId != null)
+    const profValorMap = temVinculoProfessor ? await fetchProfessoresValorMap(request, year, month) : new Map<string, number>()
+    adminUsersWithPayment = adminUsersWithPayment.map((row) => ({
+      ...row,
+      valorProfessorAulas:
+        row.linkedTeacherId != null ? (profValorMap.get(row.linkedTeacherId) ?? null) : null,
+    }))
 
     let expenses: {
       id: string
@@ -180,6 +269,7 @@ export async function GET(request: NextRequest) {
     }[] = []
     if (prisma.adminExpense) {
       await ensureFixedExpenseRowsForMonth(year, month)
+      await ensureImportedExtratoExpensesPaid(year, month)
       const rows = await prisma.adminExpense.findMany({
         where: { year, month },
         orderBy: { criadoEm: 'asc' },

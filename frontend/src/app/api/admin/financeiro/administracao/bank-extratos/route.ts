@@ -11,6 +11,8 @@ import { z } from 'zod'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { parseExtratoForExpenses } from '@/lib/bank-extrato-parse'
+import { buildMovimentacaoNomeFromCategoria } from '@/lib/movimentacao-categoria-nome'
+import { normalizarIdentificacaoMovimentacao } from '@/lib/movimentacao-ident-regra'
 
 const MAX_BYTES = 20 * 1024 * 1024
 const MAX_EXPENSE_LINES_FROM_EXTRATO = 500
@@ -51,6 +53,8 @@ const querySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100),
   month: z.coerce.number().int().min(1).max(12),
 })
+
+const BANK_OPTIONS = ['cora', 'c6', 'inter', 'banco-do-brasil', 'infinite-pay', 'itau', 'outro'] as const
 
 export async function GET(request: NextRequest) {
   try {
@@ -108,15 +112,25 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null
     const yearRaw = formData.get('year')
     const monthRaw = formData.get('month')
+    const bankRaw = formData.get('bank')
+    const bankOtherRaw = formData.get('bankOther')
 
     const year = typeof yearRaw === 'string' ? parseInt(yearRaw, 10) : Number(yearRaw)
     const month = typeof monthRaw === 'string' ? parseInt(monthRaw, 10) : Number(monthRaw)
+    const bank = typeof bankRaw === 'string' ? bankRaw.trim().toLowerCase() : ''
+    const bankOther = typeof bankOtherRaw === 'string' ? bankOtherRaw.trim() : ''
 
     if (!file || typeof file === 'string') {
       return NextResponse.json({ ok: false, message: 'Arquivo é obrigatório.' }, { status: 400 })
     }
     if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
       return NextResponse.json({ ok: false, message: 'Ano e mês inválidos.' }, { status: 400 })
+    }
+    if (!BANK_OPTIONS.includes(bank as (typeof BANK_OPTIONS)[number])) {
+      return NextResponse.json({ ok: false, message: 'Selecione o banco do extrato.' }, { status: 400 })
+    }
+    if (bank === 'outro' && !bankOther) {
+      return NextResponse.json({ ok: false, message: 'Informe o nome do banco em "Outro".' }, { status: 400 })
     }
     if (file.size > MAX_BYTES) {
       return NextResponse.json({ ok: false, message: 'Arquivo muito grande (máx. 20 MB).' }, { status: 400 })
@@ -190,24 +204,69 @@ export async function POST(request: NextRequest) {
 
     parseFormat = parsed.format
     if (parsed.lines.length > 0) {
+      const regras = await prisma.adminMovimentacaoIdentRegra.findMany()
+      const regraPorChave = new Map<string, (typeof regras)[0]>()
+      for (const r of regras) {
+        regraPorChave.set(`${r.movTipo}::${r.identificacaoChave}`, r)
+      }
+
       const slice = parsed.lines.slice(0, MAX_EXPENSE_LINES_FROM_EXTRATO)
       await prisma.adminExpense.createMany({
-        data: slice.map((l) => ({
-          name: l.name.slice(0, 500),
-          description: l.description,
-          valor: l.valor,
-          year,
-          month,
-          paymentStatus: 'EM_ABERTO',
-          isFixed: false,
-        })),
+        data: slice.map((l) => {
+          const ident = l.rawIdentification?.trim()
+          let name = l.name.slice(0, 500)
+          if (ident) {
+            const chave = normalizarIdentificacaoMovimentacao(ident)
+            if (chave) {
+              const regra = regraPorChave.get(`${l.movementType}::${chave}`)
+              if (regra) {
+                name = buildMovimentacaoNomeFromCategoria({
+                  tipo: l.movementType,
+                  categoriaPrincipal: regra.categoriaPrincipal,
+                  subcategoria: regra.subcategoria,
+                  categoriaOutro: regra.categoriaOutro,
+                }).slice(0, 500)
+              }
+            }
+          }
+          return {
+            name,
+            description: [
+              `[EXTRATO_ID:${row.id}]`,
+              `[TIPO:${l.movementType}]`,
+              `[BANCO:${bank === 'outro' ? bankOther : bank}]`,
+              l.rawDate ? `[DATA:${l.rawDate}]` : null,
+              l.rawTransaction ? `[TRANSACAO:${l.rawTransaction}]` : null,
+              l.rawTransactionType ? `[TIPO_TRANSACAO:${l.rawTransactionType}]` : null,
+              l.rawIdentification ? `[IDENTIFICACAO:${l.rawIdentification}]` : null,
+              l.description,
+            ]
+              .filter(Boolean)
+              .join(' '),
+            valor: l.valor,
+            year,
+            month,
+            paymentStatus: 'PAGO',
+            paidAt: l.rawDate
+              ? (() => {
+                  const m = l.rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+                  if (!m) return new Date()
+                  const day = Number(m[1])
+                  const mo = Number(m[2])
+                  const y = Number(m[3])
+                  return new Date(Date.UTC(y, mo - 1, day, 12, 0, 0))
+                })()
+              : new Date(),
+            isFixed: false,
+          }
+        }),
       })
       expensesCreated = slice.length
     } else if (parseFormat === 'none') {
       parseNote =
         'Arquivo anexado. PDF e imagem não geram linhas na tabela — exporte OFX ou CSV no banco para lançar despesas automaticamente.'
     } else {
-      parseNote = `Arquivo anexado. Nenhuma despesa lançada para ${String(month).padStart(2, '0')}/${year}: confira se o extrato é desse mês ou se só há créditos (entradas).`
+      parseNote = `Arquivo anexado. Nenhuma movimentação lançada para ${String(month).padStart(2, '0')}/${year}: confira se o extrato é desse mês.`
     }
 
     return NextResponse.json({

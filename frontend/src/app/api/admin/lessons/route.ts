@@ -42,6 +42,9 @@ export async function GET(request: NextRequest) {
     const startParam = searchParams.get('start') // ISO date or datetime
     const endParam = searchParams.get('end')
     const teacherIdParam = searchParams.get('teacherId')
+    const bolsistaOnly = searchParams.get('bolsistaOnly') === 'true'
+    /** Filtro opcional por escola de matrícula: TODAS | SEM_ESCOLA | SEIDMANN | YOUBECOME | HIGHWAY | OUTRO */
+    const escolaFiltro = searchParams.get('escola')?.trim() ?? ''
 
     if (!startParam || !endParam) {
       return NextResponse.json(
@@ -59,13 +62,25 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const enrollmentWhere: Record<string, unknown> = {
+      status: { notIn: [...ENROLLMENT_STATUSES_PRE_SCHEDULING] },
+    }
+    if (bolsistaOnly) {
+      enrollmentWhere.bolsista = true
+    }
+    if (escolaFiltro && escolaFiltro !== 'TODAS') {
+      if (escolaFiltro === 'SEM_ESCOLA') {
+        enrollmentWhere.escolaMatricula = null
+      } else if (['SEIDMANN', 'YOUBECOME', 'HIGHWAY', 'OUTRO'].includes(escolaFiltro)) {
+        enrollmentWhere.escolaMatricula = escolaFiltro
+      }
+    }
+
     const where: Record<string, unknown> = {
       startAt: { gte: startAt, lte: endAt },
       // Não mostrar aulas sem professor: nenhum aluno pode ficar no calendário sem professor
       teacherId: { not: null },
-      enrollment: {
-        status: { notIn: [...ENROLLMENT_STATUSES_PRE_SCHEDULING] },
-      },
+      enrollment: enrollmentWhere,
     }
     if (teacherIdParam?.trim()) {
       where.teacherId = teacherIdParam.trim()
@@ -78,6 +93,9 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             nome: true,
+            bolsista: true,
+            escolaMatricula: true,
+            escolaMatriculaOutro: true,
             frequenciaSemanal: true,
             tipoAula: true,
             nomeGrupo: true,
@@ -85,6 +103,7 @@ export async function GET(request: NextRequest) {
             status: true,
             pausedAt: true,
             activationDate: true,
+            paymentInfo: { select: { valorHora: true } },
           },
         },
         teacher: { select: { id: true, nome: true } },

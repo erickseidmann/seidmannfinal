@@ -9,6 +9,11 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
 import { calendarMonthBoundsUtc } from '@/lib/teacher-paid-period'
+import {
+  dedupeLinhasMovimentacaoParaSoma,
+  shouldIncludeValorInTotalEntradaRegis,
+  extractMovimentacaoMarcadoresExtrato,
+} from '@/lib/admin-movimentacao'
 
 const querySchema = z.object({
   type: z.enum(['receitas', 'despesas', 'inadimplencia', 'professores', 'geral']),
@@ -195,6 +200,134 @@ function buildEscolaSaude(
 
 function formatMoney(v: number): string {
   return (Math.round(v * 100) / 100).toFixed(2)
+}
+
+/** Soma valores de movimentações de entrada (administração / extratos), alinhado à tela Movimentações. */
+async function sumTotalEntradaMovimentacoes(monthsToProcess: { year: number; month: number }[]): Promise<number> {
+  const rows = await prisma.adminExpense.findMany({
+    where: { OR: monthsToProcess.map(({ year, month }) => ({ year, month })) },
+    select: { valor: true, description: true, year: true, month: true, fixedSeriesId: true },
+    orderBy: [{ year: 'asc' }, { month: 'asc' }, { criadoEm: 'asc' }],
+  })
+  const rowsUnicas = dedupeLinhasMovimentacaoParaSoma(
+    rows.map((r) => ({
+      valor: r.valor,
+      description: r.description,
+      year: r.year,
+      month: r.month,
+      fixedSeriesId: r.fixedSeriesId,
+    }))
+  )
+  let t = 0
+  for (const r of rowsUnicas) {
+    if (shouldIncludeValorInTotalEntradaRegis(r.description)) {
+      t += Number(r.valor)
+    }
+  }
+  return Math.round(t * 100) / 100
+}
+
+async function computeMovimentacoesSaidaForReport(monthsToProcess: { year: number; month: number }[]): Promise<{
+  totalSaidaRegis: number
+  movimentacoesSaidaLinhas: Array<{
+    id: string
+    name: string
+    valor: number
+    year: number
+    month: number
+    data: string
+    transacao: string
+    identificacao: string
+  }>
+}> {
+  const rows = await prisma.adminExpense.findMany({
+    where: { OR: monthsToProcess.map(({ year, month }) => ({ year, month })) },
+    select: {
+      id: true,
+      name: true,
+      valor: true,
+      description: true,
+      year: true,
+      month: true,
+      fixedSeriesId: true,
+      criadoEm: true,
+    },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }, { criadoEm: 'desc' }],
+  })
+  const rowsUnicas = dedupeLinhasMovimentacaoParaSoma(
+    rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      valor: r.valor,
+      description: r.description,
+      year: r.year,
+      month: r.month,
+      fixedSeriesId: r.fixedSeriesId,
+      criadoEm: r.criadoEm,
+    }))
+  )
+  let totalSaida = 0
+  const saidas: typeof rowsUnicas = []
+  for (const r of rowsUnicas) {
+    if (!shouldIncludeValorInTotalEntradaRegis(r.description)) {
+      totalSaida += Number(r.valor)
+      saidas.push(r)
+    }
+  }
+  const movimentacoesSaidaLinhas = saidas
+    .map((r) => {
+      const m = extractMovimentacaoMarcadoresExtrato(r.description)
+      return {
+        id: r.id,
+        name: r.name,
+        valor: Math.round(Number(r.valor) * 100) / 100,
+        year: r.year,
+        month: r.month,
+        data: m.data,
+        transacao: m.transacao,
+        identificacao: m.identificacao || r.name,
+      }
+    })
+    .sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year
+      if (b.month !== a.month) return b.month - a.month
+      return b.valor - a.valor
+    })
+    .slice(0, 120)
+
+  return {
+    totalSaidaRegis: Math.round(totalSaida * 100) / 100,
+    movimentacoesSaidaLinhas,
+  }
+}
+
+function entradasAlunosPagosFromReceitas(
+  receitasData: { items?: unknown[]; totalPago?: number },
+  month: number | undefined
+): Array<{ aluno: string; valor: number; year: number; month: number }> {
+  if (month == null) return []
+  const items = receitasData.items
+  if (!Array.isArray(items) || items.length === 0) return []
+  const row0 = items[0] as Record<string, unknown>
+  if (typeof row0.aluno !== 'string') return []
+  return (
+    items as Array<{
+      aluno: string
+      valorMensalidade: number
+      status: string | null
+      year: number
+      month: number
+    }>
+  )
+    .filter((i) => i.status === 'PAGO')
+    .map((i) => ({
+      aluno: i.aluno,
+      valor: Math.round(Number(i.valorMensalidade) * 100) / 100,
+      year: i.year,
+      month: i.month,
+    }))
+    .sort((a, b) => a.aluno.localeCompare(b.aluno, 'pt-BR'))
+    .slice(0, 120)
 }
 
 function escapeCsvCell(s: string): string {
@@ -561,6 +694,7 @@ async function buildDespesasReport(
     let expensesTotal = 0
     const expenseItems: { name: string; valor: number; status: string | null; month: number; year: number }[] = []
     for (const ex of expenses) {
+      if (shouldIncludeValorInTotalEntradaRegis(ex.description)) continue
       const v = Number(ex.valor)
       expensesTotal += v
       expenseItems.push({ name: ex.name, valor: v, status: ex.paymentStatus, month: m, year: y })
@@ -829,8 +963,23 @@ async function buildGeralReport(
   month: number | undefined,
   monthsToProcess: { year: number; month: number }[]
 ) {
-  const receitasData = await buildReceitasReport(year, month, monthsToProcess)
-  const despesasData = await buildDespesasReport(year, month, monthsToProcess)
+  const [receitasData, despesasData, totalEntradaRegis, saidaBlock] = await Promise.all([
+    buildReceitasReport(year, month, monthsToProcess),
+    buildDespesasReport(year, month, monthsToProcess),
+    sumTotalEntradaMovimentacoes(monthsToProcess),
+    computeMovimentacoesSaidaForReport(monthsToProcess),
+  ])
+  const { totalSaidaRegis, movimentacoesSaidaLinhas } = saidaBlock
+  const totalPagoAlunos = Math.round(((receitasData as { totalPago?: number }).totalPago ?? 0) * 100) / 100
+  const entradasAlunosPagosLinhas = entradasAlunosPagosFromReceitas(receitasData as { items?: unknown[] }, month)
+
+  const movimentacaoResumo = {
+    totalEntradaRegis,
+    totalSaidaRegis,
+    movimentacoesSaidaLinhas,
+    totalPagoAlunos,
+    entradasAlunosPagosLinhas,
+  }
 
   const receitasPorMes = Array.isArray(receitasData.items)
     ? (receitasData.items as Array<{ year: number; month: number; totalPago?: number }>)
@@ -899,6 +1048,7 @@ async function buildGeralReport(
       inativadosCount: kpis.inativadosCount,
       valorPerdidoInativos: kpis.valorPerdidoInativos,
       escolaSaude,
+      ...movimentacaoResumo,
     }
   }
 
@@ -935,8 +1085,9 @@ async function buildGeralReport(
         valorPerdidoAno: kpisYear.valorPerdidoAno,
       },
       escolaSaude,
+      ...movimentacaoResumo,
     }
   }
 
-  return { items }
+  return { items, ...movimentacaoResumo }
 }

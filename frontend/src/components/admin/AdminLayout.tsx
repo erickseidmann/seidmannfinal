@@ -53,6 +53,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/dashboard': 'dashboard',
   '/admin/professores': 'professores',
   '/admin/alunos': 'alunos',
+  '/admin/alunos/bolsistas': 'alunos',
   '/admin/usuarios': 'usuarios',
   '/admin/livros': 'livros',
   '/admin/alertas': 'alertas',
@@ -62,6 +63,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/financeiro/alunos': 'financeiro-alunos',
   '/admin/financeiro/professores': 'financeiro-professores',
   '/admin/financeiro/administracao': 'financeiro-administracao',
+  '/admin/financeiro/movimentacao': 'financeiro-movimentacao',
   '/admin/financeiro/saidas': 'financeiro-saidas',
   '/admin/financeiro/relatorios': 'financeiro-relatorios',
   '/admin/financeiro/cupons': 'financeiro-cupons',
@@ -73,7 +75,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/bloco-de-notas': 'bloco-notas',
 }
 
-const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
+const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-movimentacao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
 function hasFinanceiroAccess(adminPages: string[], subKey: string): boolean {
   if (adminPages.includes('financeiro')) return true
   return adminPages.includes(subKey)
@@ -104,6 +106,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
       { href: '/admin/financeiro/alunos', labelKey: 'admin.financeiroAlunos' },
       { href: '/admin/financeiro/professores', labelKey: 'admin.financeiroProfessores' },
       { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
+      { href: '/admin/financeiro/movimentacao', labelKey: 'admin.financeiroMovimentacao' },
       { href: '/admin/financeiro/saidas', labelKey: 'admin.financeiroSaidas' },
       { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
       { href: '/admin/financeiro/nfse', labelKey: 'admin.financeiroNfse' },
@@ -157,7 +160,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   // Redirecionar se não tiver acesso à página atual (delegar acessos)
   useEffect(() => {
     if (!meLoaded) return
-    const pageKey = PAGE_KEY_BY_HREF[pathname]
+    const pageKey =
+      PAGE_KEY_BY_HREF[pathname ?? ''] ??
+      (pathname?.startsWith('/admin/alunos/') ? 'alunos' : undefined)
     if (!pageKey) return
     if (isSuperAdmin) return
     if (pageKey === 'usuarios') {
@@ -332,7 +337,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 }
                 const menuItem = item as MenuItem
                 const Icon = menuItem.icon
-                const isActive = pathname === menuItem.href
+                const isActive =
+                  pathname === menuItem.href ||
+                  (menuItem.href === '/admin/alunos' && (pathname?.startsWith('/admin/alunos/') ?? false))
                 const isChat = menuItem.href === '/admin/chat'
                 const showChatDot = isChat && unreadChatCount > 0
                 return (

@@ -25,6 +25,9 @@ import {
   validateInactiveReasonPayload,
 } from '@/lib/inactive-reason'
 
+/** Limite do cubo «Alunos fora do valor»: valor hora (cadastro) estritamente menor que este valor (R$). */
+const BELOW_HOUR_RATE_MAX_REAIS = 35
+
 interface StudentAlertItem {
   id: string
   message: string
@@ -413,7 +416,10 @@ export default function AdminAlunosPage() {
 
   const fetchBelowHourRateStats = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/enrollments/below-hour-rate?max=30', { credentials: 'include' })
+      const res = await fetch(
+        `/api/admin/enrollments/below-hour-rate?max=${BELOW_HOUR_RATE_MAX_REAIS}`,
+        { credentials: 'include' }
+      )
       if (res.ok) {
         const json = await res.json()
         if (json.ok && json.data?.list) {
@@ -1701,6 +1707,20 @@ export default function AdminAlunosPage() {
           </div>
           <div className="flex flex-wrap gap-2 sm:justify-end">
             <Button
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.open('/admin/alunos/bolsistas', '_blank', 'noopener,noreferrer')
+                }
+              }}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-1.5 sm:gap-2 border-amber-300 text-amber-900 hover:bg-amber-50 text-xs sm:text-sm"
+              title="Abrir controle de aulas por período (nova guia)"
+            >
+              <Award className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Controle alunos bolsistas</span>
+            </Button>
+            <Button
               onClick={handleSendAccessToAll}
               variant="outline"
               size="sm"
@@ -1928,7 +1948,7 @@ export default function AdminAlunosPage() {
               value={belowHourRateStats.count}
               icon={<CircleDollarSign className="w-5 h-5" />}
               color="red"
-              subtitle="Valor hora abaixo de R$ 30,00 (ativos)"
+              subtitle={`Valor hora abaixo de R$ ${BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')} (ativos)`}
             />
           </div>
           {/* Total por escola */}
@@ -3523,7 +3543,8 @@ export default function AdminAlunosPage() {
           ) : listModal?.type === 'belowHourRate' ? (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
-                Matrículas <strong>ativas</strong> com valor da hora-aula (cadastro de pagamento) <strong>menor que R$ 30,00</strong>.
+                Matrículas <strong>ativas</strong> com valor da hora-aula (cadastro de pagamento){' '}
+                <strong>menor que R$ {BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')}</strong>.
                 Quem não tem valor da hora preenchido não entra nesta lista.
               </p>
               <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
@@ -3540,7 +3561,8 @@ export default function AdminAlunosPage() {
                     {belowHourRateStats.list.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="py-4 text-center text-gray-500">
-                          Nenhum aluno ativo com hora-aula abaixo de R$ 30,00.
+                          Nenhum aluno ativo com hora-aula abaixo de R${' '}
+                          {BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')}.
                         </td>
                       </tr>
                     ) : (

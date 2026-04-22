@@ -42,6 +42,16 @@ export async function DELETE(
       // arquivo já removido do disco — segue para apagar registro
     }
 
+    // Remove também as movimentações importadas por este extrato.
+    // O vínculo é salvo no campo description como [EXTRATO_ID:<id>].
+    await prisma.adminExpense.deleteMany({
+      where: {
+        year: row.year,
+        month: row.month,
+        description: { contains: `[EXTRATO_ID:${row.id}]` },
+      },
+    })
+
     await prisma.adminBankExtrato.delete({ where: { id } })
     return NextResponse.json({ ok: true })
   } catch (e) {

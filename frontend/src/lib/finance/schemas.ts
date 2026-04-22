@@ -92,6 +92,8 @@ export type CreateExpenseInput = z.infer<typeof createExpenseSchema>
  * Pelo menos um campo deve estar presente.
  */
 export const updateExpenseSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(500).nullable().optional(),
   valor: z.preprocess((v) => (v === undefined || v === null ? undefined : Number(v)), z.number().min(0).max(500000).optional()),
   paymentStatus: z.enum(['PAGO', 'EM_ABERTO']).optional(),
   /** Data do pagamento (YYYY-MM-DD) — obrigatória com paymentStatus PAGO */
@@ -102,6 +104,8 @@ export const updateExpenseSchema = z.object({
   .refine(
     (data) =>
       data.valor !== undefined ||
+      data.name !== undefined ||
+      data.description !== undefined ||
       data.paymentStatus !== undefined ||
       data.paidAt !== undefined ||
       data.receiptUrl !== undefined,

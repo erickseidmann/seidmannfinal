@@ -24,6 +24,7 @@ type RecordWithLessonAndPresences = {
   notesForStudent: string | null
 }
 
+/** Envia e-mails de notificação (SMTP). Não deve ser aguardado na rota HTTP — usar em background. */
 async function sendRecordEmails(record: RecordWithLessonAndPresences) {
   const nomeProfessor = record.lesson.teacher.nome
   const dataAula = record.lesson.startAt
@@ -135,7 +136,21 @@ export async function POST(request: NextRequest) {
 
     const lesson = await prisma.lesson.findUnique({
       where: { id: lessonId },
-      include: { enrollment: { select: { id: true, nome: true, tipoAula: true, nomeGrupo: true, status: true, pausedAt: true, activationDate: true } } },
+      include: {
+        enrollment: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            curso: true,
+            tipoAula: true,
+            nomeGrupo: true,
+            status: true,
+            pausedAt: true,
+            activationDate: true,
+          },
+        },
+      },
     })
     if (!lesson) {
       return NextResponse.json(
@@ -343,23 +358,28 @@ export async function POST(request: NextRequest) {
         },
       })
       if (updated) {
-        await sendRecordEmails(updated as RecordWithLessonAndPresences)
+        // E-mails em background: não bloquear a resposta (SMTP costuma ser o maior gargalo).
+        void sendRecordEmails(updated as RecordWithLessonAndPresences).catch((err) =>
+          console.error('[api/professor/lesson-records POST] Erro ao enviar e-mails (background):', err)
+        )
         return NextResponse.json({ ok: true, data: { record: updated } })
       }
     } else {
-      const lessonWithEmail = await prisma.lesson.findUnique({
-        where: { id: record.lessonId },
-        include: {
-          enrollment: { select: { id: true, nome: true, email: true } },
-          teacher: { select: { id: true, nome: true } },
-        },
-      })
-      if (lessonWithEmail?.enrollment?.email) {
-        await sendRecordEmails({
-          ...record,
-          lesson: lessonWithEmail,
+      const teacherNome = (record as { lesson?: { teacher?: { nome: string } } }).lesson?.teacher?.nome ?? ''
+      const enrollment = lesson.enrollment as { nome: string; email?: string | null }
+      if (enrollment?.email) {
+        const lessonForEmail = {
+          startAt: lesson.startAt,
+          enrollment,
+          teacher: { nome: teacherNome },
+        }
+        void sendRecordEmails({
+          ...(record as Record<string, unknown>),
+          lesson: lessonForEmail,
           studentPresences: [],
-        } as RecordWithLessonAndPresences)
+        } as RecordWithLessonAndPresences).catch((err) =>
+          console.error('[api/professor/lesson-records POST] Erro ao enviar e-mail (background):', err)
+        )
       }
     }
 

@@ -154,8 +154,10 @@ export default function FinanceiroProfessoresPage() {
   const [obsNewMessage, setObsNewMessage] = useState('')
   const [obsLoading, setObsLoading] = useState(false)
   const [obsSaving, setObsSaving] = useState(false)
-  const [itemsPerPage, setItemsPerPage] = useState<number>(30)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(7)
   const [showPeriodo, setShowPeriodo] = useState(false)
+  /** Detalhe (horas × valor, período, extras) do cubo "Valor real de horas preenchidas" — só ao clicar */
+  const [valorRealBreakdownOpen, setValorRealBreakdownOpen] = useState(false)
   // Modal Enviar notificação de pagamento (e-mail + anexo)
   const [notifyTeacher, setNotifyTeacher] = useState<ProfessorFinanceiro | null>(null)
   const [notifyMessage, setNotifyMessage] = useState('')
@@ -1110,25 +1112,43 @@ Equipe Seidmann Institute`
               <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.valorEstimado)}</p>
               <p className="mt-1 text-xs text-amber-700">Valor/hora × horas estimadas</p>
             </div>
-            <div className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Valor real de horas preenchidas</p>
-              <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealTotal)}</p>
-              <p className="mt-1 text-xs text-sky-700">Somatório: horas + período + extras</p>
-              <div className="mt-2 pt-2 border-t border-sky-200/60 space-y-1">
-                <p className="text-xs text-sky-700 flex justify-between gap-2">
-                  <span>Horas registradas × valor/hora</span>
-                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.valorRealHorasPreenchidas)}</span>
-                </p>
-                <p className="text-xs text-sky-700 flex justify-between gap-2">
-                  <span>Período</span>
-                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorPeriodo)}</span>
-                </p>
-                <p className="text-xs text-sky-700 flex justify-between gap-2">
-                  <span>Extras</span>
-                  <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorExtra)}</span>
-                </p>
+            <button
+              type="button"
+              onClick={() => setValorRealBreakdownOpen((v) => !v)}
+              aria-expanded={valorRealBreakdownOpen}
+              className="rounded-xl border-2 border-sky-200 bg-sky-50 p-4 shadow-sm text-left w-full cursor-pointer transition-colors hover:bg-sky-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Valor real de horas preenchidas</p>
+                  <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealTotal)}</p>
+                  <p className="mt-1 text-xs text-sky-700">Somatório: horas + período + extras</p>
+                  {!valorRealBreakdownOpen ? (
+                    <p className="mt-2 text-[10px] text-sky-600">Clique para ver o detalhamento</p>
+                  ) : null}
+                </div>
+                <ChevronDown
+                  className={`w-5 h-5 shrink-0 text-sky-600 mt-0.5 transition-transform ${valorRealBreakdownOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
               </div>
-            </div>
+              {valorRealBreakdownOpen ? (
+                <div className="mt-2 pt-2 border-t border-sky-200/60 space-y-1">
+                  <p className="text-xs text-sky-700 flex justify-between gap-2">
+                    <span>Horas registradas × valor/hora</span>
+                    <span className="font-medium">{loading ? '—' : formatMoney(cubos.valorRealHorasPreenchidas)}</span>
+                  </p>
+                  <p className="text-xs text-sky-700 flex justify-between gap-2">
+                    <span>Período</span>
+                    <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorPeriodo)}</span>
+                  </p>
+                  <p className="text-xs text-sky-700 flex justify-between gap-2">
+                    <span>Extras</span>
+                    <span className="font-medium">{loading ? '—' : formatMoney(cubos.totalValorExtra)}</span>
+                  </p>
+                </div>
+              ) : null}
+            </button>
             <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4 shadow-sm">
               <p className="text-xs font-semibold text-green-800 uppercase tracking-wide">Valores pagos</p>
               <p className="mt-1 text-xl font-bold text-green-900">{loading ? '—' : formatMoney(cubos.valoresPagos)}</p>
@@ -1312,7 +1332,7 @@ Equipe Seidmann Institute`
                     onChange={(e) => setItemsPerPage(Number(e.target.value))}
                     className="input min-w-[72px] text-sm h-9 py-0 px-2"
                   >
-                    <option value={5}>5</option>
+                    <option value={7}>7</option>
                     <option value={10}>10</option>
                     <option value={50}>50</option>
                     <option value={500}>500</option>
@@ -1360,6 +1380,7 @@ Equipe Seidmann Institute`
                   visibleColumnKeys={visibleColumnKeys}
                   onVisibleColumnsChange={setVisibleColumnKeys}
                   getRowClassName={(row) => (row.hasFinanceObservations ? 'bg-red-50 border-l-4 border-l-red-500' : '')}
+                  scrollBodyHeightClass="h-[calc(7*6.25rem)] max-h-[calc(7*6.25rem)]"
                   emptyMessage={
                     filterAlerta === 'proximo'
                       ? 'Nenhum professor com vencimento nos próximos 7 dias (não pagos).'
