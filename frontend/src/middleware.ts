@@ -29,6 +29,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Lista de músicas do karaokê (mesma sessão do aluno)
+  if (pathname === '/api/karaoke/songs' || pathname.startsWith('/api/karaoke/songs/')) {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ ok: false, message: 'Não autenticado' }, { status: 401 })
+    }
+    if (session.role !== 'STUDENT') {
+      return NextResponse.json({ ok: false, message: 'Acesso negado' }, { status: 403 })
+    }
+    return NextResponse.next()
+  }
+
   // Proteger rotas Dashboard Aluno e API student
   if (pathname.startsWith('/dashboard-aluno') || pathname.startsWith('/api/student')) {
     const session = await getSession(request)
@@ -99,6 +111,8 @@ export const config = {
     '/dashboard-aluno',
     '/dashboard-aluno/:path*',
     '/api/student/:path*',
+    '/api/karaoke/songs',
+    '/api/karaoke/songs/:path*',
     '/admin/:path*',
     '/api/admin/:path*',
   ],

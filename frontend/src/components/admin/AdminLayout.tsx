@@ -29,6 +29,7 @@ import {
   X,
   ListTodo,
   StickyNote,
+  Music,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -73,6 +74,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/chat': 'chat',
   '/admin/todos': 'todos',
   '/admin/bloco-de-notas': 'bloco-notas',
+  '/admin/karaoke': 'karaoke',
 }
 
 const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-movimentacao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
@@ -97,6 +99,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
   { href: '/admin/todos', labelKey: 'admin.todos', icon: ListTodo },
   { href: '/admin/bloco-de-notas', labelKey: 'admin.notesPad', icon: StickyNote },
+  { href: '/admin/karaoke', labelKey: 'admin.karaoke', icon: Music },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -162,7 +165,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (!meLoaded) return
     const pageKey =
       PAGE_KEY_BY_HREF[pathname ?? ''] ??
-      (pathname?.startsWith('/admin/alunos/') ? 'alunos' : undefined)
+      (pathname?.startsWith('/admin/alunos/') ? 'alunos' : undefined) ??
+      (pathname?.startsWith('/admin/karaoke/') ? 'karaoke' : undefined)
     if (!pageKey) return
     if (isSuperAdmin) return
     if (pageKey === 'usuarios') {
@@ -176,7 +180,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       return
     }
     // To do list e bloco de notas: disponíveis para todos os usuários admin
-    if (pageKey === 'todos' || pageKey === 'bloco-notas') {
+    if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') {
       return
     }
     if (!adminPages.includes(pageKey)) {
@@ -215,8 +219,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    // To do list e bloco de notas: disponíveis para todos os usuários admin
-    if (pageKey === 'todos' || pageKey === 'bloco-notas') return true
+    // To do list, bloco de notas e karaokê: disponíveis para todos os usuários admin
+    if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
 

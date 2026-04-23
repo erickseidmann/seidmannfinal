@@ -1129,3 +1129,21 @@ model FinanceAuditLog {
   @@index([criadoEm])
   @@map("finance_audit_logs")
 }
+
+model KaraokeSong {
+  id         String   @id @default(cuid())
+  title      String
+  artist     String
+  youtubeId  String   @map("youtube_id")
+  level      String // A1, A2, B1, B2
+  difficulty String // easy, medium, hard
+  emoji      String?
+  lyrics     String   @db.Text // linhas separadas por \n
+  /** Segundos de intro no vídeo antes de alinhar a 1.ª linha (ex.: 4 se a voz começa tarde) */
+  startOffsetSec Float @default(0) @map("start_offset_sec")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("karaoke_songs")
+}

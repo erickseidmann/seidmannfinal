@@ -1,5 +1,5 @@
 /**
- * Hub dos mini-jogos de inglês (4 jogos × 30 níveis).
+ * Hub dos mini-jogos de inglês (4 jogos × 30 níveis + Karaoke).
  */
 
 'use client'
@@ -44,13 +44,34 @@ export default function JogosHubPage() {
           Jogos
         </h1>
         <p className="text-gray-600 mt-1 max-w-2xl">
-          Pratique inglês com quatro desafios diferentes. Cada jogo tem {LEVELS_PER_GAME} níveis — do básico ao mais
-          difícil. Em cada jogo, o próximo nível só libera depois que você concluir o anterior. O progresso fica salvo
-          neste aparelho.
+          Pratique inglês com quatro desafios em níveis (cada um com {LEVELS_PER_GAME} fases) e o <strong>Karaokê</strong> pra
+          se divertir: vídeo, letra sincronizada e desafio entre colegas. Nos jogos por nível, o próximo só libera
+          depois que você concluir o anterior. O progresso dos jogos por nível fica salvo neste aparelho.
         </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Link
+          href="/dashboard-aluno/jogos/karaoke"
+          className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-brand-orange/40 transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <span className="text-3xl" aria-hidden>
+              🎤
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold text-gray-900 group-hover:text-brand-orange transition-colors">Karaokê</h2>
+              <p className="text-sm text-gray-500 mt-0.5">🎤 Cante junto, se divirta e desafie seus colegas</p>
+              <p className="text-xs text-gray-600 mt-2 leading-relaxed">
+                Músicas da escola, vídeo e letra no ritmo. Use fones e compartilhe o desafio com a galera.
+              </p>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-brand-orange">Músicas e desafios</span>
+                <span className="text-xs text-gray-400 group-hover:text-brand-orange/80">Abrir →</span>
+              </div>
+            </div>
+          </div>
+        </Link>
         {GAME_SLUGS.map((slug) => {
           const meta = GAME_META[slug]
           const done = completedCount(slug)
