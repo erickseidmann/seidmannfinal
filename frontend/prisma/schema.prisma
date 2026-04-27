@@ -342,7 +342,7 @@ model Enrollment {
   whatsapp       String
   idioma         Language?    // Opcional
   nivel          String?
-  objetivo       String?
+  objetivo       String?      @db.Text
   disponibilidade String?
   
   // Dados completos do aluno (cadastro admin)
