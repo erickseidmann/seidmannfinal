@@ -17,6 +17,8 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Edit, Power, Plus, Shield, X } from 'lucide-react'
 
+const PARTNER_SCHOOL_PREFIX = 'escola-parceira:'
+
 const ADMIN_PAGES = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'professores', label: 'Professores' },
@@ -26,6 +28,7 @@ const ADMIN_PAGES = [
   { key: 'calendario', label: 'Calendário' },
   { key: 'registros-aulas', label: 'Registros de aulas' },
   { key: 'chat', label: 'Chat' },
+  { key: 'escolas-parceiras', label: 'Escolas parceiras' },
   { key: 'financeiro', label: 'Financeiro (todas)' },
   { key: 'financeiro-geral', label: 'Financeiro – Geral' },
   { key: 'financeiro-alunos', label: 'Financeiro – Alunos' },
@@ -54,6 +57,11 @@ interface User {
   atualizadoEm: string
 }
 
+interface PartnerSchoolOption {
+  value: string
+  label: string
+}
+
 export default function AdminUsuariosPage() {
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
@@ -80,6 +88,7 @@ export default function AdminUsuariosPage() {
     status: 'ACTIVE',
   })
   const [superAdminOk, setSuperAdminOk] = useState<boolean | null>(null)
+  const [partnerSchoolOptions, setPartnerSchoolOptions] = useState<PartnerSchoolOption[]>([])
 
   useEffect(() => {
     fetch('/api/admin/me', { credentials: 'include' })
@@ -98,6 +107,17 @@ export default function AdminUsuariosPage() {
     }
     if (superAdminOk) fetchUsers()
   }, [superAdminOk, filters])
+
+  useEffect(() => {
+    if (!superAdminOk) return
+    fetch('/api/admin/escolas-parceiras', { credentials: 'include' })
+      .then(async (res) => {
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.ok || !Array.isArray(json?.data?.schoolOptions)) return
+        setPartnerSchoolOptions(json.data.schoolOptions as PartnerSchoolOption[])
+      })
+      .catch(() => {})
+  }, [superAdminOk])
 
   const fetchUsers = async () => {
     setLoading(true)
@@ -280,6 +300,20 @@ export default function AdminUsuariosPage() {
       adminPages: prev.adminPages.includes(key)
         ? prev.adminPages.filter((p) => p !== key)
         : [...prev.adminPages, key],
+    }))
+  }
+
+  const selectedSchoolValues = formData.adminPages
+    .filter((p) => p.startsWith(PARTNER_SCHOOL_PREFIX))
+    .map((p) => p.replace(PARTNER_SCHOOL_PREFIX, ''))
+
+  const togglePartnerSchool = (schoolValue: string) => {
+    const prefixed = `${PARTNER_SCHOOL_PREFIX}${schoolValue}`
+    setFormData((prev) => ({
+      ...prev,
+      adminPages: prev.adminPages.includes(prefixed)
+        ? prev.adminPages.filter((p) => p !== prefixed)
+        : [...prev.adminPages, prefixed],
     }))
   }
 
@@ -536,6 +570,31 @@ export default function AdminUsuariosPage() {
                   </label>
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Quais escolas pode ver na aba Escolas parceiras
+              </label>
+              <p className="text-xs text-gray-500 mb-2">
+                Se nenhuma escola for marcada, o usuário não verá dados nessa aba.
+              </p>
+              {partnerSchoolOptions.length === 0 ? (
+                <p className="text-sm text-gray-500">Nenhuma escola disponível para delegar.</p>
+              ) : (
+                <div className="flex flex-wrap gap-4">
+                  {partnerSchoolOptions.map((school) => (
+                    <label key={school.value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedSchoolValues.includes(school.value)}
+                        onChange={() => togglePartnerSchool(school.value)}
+                        className="rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+                      />
+                      <span className="text-sm">{school.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             {editingUser && (
               <div>

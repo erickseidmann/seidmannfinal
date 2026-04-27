@@ -30,6 +30,7 @@ import {
   ListTodo,
   StickyNote,
   Music,
+  School,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -75,6 +76,7 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/todos': 'todos',
   '/admin/bloco-de-notas': 'bloco-notas',
   '/admin/karaoke': 'karaoke',
+  '/admin/escolas-parceiras': 'escolas-parceiras',
 }
 
 const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-movimentacao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
@@ -100,6 +102,7 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/todos', labelKey: 'admin.todos', icon: ListTodo },
   { href: '/admin/bloco-de-notas', labelKey: 'admin.notesPad', icon: StickyNote },
   { href: '/admin/karaoke', labelKey: 'admin.karaoke', icon: Music },
+  { href: '/admin/escolas-parceiras', labelKey: 'admin.partnerSchools', icon: School },
   {
     type: 'group',
     labelKey: 'admin.financeiro',
@@ -179,8 +182,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       }
       return
     }
-    // To do list e bloco de notas: disponíveis para todos os usuários admin
+    // Páginas gerais: disponíveis para todos os usuários admin
     if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') {
+      return
+    }
+    // Escolas parceiras: permissão dedicada (com fallback para legado "alunos")
+    if (
+      pageKey === 'escolas-parceiras' &&
+      (adminPages.includes('escolas-parceiras') || adminPages.includes('alunos'))
+    ) {
       return
     }
     if (!adminPages.includes(pageKey)) {
@@ -219,8 +229,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    // To do list, bloco de notas e karaokê: disponíveis para todos os usuários admin
+    // Páginas gerais: disponíveis para todos os usuários admin
     if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') return true
+    // Escolas parceiras: permissão dedicada (com fallback para legado "alunos")
+    if (pageKey === 'escolas-parceiras') {
+      return adminPages.includes('escolas-parceiras') || adminPages.includes('alunos')
+    }
     return pageKey ? adminPages.includes(pageKey) : false
   })
 
