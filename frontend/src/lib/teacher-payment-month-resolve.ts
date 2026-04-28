@@ -26,7 +26,7 @@ export async function resolveTeacherPaymentMonthKeyContaining(
       r.periodoInicio != null &&
       r.periodoTermino != null &&
       r.periodoInicio.getTime() <= t &&
-      t < r.periodoTermino.getTime()
+      t < r.periodoTermino.getTime() + 24 * 60 * 60 * 1000
   )
   if (matches.length === 0) return null
 
