@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
-import { resolveTeacherProofTargetMonthKey } from '@/lib/teacher-payment-month-resolve'
+import { resolveTeacherPaymentMonthKeyContaining } from '@/lib/teacher-payment-month-resolve'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = [
@@ -73,12 +73,14 @@ export async function POST(request: NextRequest) {
     }
 
     const now = new Date()
-    const { year, month } = await resolveTeacherProofTargetMonthKey(
-      teacher.id,
-      bodyYear,
-      bodyMonth,
-      now
-    )
+    const resolved = await resolveTeacherPaymentMonthKeyContaining(teacher.id, now)
+    if (!resolved) {
+      return NextResponse.json(
+        { ok: false, message: 'Nenhum período ativo encontrado para este professor' },
+        { status: 400 }
+      )
+    }
+    const { year, month } = resolved
 
     if (!file || !(file instanceof Blob) || file.size === 0) {
       return NextResponse.json(
@@ -132,6 +134,8 @@ export async function POST(request: NextRequest) {
       select: { paymentStatus: true },
     })
     if (pmAfter?.paymentStatus === 'AGUARDANDO_REENVIO') {
+      // Mantém a regra de negócio de reabertura para reenvio: após novo upload,
+      // o mês resolvido volta para EM_ABERTO para seguir o fluxo normal.
       await prisma.teacherPaymentMonth.update({
         where: { teacherId_year_month: { teacherId: teacher.id, year, month } },
         data: { paymentStatus: 'EM_ABERTO' },

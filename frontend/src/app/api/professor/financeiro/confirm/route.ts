@@ -2,8 +2,7 @@
  * POST /api/professor/financeiro/confirm
  * Professor confirma o valor a receber do mês. No admin aparece "pagamento pronto para fazer".
  *
- * O par year/month efetivo é o TeacherPaymentMonth cujo [periodoInicio, periodoTermino) contém agora;
- * se não houver linhas com datas, usa year/month do body (legado).
+ * O par year/month efetivo é sempre resolvido pelo período ativo do professor.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -33,27 +32,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const body = await request.json().catch(() => ({}))
     const now = new Date()
     const resolved = await resolveTeacherPaymentMonthKeyContaining(teacher.id, now)
-
-    let year: number
-    let month: number
-    if (resolved) {
-      year = resolved.year
-      month = resolved.month
-    } else {
-      const y = body.year != null ? Number(body.year) : null
-      const m = body.month != null ? Number(body.month) : null
-      if (y == null || m == null || m < 1 || m > 12) {
-        return NextResponse.json(
-          { ok: false, message: 'Ano e mês são obrigatórios (year, month) ou cadastre período no financeiro.' },
-          { status: 400 }
-        )
-      }
-      year = y
-      month = m
+    if (!resolved) {
+      return NextResponse.json(
+        { ok: false, message: 'Nenhum período ativo encontrado para este professor' },
+        { status: 400 }
+      )
     }
+    const { year, month } = resolved
 
     const MESES_NOMES: Record<number, string> = {
       1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril', 5: 'maio', 6: 'junho',
@@ -79,7 +66,7 @@ export async function POST(request: NextRequest) {
       entityId: teacher.id,
       action: 'TEACHER_CONFIRMED',
       performedBy: auth.session?.userId ?? null,
-      metadata: { year, month, resolvedFromPeriod: !!resolved },
+      metadata: { year, month, resolvedFromPeriod: true },
     })
 
     // Notificar admins: professor confirmou valor (pronto para pagar)
