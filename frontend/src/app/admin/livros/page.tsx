@@ -50,10 +50,24 @@ const BOOK_LEVELS: { value: string; label: string }[] = [
   { value: 'C2', label: 'C2 – Avançado Fluente' },
 ]
 
+type BookLanguage = 'ENGLISH' | 'SPANISH'
+
+const BOOK_LANGUAGES: { value: BookLanguage; label: string }[] = [
+  { value: 'ENGLISH', label: 'Inglês' },
+  { value: 'SPANISH', label: 'Espanhol' },
+]
+
+function bookLanguageLabel(lang: string | null | undefined): string {
+  if (lang === 'ENGLISH') return 'Inglês'
+  if (lang === 'SPANISH') return 'Espanhol'
+  return '—'
+}
+
 interface Book {
   id: string
   nome: string
   level: string
+  language: BookLanguage | null
   totalPaginas: number
   imprimivel: boolean
   pdfPath: string | null
@@ -112,6 +126,7 @@ export default function AdminLivrosPage() {
   const [createBookLoading, setCreateBookLoading] = useState(false)
   const [editingBook, setEditingBook] = useState<Book | null>(null)
   const [editBookLoading, setEditBookLoading] = useState(false)
+  const [deletingBookLoading, setDeletingBookLoading] = useState(false)
   const [releaseLoading, setReleaseLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
@@ -119,6 +134,7 @@ export default function AdminLivrosPage() {
   const [createBookForm, setCreateBookForm] = useState({
     nome: '',
     level: 'A1',
+    language: 'ENGLISH' as BookLanguage,
     totalPaginas: 1,
     imprimivel: true,
     pdf: null as File | null,
@@ -128,6 +144,7 @@ export default function AdminLivrosPage() {
   const [editBookForm, setEditBookForm] = useState({
     nome: '',
     level: 'A1',
+    language: 'ENGLISH' as BookLanguage,
     totalPaginas: 1,
     imprimivel: true,
     pdf: null as File | null,
@@ -287,6 +304,7 @@ export default function AdminLivrosPage() {
       const fd = new FormData()
       fd.append('nome', createBookForm.nome.trim())
       fd.append('level', createBookForm.level)
+      fd.append('language', createBookForm.language)
       fd.append('totalPaginas', String(createBookForm.totalPaginas))
       fd.append('imprimivel', createBookForm.imprimivel ? 'true' : 'false')
       fd.append('pdf', createBookForm.pdf)
@@ -301,9 +319,20 @@ export default function AdminLivrosPage() {
       if (!res.ok || !json.ok) {
         throw new Error(json.message || 'Erro ao cadastrar livro')
       }
-      setToast({ message: 'Livro cadastrado com sucesso!', type: 'success' })
+      setToast({
+        message: json.message || 'Livro cadastrado com sucesso!',
+        type: 'success',
+      })
       setIsCreateBookModalOpen(false)
-      setCreateBookForm({ nome: '', level: 'A1', totalPaginas: 1, imprimivel: true, pdf: null, capa: null })
+      setCreateBookForm({
+        nome: '',
+        level: 'A1',
+        language: 'ENGLISH',
+        totalPaginas: 1,
+        imprimivel: true,
+        pdf: null,
+        capa: null,
+      })
       fetchBooks()
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao cadastrar', type: 'error' })
@@ -317,6 +346,7 @@ export default function AdminLivrosPage() {
     setEditBookForm({
       nome: book.nome,
       level: book.level,
+      language: (book.language ?? 'ENGLISH') as BookLanguage,
       totalPaginas: book.totalPaginas,
       imprimivel: book.imprimivel,
       pdf: null,
@@ -539,6 +569,7 @@ export default function AdminLivrosPage() {
       const fd = new FormData()
       fd.append('nome', editBookForm.nome.trim())
       fd.append('level', editBookForm.level)
+      fd.append('language', editBookForm.language)
       fd.append('totalPaginas', String(editBookForm.totalPaginas))
       fd.append('imprimivel', editBookForm.imprimivel ? 'true' : 'false')
       if (editBookForm.pdf) fd.append('pdf', editBookForm.pdf)
@@ -553,13 +584,53 @@ export default function AdminLivrosPage() {
       if (!res.ok || !json.ok) {
         throw new Error(json.message || 'Erro ao atualizar livro')
       }
-      setToast({ message: 'Livro atualizado com sucesso!', type: 'success' })
+      setToast({
+        message: json.message || 'Livro atualizado com sucesso!',
+        type: 'success',
+      })
       setEditingBook(null)
       fetchBooks()
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao atualizar', type: 'error' })
     } finally {
       setEditBookLoading(false)
+    }
+  }
+
+  const handleDeleteBook = async () => {
+    if (!editingBook) return
+    const confirmacao = window.confirm(
+      `Tem certeza que deseja EXCLUIR o livro "${editingBook.nome}"?\n\n` +
+        'Esta ação remove o livro do catálogo, seus áudios e o PDF/capa enviados.\n' +
+        'As liberações já feitas para alunos serão preservadas no histórico, ' +
+        'mas ficarão sem o livro vinculado.\n\nEsta ação não pode ser desfeita.'
+    )
+    if (!confirmacao) return
+
+    setDeletingBookLoading(true)
+    try {
+      const res = await fetch(`/api/admin/books/${editingBook.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message || 'Erro ao excluir livro')
+      }
+      setToast({
+        message: json.message || 'Livro excluído com sucesso!',
+        type: 'success',
+      })
+      setEditingBook(null)
+      fetchBooks()
+      fetchReleases()
+    } catch (err) {
+      setToast({
+        message: err instanceof Error ? err.message : 'Erro ao excluir livro',
+        type: 'error',
+      })
+    } finally {
+      setDeletingBookLoading(false)
     }
   }
 
@@ -858,6 +929,13 @@ export default function AdminLivrosPage() {
                         {BOOK_LEVELS.find((l) => l.value === b.level)?.label || b.level} •{' '}
                         {b.totalPaginas} pág.
                       </p>
+                      <p className="text-xs text-gray-500">
+                        Idioma:{' '}
+                        <span className={b.language ? 'font-semibold text-gray-700' : 'text-amber-600'}>
+                          {bookLanguageLabel(b.language)}
+                        </span>
+                        {!b.language && ' (defina ao editar)'}
+                      </p>
                       <p className="text-xs text-gray-400">
                         {b.imprimivel ? 'Imprimível' : 'Não imprimível'}
                       </p>
@@ -1027,6 +1105,30 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Idioma <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={createBookForm.language}
+                onChange={(e) =>
+                  setCreateBookForm((p) => ({
+                    ...p,
+                    language: e.target.value as BookLanguage,
+                  }))
+                }
+                className="input w-full"
+              >
+                {BOOK_LANGUAGES.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Ao salvar, este livro será liberado automaticamente para todos os professores ATIVOS que ensinam este idioma.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
                 Total de páginas <span className="text-red-500">*</span>
               </label>
               <input
@@ -1093,18 +1195,37 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
           title="Editar Livro"
           size="xl"
           footer={
-            <>
-              <Button variant="outline" onClick={() => setEditingBook(null)}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-onClick={() => void handleEditBook({ preventDefault: () => {} } as React.FormEvent)}
-                 disabled={editBookLoading || !editBookForm.nome.trim()}
+            <div className="flex w-full items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => void handleDeleteBook()}
+                disabled={deletingBookLoading || editBookLoading}
+                title="Remover este livro do catálogo"
+                className="inline-flex items-center gap-2 rounded-lg border-2 border-red-500 px-6 py-3 text-base font-semibold text-red-600 transition-all duration-200 hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-red-600"
               >
-                {editBookLoading ? 'Salvando...' : 'Salvar'}
-              </Button>
-            </>
+                {deletingBookLoading ? 'Excluindo...' : 'Excluir livro'}
+              </button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditingBook(null)}
+                  disabled={deletingBookLoading}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleEditBook({ preventDefault: () => {} } as React.FormEvent)}
+                  disabled={
+                    editBookLoading ||
+                    deletingBookLoading ||
+                    !editBookForm.nome.trim()
+                  }
+                >
+                  {editBookLoading ? 'Salvando...' : 'Salvar'}
+                </Button>
+              </div>
+            </div>
           }
         >
           {editingBook && (
@@ -1141,6 +1262,30 @@ onClick={() => void handleEditBook({ preventDefault: () => {} } as React.FormEve
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Idioma <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={editBookForm.language}
+                  onChange={(e) =>
+                    setEditBookForm((p) => ({
+                      ...p,
+                      language: e.target.value as BookLanguage,
+                    }))
+                  }
+                  className="input w-full"
+                >
+                  {BOOK_LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Se o idioma mudar, este livro será liberado automaticamente para os professores que ensinam o novo idioma. Liberações antigas não são removidas automaticamente.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">

@@ -14,6 +14,10 @@ import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useLanguage } from '@/contexts/LanguageContext'
 import {
+  labelProfessorCatalogBook,
+  type ProfessorCatalogBook,
+} from '@/lib/professor-catalog-books'
+import {
   formatTimeInTZ,
   formatDateTimeInTZ,
   isSameDayInTZ,
@@ -75,7 +79,11 @@ interface UltimaRecord {
   gradeListening: number | null
   gradeUnderstanding: number | null
   studentPresences?: { enrollmentId: string; enrollment?: { nome: string }; presence: string }[]
-  lesson: { startAt: string; enrollment: { nome: string; tipoAula?: string | null; nomeGrupo?: string | null }; teacher: { nome: string } }
+  lesson: {
+    startAt: string
+    enrollment: { nome: string; tipoAula?: string | null; nomeGrupo?: string | null }
+    teacher: { id?: string; nome: string }
+  }
 }
 
 interface GroupMember {
@@ -148,6 +156,7 @@ export default function CalendarioProfessorPage() {
   const [modalStep, setModalStep] = useState<ModalStep>('choose')
   const [ultimaRecord, setUltimaRecord] = useState<UltimaRecord | null>(null)
   const [ultimaLoading, setUltimaLoading] = useState(false)
+  const [ultimaPorOutroProfessor, setUltimaPorOutroProfessor] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   type FormStatus = 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
@@ -177,6 +186,8 @@ export default function CalendarioProfessorPage() {
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [loadingGroup, setLoadingGroup] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [catalogBooks, setCatalogBooks] = useState<ProfessorCatalogBook[]>([])
+  const [catalogBooksLoading, setCatalogBooksLoading] = useState(true)
 
   const searchParams = useSearchParams()
   const modalOpen = selectedLesson !== null
@@ -364,6 +375,46 @@ export default function CalendarioProfessorPage() {
     fetchHolidays()
   }, [fetchHolidays])
 
+  useEffect(() => {
+    let cancelled = false
+    setCatalogBooksLoading(true)
+    fetch('/api/professor/books', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        const list = Array.isArray(json?.data?.books)
+          ? json.data.books
+          : Array.isArray(json?.data)
+          ? json.data
+          : []
+        if (json?.ok) {
+          setCatalogBooks(list as ProfessorCatalogBook[])
+        } else {
+          setCatalogBooks([])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogBooks([])
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogBooksLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const catalogNomes = useMemo(
+    () => new Set(catalogBooks.map((b) => b.nome.trim())),
+    [catalogBooks]
+  )
+
+  const legacyBookNotInCatalog = useMemo(() => {
+    const t = form.book.trim()
+    if (!t) return null
+    return catalogNomes.has(t) ? null : t
+  }, [form.book, catalogNomes])
+
   const selectedLessonIsHoliday = useMemo(() => {
     if (!selectedLesson) return false
     return holidays.has(toDateKeyInTZ(selectedLesson.startAt))
@@ -395,13 +446,22 @@ export default function CalendarioProfessorPage() {
     if (!selectedLesson) return
     setUltimaLoading(true)
     setUltimaRecord(null)
+    setUltimaPorOutroProfessor(false)
     fetch(`/api/professor/lesson-records/ultima?enrollmentId=${encodeURIComponent(selectedLesson.enrollmentId)}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((json) => {
-        if (json.ok && json.data?.record) setUltimaRecord(json.data.record as UltimaRecord)
-        else setUltimaRecord(null)
+        if (json.ok && json.data?.record) {
+          setUltimaRecord(json.data.record as UltimaRecord)
+          setUltimaPorOutroProfessor(Boolean(json.data.registradoPorOutroProfessor))
+        } else {
+          setUltimaRecord(null)
+          setUltimaPorOutroProfessor(false)
+        }
       })
-      .catch(() => setUltimaRecord(null))
+      .catch(() => {
+        setUltimaRecord(null)
+        setUltimaPorOutroProfessor(false)
+      })
       .finally(() => setUltimaLoading(false))
   }, [selectedLesson?.enrollmentId])
 
@@ -483,7 +543,14 @@ export default function CalendarioProfessorPage() {
       return
     }
     if (!form.book?.trim()) {
-      setToast({ message: 'Preencha o campo Livro do aluno.', type: 'error' })
+      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
+      return
+    }
+    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
+      setToast({
+        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
+        type: 'error',
+      })
       return
     }
     if (!form.lastPage?.trim()) {
@@ -939,6 +1006,23 @@ export default function CalendarioProfessorPage() {
                 <p className="text-gray-600">
                   {t('professor.calendar.classOf')} <strong>{formatDateTimeInTZ(ultimaRecord.lesson.startAt, dateLocale)}</strong> — {ultimaRecord.lesson.enrollment?.nome ?? ultimaRecord.lesson.enrollment?.nomeGrupo ?? '—'}
                 </p>
+                {ultimaRecord.lesson.teacher?.nome ? (
+                  <p
+                    className={
+                      ultimaPorOutroProfessor
+                        ? 'rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900'
+                        : 'text-gray-600'
+                    }
+                  >
+                    <strong>Professor(a) que ministrou:</strong> {ultimaRecord.lesson.teacher.nome}
+                    {ultimaPorOutroProfessor ? (
+                      <span className="ml-1 text-xs">
+                        — registro feito por outro(a) professor(a). Use as informações como
+                        referência do histórico do aluno/grupo.
+                      </span>
+                    ) : null}
+                  </p>
+                ) : null}
                 <p><strong>{t('professor.calendar.status')}:</strong> {statusLabel(ultimaRecord.status)}</p>
                 <p><strong>{t('professor.calendar.presence')}:</strong> {getPresenceLabel(ultimaRecord.presence)}</p>
                 <p><strong>{t('professor.calendar.type')}:</strong> {getLessonTypeLabel(ultimaRecord.lessonType)}</p>
@@ -1076,7 +1160,37 @@ export default function CalendarioProfessorPage() {
 
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno <span className="text-red-500">*</span></label>
-              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" required aria-required="true" />
+              {catalogBooksLoading ? (
+                <p className="text-sm text-gray-500 py-2">Carregando catálogo de livros...</p>
+              ) : (
+                <>
+                  <select
+                    value={form.book}
+                    onChange={(e) => setForm({ ...form, book: e.target.value })}
+                    className="input w-full"
+                    required
+                    aria-required="true"
+                    disabled={catalogBooks.length === 0 && !legacyBookNotInCatalog}
+                  >
+                    <option value="">Selecione o livro</option>
+                    {legacyBookNotInCatalog && (
+                      <option value={legacyBookNotInCatalog}>
+                        {legacyBookNotInCatalog} (texto antigo — prefira um livro do catálogo)
+                      </option>
+                    )}
+                    {catalogBooks.map((b) => (
+                      <option key={b.id} value={b.nome}>
+                        {labelProfessorCatalogBook(b)}
+                      </option>
+                    ))}
+                  </select>
+                  {catalogBooks.length === 0 && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Nenhum livro cadastrado. Peça à administração para cadastrar em Admin → Livros.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada <span className="text-red-500">*</span></label>

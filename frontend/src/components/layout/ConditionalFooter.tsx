@@ -10,6 +10,11 @@ import { Footer } from './Footer'
 export function ConditionalFooter() {
   const pathname = usePathname()
   if (!pathname) return <Footer />
-  if (pathname.startsWith('/admin') || pathname.startsWith('/dashboard-professores')) return null
+  if (
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/dashboard-professores') ||
+    pathname.startsWith('/cadastro-professor')
+  )
+    return null
   return <Footer />
 }

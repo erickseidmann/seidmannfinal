@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { notificationRetentionCutoff } from '@/lib/notification-retention'
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,8 +26,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 15)
+    const cutoff = notificationRetentionCutoff()
 
     const notifications = await prisma.adminNotification.findMany({
       where: { userId, criadoEm: { gte: cutoff } },

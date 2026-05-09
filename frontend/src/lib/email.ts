@@ -431,6 +431,28 @@ ${lista}${RODAPE_CANCELAMENTO}`
   return { subject, text }
 }
 
+/** E-mail ao professor: aluno inativado e aulas removidas a partir de uma data. */
+export function mensagemAlunoInativoProfessor(opcoes: {
+  nomeProfessor: string
+  nomeAluno: string
+  nomeGrupo: string | null
+  dataInativacaoPt: string
+}): { subject: string; text: string } {
+  const { nomeProfessor, nomeAluno, nomeGrupo, dataInativacaoPt } = opcoes
+  const quem = nomeGrupo?.trim() ? `${nomeAluno} (grupo: ${nomeGrupo.trim()})` : nomeAluno
+  const subject = `Aluno inativo — ${nomeAluno} — sem novas aulas a partir de ${dataInativacaoPt}`
+  const text = `Olá, ${nomeProfessor},
+
+O aluno ${quem} foi marcado como inativo na administração.
+
+As aulas agendadas no calendário a partir de ${dataInativacaoPt} foram removidas automaticamente. Não haverá novas aulas com este aluno a partir dessa data.
+
+Por favor, confira sua agenda.
+
+📌 Mensagem automática do Portal Seidmann.`
+  return { subject, text }
+}
+
 const MENSAGEM_REPOSICAO_PROFESSOR = `Olá,
 
 Atenção!

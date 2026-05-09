@@ -11,6 +11,13 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import type { InactiveReason } from '@prisma/client'
 import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
+import {
+  formatDateKeyPtBR,
+  inactiveFromParamToBrazilDateKey,
+  startOfCalendarDayBrazilDateKey,
+  toDateKeyInTZ,
+} from '@/lib/datetime'
+import { mensagemAlunoInativoProfessor, sendEmail } from '@/lib/email'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -74,39 +81,21 @@ export async function PATCH(
       )
     }
 
-    // Se status mudou para INACTIVE, excluir apenas aulas FUTURAS a partir da data escolhida
     const oldStatus = enrollment.status
-    if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
-      let inativarAPartirDe = new Date()
-      if (inactiveFrom && typeof inactiveFrom === 'string') {
-        const d = new Date(inactiveFrom)
-        if (!Number.isNaN(d.getTime())) {
-          inativarAPartirDe = d
-        }
-      }
-      // Normalizar datas para meia-noite
-      inativarAPartirDe.setHours(0, 0, 0, 0)
-      const hoje = new Date()
-      hoje.setHours(0, 0, 0, 0)
-
-      // Nunca apagar aulas passadas: apenas aulas cuja data seja
-      // (a) maior ou igual à data de inativação E
-      // (b) maior ou igual à data de hoje
-      const dataCorte = inativarAPartirDe > hoje ? inativarAPartirDe : hoje
-      await prisma.lesson.deleteMany({
-        where: {
-          enrollmentId: id,
-          startAt: { gte: dataCorte },
-        },
-      })
-    }
-
     const adminUserId = auth.session?.sub
 
     let validatedInactive: {
       inactiveReason: InactiveReason
       inactiveReasonOther: string | null
     } | null = null
+
+    let inactiveNotify: {
+      teacherIds: string[]
+      nomeAluno: string
+      nomeGrupo: string | null
+      dataPt: string
+    } | null = null
+
     if (status === 'INACTIVE' && oldStatus !== 'INACTIVE') {
       const v = validateInactiveReasonPayload(inactiveReason, inactiveReasonOther)
       if (!v.ok) {
@@ -115,6 +104,41 @@ export async function PATCH(
       validatedInactive = {
         inactiveReason: v.inactiveReason as InactiveReason,
         inactiveReasonOther: v.inactiveReasonOther,
+      }
+
+      const inactiveBrazilDateKey = inactiveFromParamToBrazilDateKey(inactiveFrom)
+      let lessonCutoff = startOfCalendarDayBrazilDateKey(inactiveBrazilDateKey)
+      if (!lessonCutoff) {
+        const fallbackKey = toDateKeyInTZ(new Date())
+        lessonCutoff = startOfCalendarDayBrazilDateKey(fallbackKey)!
+      }
+      const dataPt = formatDateKeyPtBR(inactiveBrazilDateKey)
+
+      const lessonsForCut = await prisma.lesson.findMany({
+        where: { enrollmentId: id, startAt: { gte: lessonCutoff } },
+        select: { teacherId: true },
+      })
+      const teacherIds = [
+        ...new Set(
+          lessonsForCut.map((l) => l.teacherId).filter((tid): tid is string => Boolean(tid))
+        ),
+      ]
+
+      await prisma.lesson.deleteMany({
+        where: { enrollmentId: id, startAt: { gte: lessonCutoff } },
+      })
+
+      if (teacherIds.length > 0) {
+        const nomeGrupo =
+          enrollment.tipoAula === 'GRUPO' && enrollment.nomeGrupo?.trim()
+            ? enrollment.nomeGrupo.trim()
+            : null
+        inactiveNotify = {
+          teacherIds,
+          nomeAluno: enrollment.nome,
+          nomeGrupo,
+          dataPt,
+        }
       }
     }
 
@@ -129,15 +153,12 @@ export async function PATCH(
       inactiveReasonOther?: string | null
     } = { status: status as EnrollmentStatus }
     if (status === 'INACTIVE') {
-      let inactiveAt = new Date()
-      if (inactiveFrom && typeof inactiveFrom === 'string') {
-        const d = new Date(inactiveFrom)
-        if (!Number.isNaN(d.getTime())) {
-          inactiveAt = d
-        }
+      const inactiveDateKey = inactiveFromParamToBrazilDateKey(inactiveFrom)
+      let inactiveAtComputed = startOfCalendarDayBrazilDateKey(inactiveDateKey)
+      if (!inactiveAtComputed) {
+        inactiveAtComputed = startOfCalendarDayBrazilDateKey(toDateKeyInTZ(new Date()))!
       }
-      inactiveAt.setHours(0, 0, 0, 0)
-      updateData.inactiveAt = inactiveAt
+      updateData.inactiveAt = inactiveAtComputed
       updateData.pausedAt = null
       updateData.activationDate = null
       if (oldStatus !== 'INACTIVE') {
@@ -197,6 +218,46 @@ export async function PATCH(
     }
 
     console.log(`[api/admin/enrollments/${id}/status] Status atualizado: ${enrollment.status} -> ${status}`)
+
+    if (inactiveNotify && prisma.teacherAlert) {
+      const { teacherIds, nomeAluno, nomeGrupo, dataPt } = inactiveNotify
+      const grupoFrag = nomeGrupo ? ` (${nomeGrupo})` : ''
+      const message = `O aluno ${nomeAluno}${grupoFrag} foi marcado como inativo. As aulas no calendário a partir de ${dataPt} foram removidas; não haverá novas aulas com este aluno a partir dessa data.`
+
+      await prisma.teacherAlert.createMany({
+        data: teacherIds.map((teacherId) => ({
+          teacherId,
+          enrollmentId: id,
+          message,
+          type: 'STUDENT_INACTIVE',
+          level: 'INFO',
+          createdById: adminUserId ?? null,
+        })),
+      })
+
+      const teachers = await prisma.teacher.findMany({
+        where: { id: { in: teacherIds } },
+        select: {
+          id: true,
+          user: { select: { email: true, nome: true } },
+        },
+      })
+
+      for (const t of teachers) {
+        const email = t.user?.email?.trim()
+        if (!email) continue
+        const nomeProfessor = t.user?.nome?.trim() || 'Professor(a)'
+        const { subject, text } = mensagemAlunoInativoProfessor({
+          nomeProfessor,
+          nomeAluno,
+          nomeGrupo,
+          dataInativacaoPt: dataPt,
+        })
+        void sendEmail({ to: email, subject, text }).catch((err) =>
+          console.error(`[api/admin/enrollments/${id}/status] e-mail inativação professor ${t.id}:`, err)
+        )
+      }
+    }
 
     // Retornar enrollment atualizado
     return NextResponse.json(

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
+import { notificationRetentionCutoff } from '@/lib/notification-retention'
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,8 +26,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: true, data: { alerts: [] } })
     }
 
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 15)
+    // Janela de retenção (30 dias). Notificações já lidas continuam visíveis por 2 dias.
+    const cutoff = notificationRetentionCutoff()
     const twoDaysAgo = new Date()
     twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
 

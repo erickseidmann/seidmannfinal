@@ -41,7 +41,15 @@ export async function GET(request: NextRequest) {
         teacherId: teacher.id,
         isActive: true,
         readAt: null,
-        type: { in: ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT', 'PROOF_RESEND_NEEDED'] },
+        type: {
+          in: [
+            'PAYMENT_DONE',
+            'NEW_ANNOUNCEMENT',
+            'NEW_STUDENT',
+            'PROOF_RESEND_NEEDED',
+            'STUDENT_INACTIVE',
+          ],
+        },
         criadoEm: { gte: feedCutoff },
       },
     })

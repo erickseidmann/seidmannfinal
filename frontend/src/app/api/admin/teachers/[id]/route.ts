@@ -9,6 +9,11 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { validateMeetingLink } from '@/lib/meeting-link'
 import bcrypt from 'bcryptjs'
+import {
+  languagesAdded,
+  mapIdiomasToBookLanguages,
+  releaseBooksToTeacherForLanguages,
+} from '@/lib/teacher-book-releases'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
 
@@ -141,6 +146,8 @@ export async function PATCH(
     const senhaTrim = senha != null ? String(senha).trim() : ''
     const useDefaultPassword = senhaTrim.length < 6
     const passwordToUse = useDefaultPassword ? SENHA_PADRAO_PROFESSOR : senhaTrim
+    let teacherUserId: string | null = existing.userId ?? null
+    let userJustCreatedNow = false
     if (passwordToUse) {
       const normalizedEmail = (teacher.email || existing.email).trim().toLowerCase()
       const passwordHash = await bcrypt.hash(passwordToUse, 10)
@@ -167,8 +174,44 @@ export async function PATCH(
             where: { id },
             data: { userId: user.id },
           })
+          teacherUserId = user.id
+          userJustCreatedNow = true
+        } else {
+          // Já existe um User com este email — vincular ao Teacher para liberar acessos.
+          await prisma.teacher.update({
+            where: { id },
+            data: { userId: userExists.id },
+          })
+          teacherUserId = userExists.id
+          userJustCreatedNow = true
         }
       }
+    }
+
+    // Auto-liberação de livros: se idiomasEnsina mudou (ou se acabamos de criar o usuário), liberar livros dos idiomas relevantes.
+    try {
+      if (teacherUserId) {
+        const oldArr = Array.isArray(existing.idiomasEnsina)
+          ? (existing.idiomasEnsina as unknown as string[])
+          : []
+        const newArr = Array.isArray(teacher.idiomasEnsina)
+          ? (teacher.idiomasEnsina as unknown as string[])
+          : oldArr
+        // Se o usuário acabou de ganhar acesso (PENDING→ACTIVE), liberamos para TODOS os idiomas atuais.
+        // Caso contrário, apenas para idiomas RECÉM-ADICIONADOS (não revoga manualmente removidos).
+        const langsToRelease = userJustCreatedNow
+          ? mapIdiomasToBookLanguages(newArr)
+          : languagesAdded(oldArr, newArr)
+        if (langsToRelease.length > 0) {
+          await releaseBooksToTeacherForLanguages({
+            teacherUserId,
+            languages: langsToRelease,
+            adminEmail: auth.session?.email || 'admin@seidmann',
+          })
+        }
+      }
+    } catch (autoErr) {
+      console.error('[api/admin/teachers/[id] PATCH] Falha ao auto-liberar livros:', autoErr)
     }
 
     return NextResponse.json({

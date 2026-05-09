@@ -15,7 +15,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, CircleDollarSign } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, CircleDollarSign, ClipboardList } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import {
@@ -298,6 +298,8 @@ export default function AdminAlunosPage() {
   const [error, setError] = useState<string | null>(null)
   const [itemsPerPage, setItemsPerPage] = useState<number>(30)
   const [filters, setFilters] = useState({ status: '', search: '', tipo: '', professor: '', escola: '' })
+  // Input local da busca: só atualiza filters.search ao clicar em Buscar / pressionar Enter
+  const [searchInput, setSearchInput] = useState('')
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
   const [sortKey, setSortKey] = useState<string>('criadoEm')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -395,6 +397,17 @@ export default function AdminAlunosPage() {
       frequenciaSemanal: number | null
     }[]
   }>({ count: 0, list: [] })
+  const [missingRequiredStats, setMissingRequiredStats] = useState<{
+    count: number
+    list: {
+      enrollmentId: string
+      nome: string
+      escolaLabel: string
+      missing: string[]
+      student: Student
+    }[]
+  }>({ count: 0, list: [] })
+  const [missingRequiredLoading, setMissingRequiredLoading] = useState(true)
   const [extendingRepetitionId, setExtendingRepetitionId] = useState<string | null>(null)
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
@@ -455,6 +468,33 @@ export default function AdminAlunosPage() {
     } catch (e) {
       console.error(e)
       setRepetitionEndingStats({ count: 0, list: [] })
+    }
+  }, [])
+
+  const fetchMissingRequiredStats = useCallback(async () => {
+    setMissingRequiredLoading(true)
+    try {
+      const res = await fetch('/api/admin/enrollments/missing-required', { credentials: 'include' })
+      const json = await res.json()
+      if (res.ok && json.ok && Array.isArray(json.data?.items)) {
+        setMissingRequiredStats({
+          count: typeof json.data.count === 'number' ? json.data.count : json.data.items.length,
+          list: json.data.items as {
+            enrollmentId: string
+            nome: string
+            escolaLabel: string
+            missing: string[]
+            student: Student
+          }[],
+        })
+      } else {
+        setMissingRequiredStats({ count: 0, list: [] })
+      }
+    } catch (e) {
+      console.error(e)
+      setMissingRequiredStats({ count: 0, list: [] })
+    } finally {
+      setMissingRequiredLoading(false)
     }
   }, [])
 
@@ -599,7 +639,8 @@ export default function AdminAlunosPage() {
     void fetchWrongFrequencyStatsProximaSemana()
     void fetchRepetitionEndingStats()
     void fetchBelowHourRateStats()
-  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchRepetitionEndingStats, fetchBelowHourRateStats])
+    void fetchMissingRequiredStats()
+  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchRepetitionEndingStats, fetchBelowHourRateStats, fetchMissingRequiredStats])
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
@@ -998,7 +1039,7 @@ export default function AdminAlunosPage() {
     setConfirmModal({
       title: 'Liberar acesso para alunos sem conta',
       message:
-        'Será enviado um e-mail apenas para os alunos que ainda não têm conta na plataforma (login e senha padrão). Quem já tem acesso não receberá e-mail. Para cada aluno sem conta, o acesso será criado e o e-mail enviado. Deseja continuar?',
+        'Aviso: a liberação de acesso já é feita automaticamente quando o pagamento do aluno é confirmado (Cora ou marcação manual no Financeiro). Use este botão apenas para liberar manualmente alunos que ainda não pagaram. Será enviado um e-mail apenas para os alunos que ainda não têm conta (login e senha padrão). Quem já tem acesso não receberá e-mail. Deseja continuar?',
       confirmLabel: 'Enviar e-mails',
       onConfirm: () => {
         setSendAccessLoading(true)
@@ -1137,7 +1178,12 @@ export default function AdminAlunosPage() {
         emailResponsavel: isMinor ? (formData.emailResponsavel.trim() || null) : null,
         cpf: formData.cpf.trim() || null,
         cpfResponsavel: isMinor ? (formData.cpfResponsavel.trim() || null) : null,
-        idioma: formData.idioma === 'ENGLISH' || formData.idioma === 'SPANISH' ? formData.idioma : null,
+        idioma:
+          formData.curso === 'INGLES'
+            ? 'ENGLISH'
+            : formData.curso === 'ESPANHOL'
+              ? 'SPANISH'
+              : null,
         nivel: formData.nivel.trim() || null,
         objetivo: formData.objetivo.trim() || null,
         disponibilidade: formData.disponibilidade.trim() || null,
@@ -1197,6 +1243,7 @@ export default function AdminAlunosPage() {
         setIsModalOpen(false)
         setEditingStudent(null)
         fetchStudents()
+        void fetchMissingRequiredStats()
         setToast({ message: 'Aluno atualizado com sucesso!', type: 'success' })
       } else {
         const res = await fetch('/api/admin/enrollments', {
@@ -1211,6 +1258,7 @@ export default function AdminAlunosPage() {
         }
         setIsModalOpen(false)
         fetchStudents()
+        void fetchMissingRequiredStats()
         setToast({ message: 'Aluno adicionado com sucesso!', type: 'success' })
       }
     } catch (err) {
@@ -1951,6 +1999,32 @@ export default function AdminAlunosPage() {
               subtitle={`Valor hora abaixo de R$ ${BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')} (ativos)`}
             />
           </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListLoading(false)
+              setListModal({ title: 'Alunos com infos obrigatórias faltantes', type: 'missingRequired' })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListLoading(false)
+                setListModal({ title: 'Alunos com infos obrigatórias faltantes', type: 'missingRequired' })
+              }
+            }}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${
+              !missingRequiredLoading && missingRequiredStats.count > 0 ? 'stat-cube-blink' : ''
+            }`}
+          >
+            <StatCard
+              variant="finance"
+              title="Infos obrigatórias faltantes"
+              value={missingRequiredLoading ? '...' : missingRequiredStats.count}
+              icon={<ClipboardList className="w-5 h-5" />}
+              color="orange"
+              subtitle="Clique para ver o que falta em cada aluno"
+            />
+          </div>
           {/* Total por escola */}
           <div
             role="button"
@@ -1993,7 +2067,55 @@ export default function AdminAlunosPage() {
           </button>
           {showBuscarFiltros && (
             <div className="px-5 pb-5 pt-0 border-t border-gray-200">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4 pt-4">
+              {/* Linha de busca: input grande + botão Buscar (estilo Livros) */}
+              <div className="pt-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Buscar por nome, email, CPF, WhatsApp, escola, vendedor, endereço…
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        setFilters({ ...filters, search: searchInput.trim() })
+                      }
+                    }}
+                    className="input flex-1"
+                    placeholder="Nome, email, CPF, CNPJ, WhatsApp, cidade, escola… (deixe vazio para ver todos)"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    onClick={() => setFilters({ ...filters, search: searchInput.trim() })}
+                    className="flex items-center gap-2 shrink-0"
+                  >
+                    <Search className="w-4 h-4" />
+                    <span className="hidden sm:inline">Buscar</span>
+                  </Button>
+                  {filters.search && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="md"
+                      onClick={() => {
+                        setSearchInput('')
+                        setFilters({ ...filters, search: '' })
+                      }}
+                      className="shrink-0"
+                      title="Limpar busca"
+                    >
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Linha de filtros + relatório */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 pt-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
                   <select
@@ -2050,16 +2172,6 @@ export default function AdminAlunosPage() {
                     <option value="com">Com professor</option>
                     <option value="sem">Sem professor</option>
                   </select>
-                </div>
-                <div className="sm:col-span-2 lg:col-span-1">
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Buscar</label>
-                  <input
-                    type="text"
-                    value={filters.search}
-                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="input w-full text-sm py-2"
-                    placeholder="Nome, email, WhatsApp..."
-                  />
                 </div>
                 <div className="flex items-end">
                   <Button
@@ -2573,88 +2685,84 @@ export default function AdminAlunosPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Idioma <span className="text-red-500">*</span></label>
-                  <select
-                    value={formData.idioma}
-                    onChange={(e) => setFormData({ ...formData, idioma: e.target.value })}
-                    className="input w-full"
-                    required
-                  >
-                    <option value="">Selecione</option>
-                    <option value="ENGLISH">Inglês</option>
-                    <option value="SPANISH">Espanhol</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Nível <span className="text-red-500">*</span></label>
-                  <select
-                    value={formData.nivel}
-                    onChange={(e) => setFormData({ ...formData, nivel: e.target.value })}
-                    className="input w-full"
-                    required
-                  >
-                    <option value="">Selecione</option>
-                    <option value="Iniciante">Iniciante</option>
-                    <option value="Básico">Básico</option>
-                    <option value="Intermediário">Intermediário</option>
-                    <option value="Avançado">Avançado</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Nível <span className="text-red-500">*</span></label>
+                <select
+                  value={formData.nivel}
+                  onChange={(e) => setFormData({ ...formData, nivel: e.target.value })}
+                  className="input w-full"
+                  required
+                >
+                  <option value="">Selecione</option>
+                  <option value="Iniciante">Iniciante</option>
+                  <option value="Básico">Básico</option>
+                  <option value="Intermediário">Intermediário</option>
+                  <option value="Avançado">Avançado</option>
+                </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Objetivo</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Objetivo <span className="text-red-500">*</span>
+                </label>
                 <textarea
                   value={formData.objetivo}
                   onChange={(e) => setFormData({ ...formData, objetivo: e.target.value })}
                   className="input w-full min-h-[60px]"
                   placeholder="Ex: trabalho, viagem, conversação, prova..."
                   rows={2}
+                  required
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Disponibilidade</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Disponibilidade <span className="text-red-500">*</span>
+                </label>
                 <textarea
                   value={formData.disponibilidade}
                   onChange={(e) => setFormData({ ...formData, disponibilidade: e.target.value })}
                   className="input w-full min-h-[60px]"
                   placeholder="Ex: Seg/Qua 19h; Ter/Qui 7h"
                   rows={2}
+                  required
                 />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Data de nascimento
+                    Data de nascimento <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="date"
                     value={formData.dataNascimento}
                     onChange={(e) => setFormData({ ...formData, dataNascimento: e.target.value })}
                     className="input w-full"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Data de Início
+                    Data de Início <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="date"
                     value={formData.dataInicio}
                     onChange={(e) => setFormData({ ...formData, dataInicio: e.target.value })}
                     className="input w-full"
+                    required
                   />
                   <p className="text-xs text-gray-500 mt-1">O aluno só aparecerá no Financeiro a partir deste mês.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">CPF</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    CPF <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     value={formData.cpf}
                     onChange={(e) => setFormData({ ...formData, cpf: e.target.value })}
                     className="input w-full"
                     placeholder="000.000.000-00"
+                    required
                   />
                 </div>
                 <div>
@@ -2807,7 +2915,7 @@ export default function AdminAlunosPage() {
                 )}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Tempo de antecedência para cancelamento (horas)
+                    Tempo de antecedência para cancelamento (horas) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -2816,12 +2924,13 @@ export default function AdminAlunosPage() {
                     value={formData.cancelamentoAntecedenciaHoras}
                     onChange={(e) => setFormData({ ...formData, cancelamentoAntecedenciaHoras: e.target.value })}
                     className="input w-full"
-                    placeholder={formData.escolaMatricula === 'YOUBECOME' ? 'Padrão: 24 horas' : 'Padrão: 6 horas'}
+                    placeholder={formData.escolaMatricula === 'YOUBECOME' ? 'Ex: 24' : 'Ex: 6'}
+                    required
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    {formData.escolaMatricula === 'YOUBECOME' 
-                      ? 'Alunos YOUBECOME: mínimo 24 horas (1 dia). Deixe em branco para usar o padrão.'
-                      : 'Tempo mínimo de antecedência necessário para cancelar uma aula. Deixe em branco para usar o padrão de 6 horas.'}
+                    {formData.escolaMatricula === 'YOUBECOME'
+                      ? 'Alunos YOUBECOME: mínimo 24 horas (1 dia). Sugerido: 24.'
+                      : 'Tempo mínimo de antecedência necessário para cancelar uma aula. Sugerido: 6 horas.'}
                   </p>
                 </div>
               </div>
@@ -2829,18 +2938,19 @@ export default function AdminAlunosPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Nome do responsável
+                      Nome do responsável <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
                       value={formData.nomeResponsavel}
                       onChange={(e) => setFormData({ ...formData, nomeResponsavel: e.target.value })}
                       className="input w-full"
+                      required
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      CPF do responsável
+                      CPF do responsável <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -2848,11 +2958,12 @@ export default function AdminAlunosPage() {
                       onChange={(e) => setFormData({ ...formData, cpfResponsavel: e.target.value })}
                       className="input w-full"
                       placeholder="000.000.000-00"
+                      required
                     />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      E-mail do responsável (para cobrança e NFSe)
+                      E-mail do responsável (para cobrança e NFSe) <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="email"
@@ -2860,6 +2971,7 @@ export default function AdminAlunosPage() {
                       onChange={(e) => setFormData({ ...formData, emailResponsavel: e.target.value })}
                       className="input w-full"
                       placeholder="responsavel@email.com"
+                      required
                     />
                   </div>
                 </div>
@@ -2884,17 +2996,22 @@ export default function AdminAlunosPage() {
               {formData.faturamentoTipo === 'EMPRESA' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Razão Social *</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Razão Social <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.faturamentoRazaoSocial}
                       onChange={(e) => setFormData({ ...formData, faturamentoRazaoSocial: e.target.value })}
                       className="input w-full"
                       placeholder="Razão social da empresa"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">CNPJ *</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      CNPJ <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.faturamentoCnpj}
@@ -2906,38 +3023,48 @@ export default function AdminAlunosPage() {
                       className="input w-full"
                       placeholder="00.000.000/0001-00"
                       maxLength={18}
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Email para NF *</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Email para NF <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="email"
                       value={formData.faturamentoEmail}
                       onChange={(e) => setFormData({ ...formData, faturamentoEmail: e.target.value })}
                       className="input w-full"
                       placeholder="email@empresa.com"
+                      required
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Endereço fiscal (opcional)</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Endereço fiscal <span className="text-red-500">*</span>
+                    </label>
                     <textarea
                       value={formData.faturamentoEndereco}
                       onChange={(e) => setFormData({ ...formData, faturamentoEndereco: e.target.value })}
                       className="input w-full min-h-[60px]"
                       placeholder="Endereço completo da empresa"
                       rows={2}
+                      required
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição da NF (opcional)</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Descrição da NF <span className="text-red-500">*</span>
+                    </label>
                     <textarea
                       value={formData.faturamentoDescricaoNfse}
                       onChange={(e) => setFormData({ ...formData, faturamentoDescricaoNfse: e.target.value })}
                       className="input w-full min-h-[80px] font-mono text-sm"
                       placeholder={'Aulas de idioma - Aluno {aluno}, frequência {frequencia}x/semana, curso {curso}.\nPagamento referente ao mês de {mes}/{ano}.'}
                       rows={3}
+                      required
                     />
-                    <p className="text-xs text-gray-500 mt-1">Use {`{aluno}`}, {`{frequencia}`}, {`{curso}`}, {`{mes}`}, {`{ano}`} como variáveis. Deixe vazio para usar o modelo padrão.</p>
+                    <p className="text-xs text-gray-500 mt-1">Use {`{aluno}`}, {`{frequencia}`}, {`{curso}`}, {`{mes}`}, {`{ano}`} como variáveis.</p>
                   </div>
                 </div>
               )}
@@ -3017,13 +3144,16 @@ export default function AdminAlunosPage() {
               </div>
               {formData.tipoAula === 'GRUPO' && (
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Nome do grupo</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Nome do grupo <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     value={formData.nomeGrupo}
                     onChange={(e) => setFormData({ ...formData, nomeGrupo: e.target.value })}
                     className="input w-full"
                     placeholder="Ex.: Turma Inglês A1"
+                    required
                   />
                 </div>
               )}
@@ -3046,7 +3176,7 @@ export default function AdminAlunosPage() {
               {formData.moraNoExterior ? (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Endereço completo (cole as informações em uma única caixa)
+                    Endereço completo (cole as informações em uma única caixa) <span className="text-red-500">*</span>
                   </label>
                   <textarea
                     value={formData.enderecoExterior}
@@ -3056,12 +3186,15 @@ export default function AdminAlunosPage() {
                     className="input w-full min-h-[100px]"
                     placeholder="Cole ou digite o endereço completo..."
                     rows={4}
+                    required
                   />
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">CEP</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      CEP <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.cep}
@@ -3069,40 +3202,52 @@ export default function AdminAlunosPage() {
                       onBlur={handleCepBlur}
                       className="input w-full"
                       placeholder="00000-000"
+                      required
                     />
                     {cepLoading && (
                       <p className="text-xs text-gray-500 mt-1">Buscando...</p>
                     )}
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Rua</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Rua <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.rua}
                       onChange={(e) => setFormData({ ...formData, rua: e.target.value })}
                       className="input w-full"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Bairro</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Bairro <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.bairro}
                       onChange={(e) => setFormData({ ...formData, bairro: e.target.value })}
                       className="input w-full"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Cidade</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Cidade <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.cidade}
                       onChange={(e) => setFormData({ ...formData, cidade: e.target.value })}
                       className="input w-full"
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Estado</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Estado <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.estado}
@@ -3112,20 +3257,24 @@ export default function AdminAlunosPage() {
                       className="input w-full"
                       placeholder="UF"
                       maxLength={2}
+                      required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Número</label>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Número <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={formData.numero}
                       onChange={(e) => setFormData({ ...formData, numero: e.target.value })}
                       className="input w-full"
+                      required
                     />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Complemento
+                      Complemento <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -3134,6 +3283,7 @@ export default function AdminAlunosPage() {
                         setFormData({ ...formData, complemento: e.target.value })
                       }
                       className="input w-full"
+                      required
                     />
                   </div>
                 </div>
@@ -3168,7 +3318,7 @@ export default function AdminAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Valor mensalidade (R$) <span className="text-red-500">*</span>
+                    Valor mensalidade (R$) {!formData.bolsista && <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="text"
@@ -3182,6 +3332,9 @@ export default function AdminAlunosPage() {
                     required={!formData.bolsista}
                     disabled={!!formData.bolsista}
                   />
+                  {formData.bolsista && (
+                    <p className="text-xs text-gray-500 mt-1">Aluno bolsista: valor fixo em R$ 0,00.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -3223,7 +3376,7 @@ export default function AdminAlunosPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Melhores horários
+                    Melhores horários <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -3233,11 +3386,12 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="Ex: manhã, tarde"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Melhores dias da semana
+                    Melhores dias da semana <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -3247,13 +3401,14 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="Ex: seg, qua, sex"
+                    required
                   />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Nome do vendedor
+                    Nome do vendedor <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -3262,11 +3417,12 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, nomeVendedor: e.target.value })
                     }
                     className="input w-full"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Nome da empresa ou indicador
+                    Nome da empresa ou indicador <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -3275,11 +3431,14 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, nomeEmpresaOuIndicador: e.target.value })
                     }
                     className="input w-full"
+                    required
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Observações</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Observações <span className="text-red-500">*</span>
+                </label>
                 <textarea
                   value={formData.observacoes}
                   onChange={(e) =>
@@ -3288,6 +3447,7 @@ export default function AdminAlunosPage() {
                   className="input w-full min-h-[80px]"
                   placeholder="Observações gerais..."
                   rows={3}
+                  required
                 />
               </div>
             </div>
@@ -3538,7 +3698,7 @@ export default function AdminAlunosPage() {
           title={listModal?.title || ''}
           size="xl"
         >
-          {listLoading ? (
+          {listLoading && listModal?.type !== 'missingRequired' ? (
             <p className="text-gray-500">Carregando...</p>
           ) : listModal?.type === 'belowHourRate' ? (
             <div className="space-y-3">
@@ -3588,6 +3748,69 @@ export default function AdminAlunosPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          ) : listModal?.type === 'missingRequired' ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-gray-600 max-w-3xl">
+                  Lista baseada nos mesmos campos obrigatórios do formulário «Adicionar / Editar aluno» (menor de idade,
+                  faturamento em nome de empresa, aula em grupo, endereço no Brasil ou exterior, etc.).
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 inline-flex items-center gap-2"
+                  onClick={() => void fetchMissingRequiredStats()}
+                  disabled={missingRequiredLoading}
+                >
+                  {missingRequiredLoading ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : null}
+                  Atualizar lista
+                </Button>
+              </div>
+              {missingRequiredLoading ? (
+                <p className="text-gray-500 py-8 text-center">Carregando...</p>
+              ) : missingRequiredStats.list.length === 0 ? (
+                <p className="text-center text-gray-600 py-8">
+                  Nenhuma matrícula com informações obrigatórias faltando.
+                </p>
+              ) : (
+                <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+                  {missingRequiredStats.list.map((row) => (
+                    <div
+                      key={row.enrollmentId}
+                      className="border border-amber-200 rounded-lg bg-amber-50/50 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                        <div>
+                          <p className="font-semibold text-gray-900">{row.nome}</p>
+                          <p className="text-xs text-gray-600">Escola: {row.escolaLabel}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => {
+                            setListModal(null)
+                            handleEdit(row.student)
+                          }}
+                        >
+                          Editar
+                        </Button>
+                      </div>
+                      <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide mb-1">
+                        Campos em falta
+                      </p>
+                      <ul className="list-disc list-inside text-sm text-gray-800 space-y-0.5">
+                        {row.missing.map((label, idx) => (
+                          <li key={`${row.enrollmentId}-${idx}-${label}`}>{label}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : listModal?.type === 'wrongFrequency' || listModal?.type === 'wrongFrequencyProximaSemana' ? (
             <div className="overflow-x-auto">

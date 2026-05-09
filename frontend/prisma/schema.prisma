@@ -727,20 +727,22 @@ model Attendance {
 // Model: Book (Cat├ílogo de Livros)
 // Livros cadastrados com PDF, capa, n├¡vel, etc. Usado para liberar aos alunos.
 model Book {
-  id             String   @id @default(cuid())
-  nome           String   @db.VarChar(255) @map("nome")
-  level          String   @db.VarChar(20) @map("level")   // A1, A2, A3, B1, B2, B3, B4, C1, C2
-  totalPaginas   Int      @map("total_paginas")
-  imprimivel     Boolean  @default(true) @map("imprimivel")
-  pdfPath        String?  @db.VarChar(500) @map("pdf_path")  // Caminho relativo: /uploads/books/{id}/livro.pdf
-  capaPath       String?  @db.VarChar(500) @map("capa_path") // Caminho relativo: /uploads/books/{id}/capa.jpg
-  criadoEm       DateTime @default(now()) @map("created_at")
-  atualizadoEm   DateTime @updatedAt @map("updated_at")
+  id             String     @id @default(cuid())
+  nome           String     @db.VarChar(255) @map("nome")
+  level          String     @db.VarChar(20) @map("level")   // A1, A2, A3, B1, B2, B3, B4, C1, C2
+  language       Language?  @map("language")                // Idioma do livro (ENGLISH/SPANISH). Liga liberação automática a professores que ensinam o mesmo idioma.
+  totalPaginas   Int        @map("total_paginas")
+  imprimivel     Boolean    @default(true) @map("imprimivel")
+  pdfPath        String?    @db.VarChar(500) @map("pdf_path")  // Caminho relativo: /uploads/books/{id}/livro.pdf
+  capaPath       String?    @db.VarChar(500) @map("capa_path") // Caminho relativo: /uploads/books/{id}/capa.jpg
+  criadoEm       DateTime   @default(now()) @map("created_at")
+  atualizadoEm   DateTime   @updatedAt @map("updated_at")
 
   releases       BookRelease[]
   audios         BookAudio[]
 
   @@index([level])
+  @@index([language])
   @@map("books")
 }
 

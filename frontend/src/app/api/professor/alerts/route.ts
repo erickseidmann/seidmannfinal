@@ -43,7 +43,13 @@ export async function GET(request: NextRequest) {
 
     const feedCutoff = cutoffDateProfessorHomeFeed()
     const readStillVisibleSince = cutoffDateProfessorReadAlertsStillVisible()
-    const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT', 'PROOF_RESEND_NEEDED'] as const
+    const TIPOS_NOTIFICACAO = [
+      'PAYMENT_DONE',
+      'NEW_ANNOUNCEMENT',
+      'NEW_STUDENT',
+      'PROOF_RESEND_NEEDED',
+      'STUDENT_INACTIVE',
+    ] as const
 
     // Janela de 30 dias; notificações já lidas somem após 2 dias
     const rawAlerts = await findTeacherAlertsForProfessorWidgets(

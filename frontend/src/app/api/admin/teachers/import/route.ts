@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window'
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = []
@@ -161,6 +162,7 @@ export async function POST(request: NextRequest) {
             infosPagamento: row[headerMap['infospagamento']]?.trim() || null,
             nota,
             status,
+            paymentDueDay: DEFAULT_TEACHER_PAYMENT_DUE_DAY,
           },
         })
         created.push({

@@ -192,3 +192,36 @@ export function formatMonthInTZ(date: Date | string, locale: string, tz: string 
     month: 'long',
   }).format(d)
 }
+
+/**
+ * Início do dia civil (00:00) em America/Sao_Paulo como instante UTC.
+ * `dateKey` = AAAA-MM-DD. Brasil permanece em UTC−3 o ano todo (sem DST).
+ */
+export function startOfCalendarDayBrazilDateKey(dateKey: string): Date | null {
+  const m = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null
+  return new Date(Date.UTC(y, mo - 1, d, 3, 0, 0, 0))
+}
+
+/** Parâmetro da API (AAAA-MM-DD ou ISO) → chave AAAA-MM-DD no calendário de São Paulo. */
+export function inactiveFromParamToBrazilDateKey(inactiveFrom: unknown): string {
+  if (typeof inactiveFrom === 'string') {
+    const t = inactiveFrom.trim()
+    const m = t.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`
+    const parsed = new Date(t)
+    if (!Number.isNaN(parsed.getTime())) return toDateKeyInTZ(parsed)
+  }
+  return toDateKeyInTZ(new Date())
+}
+
+/** AAAA-MM-DD → DD/MM/AAAA (rótulo para mensagens). */
+export function formatDateKeyPtBR(dateKey: string): string {
+  const m = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return dateKey
+  return `${m[3]}/${m[2]}/${m[1]}`
+}

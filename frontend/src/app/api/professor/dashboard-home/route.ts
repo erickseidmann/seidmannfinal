@@ -14,7 +14,13 @@ import { findTeacherAlertsForProfessorWidgets } from '@/lib/prisma-teacher-alert
 import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert'
 import { requireTeacher } from '@/lib/auth'
 
-const TIPOS_NOTIFICACAO = ['PAYMENT_DONE', 'NEW_ANNOUNCEMENT', 'NEW_STUDENT', 'PROOF_RESEND_NEEDED'] as const
+const TIPOS_NOTIFICACAO = [
+  'PAYMENT_DONE',
+  'NEW_ANNOUNCEMENT',
+  'NEW_STUDENT',
+  'PROOF_RESEND_NEEDED',
+  'STUDENT_INACTIVE',
+] as const
 
 function studentLabel(
   enr: { nome: string; tipoAula: string | null; nomeGrupo: string | null }

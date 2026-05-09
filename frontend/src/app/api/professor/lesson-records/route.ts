@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
+import { toDateKeyInTZ } from '@/lib/datetime'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -232,15 +233,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verificar se a aula está em feriado nacional — não permitir registro
-    const lessonDate = new Date(lesson.startAt)
-    const dateKey = `${lessonDate.getFullYear()}-${String(lessonDate.getMonth() + 1).padStart(2, '0')}-${String(lessonDate.getDate()).padStart(2, '0')}`
+    // Verificar se a aula está em feriado definido no calendário — não permitir registro
+    // Usa timezone São Paulo para casar com a chave usada no calendário (YYYY-MM-DD).
+    const dateKey = toDateKeyInTZ(lesson.startAt)
     const holiday = await prisma.holiday.findUnique({
       where: { dateKey },
     })
     if (holiday) {
       return NextResponse.json(
-        { ok: false, message: 'Não trabalhamos nos feriados nacionais' },
+        {
+          ok: false,
+          message:
+            'Não é possível registrar aula em dia marcado como feriado no calendário.',
+        },
         { status: 400 }
       )
     }

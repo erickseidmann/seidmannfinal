@@ -8,8 +8,10 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
+import { releaseBookToActiveTeachersForLanguage, type TeacherLanguage } from '@/lib/teacher-book-releases'
 
 const BOOK_LEVELS = ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'B4', 'C1', 'C2'] as const
+const BOOK_LANGUAGES = ['ENGLISH', 'SPANISH'] as const
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,6 +40,7 @@ export async function GET(request: NextRequest) {
         id: b.id,
         nome: b.nome,
         level: b.level,
+        language: b.language ?? null,
         totalPaginas: b.totalPaginas,
         imprimivel: b.imprimivel,
         pdfPath: b.pdfPath,
@@ -81,6 +84,12 @@ export async function POST(request: NextRequest) {
 
     const nome = String(formData.get('nome') || '').trim()
     const level = String(formData.get('level') || '').toUpperCase()
+    const languageRaw = String(formData.get('language') || '').toUpperCase()
+    const language: TeacherLanguage | null = BOOK_LANGUAGES.includes(
+      languageRaw as (typeof BOOK_LANGUAGES)[number]
+    )
+      ? (languageRaw as TeacherLanguage)
+      : null
     const totalPaginas = parseInt(String(formData.get('totalPaginas') || '0'), 10)
     const imprimivel = formData.get('imprimivel') === 'true' || formData.get('imprimivel') === '1'
     const pdfFile = formData.get('pdf') as File | null
@@ -95,6 +104,12 @@ export async function POST(request: NextRequest) {
     if (!BOOK_LEVELS.includes(level as (typeof BOOK_LEVELS)[number])) {
       return NextResponse.json(
         { ok: false, message: `Nível inválido. Use: ${BOOK_LEVELS.join(', ')}` },
+        { status: 400 }
+      )
+    }
+    if (!language) {
+      return NextResponse.json(
+        { ok: false, message: 'Idioma é obrigatório (Inglês ou Espanhol).' },
         { status: 400 }
       )
     }
@@ -136,6 +151,7 @@ export async function POST(request: NextRequest) {
       data: {
         nome,
         level,
+        language,
         totalPaginas,
         imprimivel,
         pdfPath: null,
@@ -167,6 +183,19 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // Auto-liberar este livro a todos os professores ATIVOS que ensinam este idioma.
+    let autoReleased = 0
+    try {
+      const result = await releaseBookToActiveTeachersForLanguage({
+        bookId: book.id,
+        language,
+        adminEmail: auth.session?.email || 'admin@seidmann',
+      })
+      autoReleased = result.released
+    } catch (autoErr) {
+      console.error('[api/admin/books POST] Falha ao auto-liberar livro a professores:', autoErr)
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -174,12 +203,17 @@ export async function POST(request: NextRequest) {
           id: book.id,
           nome,
           level,
+          language,
           totalPaginas,
           imprimivel,
           pdfPath: relativePdfPath,
           capaPath: relativeCapaPath,
+          autoReleasedToTeachers: autoReleased,
         },
-        message: 'Livro cadastrado com sucesso',
+        message:
+          autoReleased > 0
+            ? `Livro cadastrado e liberado automaticamente para ${autoReleased} professor(es) que ensina(m) este idioma.`
+            : 'Livro cadastrado com sucesso',
       },
       { status: 201 }
     )

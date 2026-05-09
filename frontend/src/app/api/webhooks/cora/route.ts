@@ -11,6 +11,7 @@ import { getInvoice } from '@/lib/cora'
 import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
 import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
+import { liberarAcessoAlunoSafe } from '@/lib/access'
 
 const CORA_WEBHOOK_UA = 'Cora-Webhook'
 
@@ -193,6 +194,10 @@ async function handleInvoicePaid(coraInvoiceId: string): Promise<void> {
     }
   }
 
+  // Liberar acesso à plataforma (cria usuário + envia e-mail com login/senha)
+  // automaticamente assim que o pagamento for confirmado.
+  await liberarAcessoAlunoSafe({ enrollmentId, contexto: 'cora-webhook' })
+
   try {
     await sendPaymentConfirmation(
       enrollment,
@@ -332,6 +337,9 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
   }).catch(() => {})
 
   if (newStatus === 'PAGO') {
+    // Liberar acesso à plataforma automaticamente (cria conta + envia e-mail)
+    await liberarAcessoAlunoSafe({ enrollmentId: code, contexto: 'cora-legacy-webhook' })
+
     const enrollmentCompleto = await prisma.enrollment.findUnique({
       where: { id: code },
       include: { user: { select: { email: true } }, paymentInfo: true },

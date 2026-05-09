@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, CalendarX } from 'lucide-react'
 
 interface StudentPresenceItem {
   enrollmentId: string
@@ -172,6 +172,23 @@ export default function AdminRegistrosAulasPage() {
   const [filterProfessor, setFilterProfessor] = useState<string>('')
   const [filterAluno, setFilterAluno] = useState<string>('')
   const [filterMes, setFilterMes] = useState<string>('')
+
+  // Bulk delete por dia
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeleteDate, setBulkDeleteDate] = useState<string>('')
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false)
+  const [bulkDeleteSubmitting, setBulkDeleteSubmitting] = useState(false)
+  type BulkDeletePreviewItem = {
+    id: string
+    startAt: string
+    alunoLabel: string
+    professorNome: string
+  }
+  const [bulkDeletePreview, setBulkDeletePreview] = useState<{
+    dateKey: string
+    total: number
+    records: BulkDeletePreviewItem[]
+  } | null>(null)
 
   const fetchRecords = useCallback(async () => {
     try {
@@ -391,6 +408,76 @@ export default function AdminRegistrosAulasPage() {
     }
   }
 
+  const openBulkDelete = () => {
+    setBulkDeleteDate('')
+    setBulkDeletePreview(null)
+    setBulkDeleteOpen(true)
+  }
+
+  const closeBulkDelete = () => {
+    if (bulkDeleteSubmitting) return
+    setBulkDeleteOpen(false)
+    setBulkDeletePreview(null)
+    setBulkDeleteDate('')
+  }
+
+  const fetchBulkDeletePreview = async (date: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setBulkDeletePreview(null)
+      return
+    }
+    setBulkDeleteLoading(true)
+    setBulkDeletePreview(null)
+    try {
+      const res = await fetch(
+        `/api/admin/lesson-records/by-day?date=${encodeURIComponent(date)}`,
+        { credentials: 'include' }
+      )
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao consultar registros do dia', type: 'error' })
+        return
+      }
+      setBulkDeletePreview({
+        dateKey: json.data.dateKey,
+        total: json.data.total,
+        records: json.data.records || [],
+      })
+    } catch {
+      setToast({ message: 'Erro ao consultar registros do dia', type: 'error' })
+    } finally {
+      setBulkDeleteLoading(false)
+    }
+  }
+
+  const handleBulkDeleteConfirm = async () => {
+    if (!bulkDeletePreview || bulkDeletePreview.total === 0) return
+    setBulkDeleteSubmitting(true)
+    try {
+      const res = await fetch(
+        `/api/admin/lesson-records/by-day?date=${encodeURIComponent(bulkDeletePreview.dateKey)}`,
+        { method: 'DELETE', credentials: 'include' }
+      )
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao remover registros', type: 'error' })
+        return
+      }
+      setToast({
+        message: json.message || `${json.data?.deleted ?? 0} registro(s) removido(s).`,
+        type: 'success',
+      })
+      setBulkDeleteOpen(false)
+      setBulkDeletePreview(null)
+      setBulkDeleteDate('')
+      fetchRecords()
+    } catch {
+      setToast({ message: 'Erro ao remover registros', type: 'error' })
+    } finally {
+      setBulkDeleteSubmitting(false)
+    }
+  }
+
   const handleDelete = async (id: string) => {
     if (!confirm('Excluir este registro?')) return
     try {
@@ -413,12 +500,23 @@ export default function AdminRegistrosAulasPage() {
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-3xl font-bold text-gray-900">Registros de aulas</h1>
-          <Button variant="primary" onClick={openAdd}>
-            <Plus className="w-4 h-4 mr-2" />
-            Adicionar aula
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openBulkDelete}
+              className="inline-flex items-center gap-2 rounded-lg border-2 border-red-500 px-4 py-2 text-sm font-semibold text-red-600 transition-all duration-200 hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+              title="Remove todos os registros de aula de um dia específico"
+            >
+              <CalendarX className="w-4 h-4" />
+              Remover aulas de um dia
+            </button>
+            <Button variant="primary" onClick={openAdd}>
+              <Plus className="w-4 h-4 mr-2" />
+              Adicionar aula
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -842,6 +940,139 @@ export default function AdminRegistrosAulasPage() {
             </div>
           )}
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteOpen}
+        onClose={closeBulkDelete}
+        title="Remover registros de aula de um dia"
+        size="lg"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={closeBulkDelete}
+              disabled={bulkDeleteSubmitting}
+            >
+              Cancelar
+            </Button>
+            <button
+              type="button"
+              onClick={() => void handleBulkDeleteConfirm()}
+              disabled={
+                bulkDeleteSubmitting ||
+                bulkDeleteLoading ||
+                !bulkDeletePreview ||
+                bulkDeletePreview.total === 0
+              }
+              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-6 py-3 text-base font-semibold text-white transition-all duration-200 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkDeleteSubmitting
+                ? 'Removendo...'
+                : bulkDeletePreview && bulkDeletePreview.total > 0
+                ? `Confirmar e remover ${bulkDeletePreview.total} registro(s)`
+                : 'Confirmar exclusão'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <strong>Atenção:</strong> esta ação remove definitivamente todos os{' '}
+            <em>registros de aula</em> (LessonRecord) cujas aulas ocorreram no dia
+            selecionado, no fuso de São Paulo. As aulas em si (calendário) NÃO são apagadas — apenas o
+            que foi registrado pelos professores ou admins.
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Dia <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              value={bulkDeleteDate}
+              onChange={(e) => {
+                const v = e.target.value
+                setBulkDeleteDate(v)
+                if (v) void fetchBulkDeletePreview(v)
+                else setBulkDeletePreview(null)
+              }}
+              className="input w-full max-w-xs"
+              disabled={bulkDeleteSubmitting}
+            />
+          </div>
+
+          {bulkDeleteLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Consultando registros do dia...
+            </div>
+          )}
+
+          {!bulkDeleteLoading && bulkDeletePreview && (
+            <div className="space-y-3">
+              <div
+                className={`rounded-lg p-3 text-sm ${
+                  bulkDeletePreview.total === 0
+                    ? 'border border-gray-200 bg-gray-50 text-gray-700'
+                    : 'border border-red-200 bg-red-50 text-red-800'
+                }`}
+              >
+                {bulkDeletePreview.total === 0 ? (
+                  <>Nenhum registro encontrado para este dia.</>
+                ) : (
+                  <>
+                    Serão removidos <strong>{bulkDeletePreview.total}</strong> registro(s) de aula
+                    referentes a <strong>
+                      {(() => {
+                        const [y, m, d] = bulkDeletePreview.dateKey.split('-')
+                        return `${d}/${m}/${y}`
+                      })()}
+                    </strong>.
+                  </>
+                )}
+              </div>
+
+              {bulkDeletePreview.total > 0 && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="max-h-64 overflow-y-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">
+                            Hora
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">
+                            Aluno / Grupo
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase">
+                            Professor
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bulkDeletePreview.records.map((r) => {
+                          const d = new Date(r.startAt)
+                          const hh = String(d.getHours()).padStart(2, '0')
+                          const mm = String(d.getMinutes()).padStart(2, '0')
+                          return (
+                            <tr key={r.id}>
+                              <td className="px-3 py-2 text-gray-800 tabular-nums">
+                                {hh}:{mm}
+                              </td>
+                              <td className="px-3 py-2 text-gray-800">{r.alunoLabel}</td>
+                              <td className="px-3 py-2 text-gray-800">{r.professorNome}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </Modal>
 
       {toast && (

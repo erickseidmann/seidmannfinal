@@ -172,10 +172,30 @@
   .animate-registros-open-card {
     animation: registros-open-card-pulse 1.25s ease-in-out infinite;
   }
+
+  @keyframes stat-cube-blink {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.35);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(234, 88, 12, 0.15);
+      transform: scale(1.015);
+    }
+  }
+
+  .stat-cube-blink {
+    animation: stat-cube-blink 1.25s ease-in-out infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-registros-open-card {
+    animation: none;
+  }
+
+  .stat-cube-blink {
     animation: none;
   }
 }

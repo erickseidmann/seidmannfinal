@@ -62,18 +62,58 @@ export async function GET(request: NextRequest) {
         ? { status: { notIn: ENROLLMENT_STATUSES_PRE_SCHEDULING } }
         : {} // Se não especificado, busca todos
 
-    // Construir filtro de busca (nome, email, whatsapp, nomeGrupo)
-    // MySQL não suporta mode: 'insensitive', mas aceita contains (case-sensitive)
-    const searchFilter: any = searchParam
-      ? {
-          OR: [
-            { nome: { contains: searchParam } },
-            { email: { contains: searchParam } },
-            { whatsapp: { contains: searchParam } },
-            { nomeGrupo: { contains: searchParam } },
-          ],
-        }
-      : {}
+    // Construir filtro de busca em todos os campos relevantes da matrícula.
+    // Ao informar números (CPF, CNPJ, telefone, CEP), normalizamos removendo
+    // caracteres não-dígitos para casar com o que está salvo (ex.: "12345678901").
+    // MySQL não suporta mode: 'insensitive', mas `contains` é case-insensitive
+    // por padrão para colunas com collation utf8mb4_*_ci.
+    const searchFilter: any = (() => {
+      if (!searchParam) return {}
+      const onlyDigits = searchParam.replace(/\D/g, '')
+      const ors: any[] = [
+        { nome: { contains: searchParam } },
+        { email: { contains: searchParam } },
+        { whatsapp: { contains: searchParam } },
+        { nomeGrupo: { contains: searchParam } },
+        { cpf: { contains: searchParam } },
+        { cpfResponsavel: { contains: searchParam } },
+        { nomeResponsavel: { contains: searchParam } },
+        { emailResponsavel: { contains: searchParam } },
+        { trackingCode: { contains: searchParam } },
+        { nomeVendedor: { contains: searchParam } },
+        { nomeEmpresaOuIndicador: { contains: searchParam } },
+        { escolaMatricula: { contains: searchParam } },
+        { escolaMatriculaOutro: { contains: searchParam } },
+        { faturamentoRazaoSocial: { contains: searchParam } },
+        { faturamentoCnpj: { contains: searchParam } },
+        { faturamentoEmail: { contains: searchParam } },
+        { faturamentoEndereco: { contains: searchParam } },
+        { nivel: { contains: searchParam } },
+        { objetivo: { contains: searchParam } },
+        { observacoes: { contains: searchParam } },
+        { disponibilidade: { contains: searchParam } },
+        { rua: { contains: searchParam } },
+        { bairro: { contains: searchParam } },
+        { cidade: { contains: searchParam } },
+        { estado: { contains: searchParam } },
+        { cep: { contains: searchParam } },
+        { numero: { contains: searchParam } },
+        { complemento: { contains: searchParam } },
+        { enderecoExterior: { contains: searchParam } },
+        { user: { is: { email: { contains: searchParam } } } },
+        { user: { is: { nome: { contains: searchParam } } } },
+      ]
+      if (onlyDigits && onlyDigits !== searchParam) {
+        ors.push(
+          { whatsapp: { contains: onlyDigits } },
+          { cpf: { contains: onlyDigits } },
+          { cpfResponsavel: { contains: onlyDigits } },
+          { faturamentoCnpj: { contains: onlyDigits } },
+          { cep: { contains: onlyDigits } },
+        )
+      }
+      return { OR: ors }
+    })()
 
     // Combinar filtros
     const whereClause: any = {

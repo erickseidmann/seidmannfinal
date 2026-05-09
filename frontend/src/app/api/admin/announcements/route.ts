@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { notificationRetentionCutoff } from '@/lib/notification-retention'
 
 /** Vercel / ambientes serverless: anúncios para muitos alunos podem demorar (vários inserts em lote). */
 export const maxDuration = 120
@@ -32,7 +33,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Mostra apenas anúncios criados nos últimos 30 dias (política de retenção).
+    const cutoff = notificationRetentionCutoff()
     const announcements = await prisma.announcement.findMany({
+      where: { criadoEm: { gte: cutoff } },
       orderBy: {
         criadoEm: 'desc',
       },

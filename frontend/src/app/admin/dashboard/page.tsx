@@ -257,7 +257,7 @@ export default function AdminDashboardPage() {
   const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
-  const [linksMatriculaAberto, setLinksMatriculaAberto] = useState(false)
+  const [linksImportantesAberto, setLinksImportantesAberto] = useState(false)
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null)
   const [showAuditModal, setShowAuditModal] = useState(false)
   const [auditActivities, setAuditActivities] = useState<Array<{ id: string; actorName: string; action: string; detail: string; createdAt: string }>>([])
@@ -709,33 +709,36 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        {/* Links de matrícula para escolas parceiras (recolhível) */}
+        {/* Links importantes: matrícula parceiros + cadastro professor (recolhível) */}
         <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden">
           <button
             type="button"
-            onClick={() => setLinksMatriculaAberto((v) => !v)}
-            aria-expanded={linksMatriculaAberto}
+            onClick={() => setLinksImportantesAberto((v) => !v)}
+            aria-expanded={linksImportantesAberto}
             className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-100/80 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange focus-visible:ring-offset-2 rounded-xl"
           >
             <ChevronDown
-              className={`w-5 h-5 text-slate-500 shrink-0 transition-transform duration-200 ${linksMatriculaAberto ? 'rotate-0' : '-rotate-90'}`}
+              className={`w-5 h-5 text-slate-500 shrink-0 transition-transform duration-200 ${linksImportantesAberto ? 'rotate-0' : '-rotate-90'}`}
               aria-hidden
             />
             <Link2 className="w-5 h-5 text-slate-600 shrink-0" />
-            <h3 className="text-sm font-semibold text-slate-700 flex-1">Links de matrícula para escolas parceiras</h3>
+            <h3 className="text-sm font-semibold text-slate-700 flex-1">Links importantes</h3>
             <span className="text-xs text-slate-500 hidden sm:inline">
-              {linksMatriculaAberto ? 'Recolher' : 'Expandir'}
+              {linksImportantesAberto ? 'Recolher' : 'Expandir'}
             </span>
           </button>
-          {linksMatriculaAberto && (
+          {linksImportantesAberto && (
             <div className="px-4 pb-4 pt-0 border-t border-slate-200/80">
               <p className="text-xs text-slate-600 mb-3 pt-3">
-                Envie estes links para as escolas adicionarem alunos. O formulário exibe o nome da escola automaticamente.
+                Links de matrícula para escolas parceiras (o formulário exibe o nome da escola automaticamente) e
+                formulário público para candidatos a professor se cadastrarem — o cadastro fica pendente até a
+                equipe aprovar e liberar o acesso.
               </p>
               <div className="space-y-2">
                 <LinkItem label="Youbecome" path="/matricula?escola=YOUBECOME" />
                 <LinkItem label="Highway" path="/matricula?escola=HIGHWAY" />
                 <LinkItem label="Outra escola (troque NomeEscola)" path="/matricula?escola=OUTRO&nome=NomeEscola" />
+                <LinkItem label="Cadastro de professor (candidatos)" path="/cadastro-professor" />
               </div>
             </div>
           )}

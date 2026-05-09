@@ -11,7 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
-import { resolveTeacherPaymentMonthKeyContaining } from '@/lib/teacher-payment-month-resolve'
+import { resolveTeacherProofTargetMonthKey } from '@/lib/teacher-payment-month-resolve'
+import { validarJanelaEnvioNf } from '@/lib/finance/teacher-nf-window'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = [
@@ -73,14 +74,62 @@ export async function POST(request: NextRequest) {
     }
 
     const now = new Date()
-    const resolved = await resolveTeacherPaymentMonthKeyContaining(teacher.id, now)
-    if (!resolved) {
+
+    // 1) Resolve PRIMEIRO o (year, month) que será usado no TeacherPaymentMonth.
+    //    Regra (vide resolveTeacherProofTargetMonthKey):
+    //     - se o (bodyYear, bodyMonth) está em AGUARDANDO_REENVIO → usa o do body
+    //       (reenvio precisa cair no mesmo mês que o admin rejeitou);
+    //     - senão, usa o TeacherPaymentMonth cujo periodoInicio…periodoTermino contém "agora"
+    //       (= mês em que o pagamento está em aberto);
+    //     - fallback: o que veio do body.
+    //    Assim o comprovante "sempre vai pro mês correto" (mês de pagamento ativo do
+    //    professor), independente do mês civil que ele tenha selecionado na tela.
+    const target = await resolveTeacherProofTargetMonthKey(
+      teacher.id,
+      bodyYear,
+      bodyMonth,
+      now
+    )
+    const { year, month } = target
+
+    // 2) Carrega feriados bancários do mês resolvido (e do atual) para o cálculo
+    //    de dia de pagamento.
+    const monthKeysToFetch = new Set<string>()
+    monthKeysToFetch.add(`${year}-${String(month).padStart(2, '0')}`)
+    monthKeysToFetch.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
+    const holidayRows = await prisma.holiday.findMany({
+      where: {
+        OR: [...monthKeysToFetch].map((k) => ({ dateKey: { startsWith: k } })),
+      },
+      select: { dateKey: true },
+    })
+    const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
+
+    // 3) Aplica a janela em cima do mês RESOLVIDO (mês vigente/anterior + até D-1).
+    //    Para reenvios, o body já é o mês alvo; para envios normais, é o período
+    //    em aberto. Em qualquer caso, validamos contra o que vai ser gravado.
+    const janela = validarJanelaEnvioNf({
+      year,
+      month,
+      now,
+      holidaySet,
+    })
+    if (!janela.ok) {
       return NextResponse.json(
-        { ok: false, message: 'Nenhum período ativo encontrado para este professor' },
+        {
+          ok: false,
+          message: janela.mensagem,
+          data: {
+            dataPagamento: janela.dataPagamento.toISOString(),
+            dataLimite: janela.dataLimite.toISOString(),
+            motivo: janela.motivo,
+            resolvedYear: year,
+            resolvedMonth: month,
+          },
+        },
         { status: 400 }
       )
     }
-    const { year, month } = resolved
 
     if (!file || !(file instanceof Blob) || file.size === 0) {
       return NextResponse.json(
@@ -147,7 +196,15 @@ export async function POST(request: NextRequest) {
       entityId: teacher.id,
       action: 'PROOF_SENT',
       performedBy: auth.session?.userId ?? null,
-      metadata: { year, month, fileUrl, mensagem },
+      metadata: {
+        year,
+        month,
+        bodyYear,
+        bodyMonth,
+        resolvedFromBody: year === bodyYear && month === bodyMonth,
+        fileUrl,
+        mensagem,
+      },
     })
 
     return NextResponse.json({

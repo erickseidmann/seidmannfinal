@@ -1,6 +1,14 @@
 /**
  * GET /api/professor/lesson-records/ultima?enrollmentId=xxx
- * Retorna o último registro de aula para a matrícula (enrollment), entre as aulas deste professor.
+ *
+ * Retorna o último registro de aula para a matrícula (enrollment), considerando
+ * QUALQUER professor que já tenha dado aula para esse aluno/grupo. O professor
+ * autenticado precisa estar entre os que já deram aula nessa matrícula OU ser
+ * o professor atual (para que possa consultar o histórico antes da aula).
+ *
+ * Não há limite temporal: traz o último registro existente, mesmo que de muito
+ * tempo atrás, para que o professor atual veja o histórico pedagógico (livro,
+ * página, dever, observações etc.) antes de iniciar a aula.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -46,12 +54,27 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Autorização leve: o professor autenticado precisa ter alguma vinculação
+    // com a matrícula — ou já deu aula para ela, ou tem aula futura/atual
+    // designada (a aula clicada no calendário). Isso evita que professores
+    // consultem registros de alunos com os quais nunca tiveram contato.
+    const linkExiste = await prisma.lesson.count({
+      where: {
+        enrollmentId,
+        teacherId: teacher.id,
+      },
+    })
+    if (linkExiste === 0) {
+      return NextResponse.json(
+        { ok: false, message: 'Você não tem aula com esta matrícula.' },
+        { status: 403 }
+      )
+    }
+
+    // Última aula do aluno/grupo, independente de qual professor ministrou.
     const records = await (prisma as any).lessonRecord.findMany({
       where: {
-        lesson: {
-          enrollmentId,
-          teacherId: teacher.id,
-        },
+        lesson: { enrollmentId },
       },
       include: {
         studentPresences: {
@@ -69,7 +92,15 @@ export async function GET(request: NextRequest) {
     })
 
     const record = records[0] ?? null
-    return NextResponse.json({ ok: true, data: { record } })
+    return NextResponse.json({
+      ok: true,
+      data: {
+        record,
+        // Indica se o último registro foi de outro professor (UI sinaliza isso).
+        registradoPorOutroProfessor:
+          record?.lesson?.teacher && record.lesson.teacher.id !== teacher.id ? true : false,
+      },
+    })
   } catch (error) {
     console.error('[api/professor/lesson-records/ultima GET]', error)
     return NextResponse.json(

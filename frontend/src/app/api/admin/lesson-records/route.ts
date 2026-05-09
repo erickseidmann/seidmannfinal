@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
+import { toDateKeyInTZ } from '@/lib/datetime'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -171,6 +172,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: 'Aula não encontrada' },
         { status: 404 }
+      )
+    }
+
+    // Verificar se a aula está em feriado definido no calendário — não permitir registro
+    // Usa timezone São Paulo para casar com a chave usada no calendário (YYYY-MM-DD).
+    const lessonDateKey = toDateKeyInTZ(lesson.startAt)
+    const holiday = await prisma.holiday.findUnique({
+      where: { dateKey: lessonDateKey },
+    })
+    if (holiday) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            'Não é possível registrar aula em dia marcado como feriado no calendário.',
+        },
+        { status: 400 }
       )
     }
 

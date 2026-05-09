@@ -85,6 +85,7 @@ function notifTypeLabel(type: string, t: (key: string) => string): string {
   if (type === 'NEW_ANNOUNCEMENT') return t('professor.home.notifAnnouncement')
   if (type === 'NEW_STUDENT') return t('professor.home.notifNewStudent')
   if (type === 'PROOF_RESEND_NEEDED') return t('professor.home.notifProofResend')
+  if (type === 'STUDENT_INACTIVE') return t('professor.home.notifStudentInactive')
   return t('professor.home.notifGeneric')
 }
 

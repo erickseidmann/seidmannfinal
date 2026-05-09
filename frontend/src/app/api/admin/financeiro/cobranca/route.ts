@@ -13,6 +13,7 @@ import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
 import { generateMonthlyBilling, generateBulkBilling } from '@/lib/cora/billing'
 import { getInvoice } from '@/lib/cora/client'
+import { liberarAcessoAlunoSafe } from '@/lib/access'
 
 const createBillingSchema = z.object({
   enrollmentId: z.string().optional(),
@@ -265,6 +266,10 @@ export async function GET(request: NextRequest) {
                   performedBy: 'COBRANCA_SYNC',
                   metadata: { coraInvoiceId },
                 }).catch(() => {})
+
+                // Liberar acesso à plataforma automaticamente (cria conta + envia
+                // e-mail) ao detectar pagamento sincronizado pela Cora.
+                liberarAcessoAlunoSafe({ enrollmentId: enrollment.id, contexto: 'cobranca-sync' }).catch(() => {})
               } catch (syncErr) {
                 console.warn('[api/admin/financeiro/cobranca GET] Erro ao sincronizar PAID:', syncErr)
               }

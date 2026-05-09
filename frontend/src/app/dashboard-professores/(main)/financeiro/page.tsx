@@ -5,12 +5,13 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Wallet, Calendar, Clock, DollarSign, CheckCircle, AlertCircle, ThumbsUp, Loader2, FileText, Printer, FileCheck, RotateCcw } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
 import { resolveProfessorFinanceiroForToday } from '@/lib/professor-fin-period'
+import { validarJanelaEnvioNf } from '@/lib/finance/teacher-nf-window'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -241,6 +242,17 @@ export default function FinanceiroPage() {
     const parsed = Number(normalized)
     return Number.isFinite(parsed) ? parsed : null
   }
+
+  /**
+   * Janela de envio da nota fiscal/recibo: somente mês vigente ou mês anterior,
+   * e até 1 dia antes do dia de pagamento (dia 25, ou útil anterior em caso de
+   * fim de semana). O servidor reaplica a regra com a lista oficial de feriados.
+   */
+  const janelaNf = useMemo(
+    () => validarJanelaEnvioNf({ year: selectedAno, month: selectedMes }),
+    [selectedAno, selectedMes]
+  )
+  const podeEnviarNf = janelaNf.ok
 
   const abrirFluxoConfirmacao = () => {
     setComprovanteModalOpen(true)
@@ -555,7 +567,18 @@ export default function FinanceiroPage() {
                     <p className="text-amber-900/90 mt-1 text-xs">
                       Se a administração pediu um novo envio, selecione o arquivo correto abaixo.
                     </p>
-                    <Button variant="primary" className="mt-3 w-full md:w-auto" onClick={abrirFluxoReenvio}>
+                    {!podeEnviarNf && !janelaNf.ok ? (
+                      <p className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1.5">
+                        {janelaNf.mensagem}
+                      </p>
+                    ) : null}
+                    <Button
+                      variant="primary"
+                      className="mt-3 w-full md:w-auto"
+                      onClick={abrirFluxoReenvio}
+                      disabled={!podeEnviarNf}
+                      title={!janelaNf.ok ? janelaNf.mensagem : undefined}
+                    >
                       Anexar nota fiscal ou recibo
                     </Button>
                   </div>
@@ -568,10 +591,35 @@ export default function FinanceiroPage() {
                 <p className="text-sm text-gray-600">
                   Primeiro, confirme seu valor a receber. Em seguida, o sistema pedirá o anexo da nota fiscal ou recibo.
                 </p>
+                <p className="text-xs text-gray-500">
+                  O envio da nota fiscal só é permitido para o <strong>mês vigente</strong> ou para o{' '}
+                  <strong>mês anterior</strong>, e somente até <strong>1 dia antes</strong> do dia de
+                  pagamento (dia 25; se cair em fim de semana ou feriado bancário, o pagamento é
+                  antecipado para o dia útil anterior).
+                </p>
+                {!janelaNf.ok ? (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                    {janelaNf.mensagem}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500">
+                    Prazo final para envio deste período:{' '}
+                    <strong>
+                      {janelaNf.dataLimite.toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })}
+                    </strong>
+                    .
+                  </p>
+                )}
                 <Button
                   variant="primary"
                   onClick={abrirFluxoConfirmacao}
                   className="w-full md:w-auto min-h-[56px] text-base md:text-lg font-semibold"
+                  disabled={!podeEnviarNf}
+                  title={!janelaNf.ok ? janelaNf.mensagem : undefined}
                 >
                   Confirmar valor e anexar NF/recibo
                 </Button>

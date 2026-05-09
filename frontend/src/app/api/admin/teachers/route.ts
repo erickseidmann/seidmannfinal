@@ -11,6 +11,11 @@ import { requireAdmin } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { validateMeetingLink } from '@/lib/meeting-link'
 import bcrypt from 'bcryptjs'
+import {
+  mapIdiomasToBookLanguages,
+  releaseBooksToTeacherForLanguages,
+} from '@/lib/teacher-book-releases'
+import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
 
@@ -180,6 +185,7 @@ export async function POST(request: NextRequest) {
       idiomasFala,
       idiomasEnsina,
       linkSala,
+      paymentDueDay,
     } = body
 
     if (!nome || !email) {
@@ -223,6 +229,19 @@ export async function POST(request: NextRequest) {
     const arrFala = Array.isArray(idiomasFala) ? idiomasFala.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
     const arrEnsina = Array.isArray(idiomasEnsina) ? idiomasEnsina.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
 
+    let dueDayToUse: number = DEFAULT_TEACHER_PAYMENT_DUE_DAY
+    if (paymentDueDay !== undefined && paymentDueDay !== null && paymentDueDay !== '') {
+      const n = Number(paymentDueDay)
+      if (Number.isInteger(n) && n >= 1 && n <= 31) {
+        dueDayToUse = n
+      } else {
+        return NextResponse.json(
+          { ok: false, message: 'paymentDueDay deve ser um inteiro entre 1 e 31' },
+          { status: 400 }
+        )
+      }
+    }
+
     const teacher = await prisma.teacher.create({
       data: {
         nome: nome.trim(),
@@ -239,6 +258,7 @@ export async function POST(request: NextRequest) {
         idiomasFala: arrFala.length > 0 ? arrFala : undefined,
         idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : undefined,
         linkSala: typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null,
+        paymentDueDay: dueDayToUse,
       },
     })
 
@@ -263,6 +283,20 @@ export async function POST(request: NextRequest) {
         where: { id: teacher.id },
         data: { userId: user.id },
       })
+
+      // Auto-libera livros do catálogo conforme os idiomas que o professor ensina (INGLES → ENGLISH, etc.)
+      try {
+        const langs = mapIdiomasToBookLanguages(arrEnsina)
+        if (langs.length > 0) {
+          await releaseBooksToTeacherForLanguages({
+            teacherUserId: user.id,
+            languages: langs,
+            adminEmail: auth.session?.email || 'admin@seidmann',
+          })
+        }
+      } catch (autoErr) {
+        console.error('[api/admin/teachers POST] Falha ao auto-liberar livros ao novo professor:', autoErr)
+      }
     }
 
     return NextResponse.json({
@@ -282,6 +316,7 @@ export async function POST(request: NextRequest) {
           nota: teacher.nota,
           status: teacher.status,
           linkSala: teacher.linkSala ?? null,
+          paymentDueDay: teacher.paymentDueDay ?? null,
           criadoEm: teacher.criadoEm.toISOString(),
         },
       },

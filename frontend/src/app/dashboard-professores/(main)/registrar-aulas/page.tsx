@@ -9,6 +9,10 @@ import { ClipboardList, Loader2, CheckCircle, Circle, ChevronLeft, ChevronRight,
 import { useLanguage } from '@/contexts/LanguageContext'
 import { formatTimeInTZ, formatDateTimeInTZ, toDateKeyInTZ } from '@/lib/datetime'
 import { resolveProfessorFinanceiroForToday } from '@/lib/professor-fin-period'
+import {
+  labelProfessorCatalogBook,
+  type ProfessorCatalogBook,
+} from '@/lib/professor-catalog-books'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
@@ -169,6 +173,8 @@ export default function RegistrarAulasPage() {
   const [loadingRecord, setLoadingRecord] = useState(false)
   const [periodPaid, setPeriodPaid] = useState(false)
   const [registeringLessonId, setRegisteringLessonId] = useState<string | null>(null)
+  const [catalogBooks, setCatalogBooks] = useState<ProfessorCatalogBook[]>([])
+  const [catalogBooksLoading, setCatalogBooksLoading] = useState(true)
 
   /** Alinha ano/mês com o mesmo resolvedor do início do professor: período aberto atual ou próximo se o de hoje já está PAGO. */
   const resolveCurrentPeriodMonth = useCallback(async () => {
@@ -186,6 +192,35 @@ export default function RegistrarAulasPage() {
       // mantém mês civil inicial
     }
     setInitialMonthResolved(true)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setCatalogBooksLoading(true)
+    fetch('/api/professor/books', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        const list = Array.isArray(json?.data?.books)
+          ? json.data.books
+          : Array.isArray(json?.data)
+          ? json.data
+          : []
+        if (json?.ok) {
+          setCatalogBooks(list as ProfessorCatalogBook[])
+        } else {
+          setCatalogBooks([])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogBooks([])
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogBooksLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const fetchData = useCallback(async () => {
@@ -268,6 +303,17 @@ export default function RegistrarAulasPage() {
       setLoading(false)
     }
   }, [t, selectedYear, selectedMonth])
+
+  const catalogNomes = useMemo(
+    () => new Set(catalogBooks.map((b) => b.nome.trim())),
+    [catalogBooks]
+  )
+
+  const legacyBookNotInCatalog = useMemo(() => {
+    const t = form.book.trim()
+    if (!t) return null
+    return catalogNomes.has(t) ? null : t
+  }, [form.book, catalogNomes])
 
   useEffect(() => {
     if (initialMonthResolved) return
@@ -518,7 +564,14 @@ export default function RegistrarAulasPage() {
       return
     }
     if (!form.book?.trim()) {
-      setToast({ message: 'Preencha o campo Livro do aluno.', type: 'error' })
+      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
+      return
+    }
+    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
+      setToast({
+        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
+        type: 'error',
+      })
       return
     }
     if (!form.lastPage?.trim()) {
@@ -953,7 +1006,37 @@ export default function RegistrarAulasPage() {
 
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno <span className="text-red-500">*</span></label>
-              <input type="text" value={form.book} onChange={(e) => setForm({ ...form, book: e.target.value })} className="input w-full" placeholder="Ex.: Book 1" required aria-required="true" />
+              {catalogBooksLoading ? (
+                <p className="text-sm text-gray-500 py-2">Carregando catálogo de livros...</p>
+              ) : (
+                <>
+                  <select
+                    value={form.book}
+                    onChange={(e) => setForm({ ...form, book: e.target.value })}
+                    className="input w-full"
+                    required
+                    aria-required="true"
+                    disabled={catalogBooks.length === 0 && !legacyBookNotInCatalog}
+                  >
+                    <option value="">Selecione o livro</option>
+                    {legacyBookNotInCatalog && (
+                      <option value={legacyBookNotInCatalog}>
+                        {legacyBookNotInCatalog} (texto antigo — prefira um livro do catálogo)
+                      </option>
+                    )}
+                    {catalogBooks.map((b) => (
+                      <option key={b.id} value={b.nome}>
+                        {labelProfessorCatalogBook(b)}
+                      </option>
+                    ))}
+                  </select>
+                  {catalogBooks.length === 0 && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Nenhum livro cadastrado. Peça à administração para cadastrar em Admin → Livros.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Última página trabalhada <span className="text-red-500">*</span></label>

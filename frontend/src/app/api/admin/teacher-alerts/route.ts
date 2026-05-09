@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { notificationRetentionCutoff } from '@/lib/notification-retention'
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,8 +32,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - 15)
+    // Mostra apenas alertas criados nos últimos 30 dias (política de retenção).
+    const cutoff = notificationRetentionCutoff()
 
     const where: any = { criadoEm: { gte: cutoff } }
     if (teacherId) {

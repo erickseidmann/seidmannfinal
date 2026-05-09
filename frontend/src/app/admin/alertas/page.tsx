@@ -496,6 +496,9 @@ export default function AdminAlertasPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Alertas</h1>
             <p className="text-sm text-gray-600">Crie e gerencie anúncios (email/SMS)</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Anúncios e notificações ficam visíveis por <strong>30 dias</strong> após a criação. Após esse prazo somem das listas automaticamente.
+            </p>
           </div>
           <Button onClick={handleCreate} variant="primary" size="md" className="flex items-center gap-2">
             <Plus className="w-4 h-4" />

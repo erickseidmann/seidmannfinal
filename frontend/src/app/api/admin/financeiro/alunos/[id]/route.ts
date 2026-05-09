@@ -11,6 +11,7 @@ import { logFinanceAction, updateStudentPaymentSchema, getEnrollmentFinanceData 
 import { cancelInvoice } from '@/lib/cora/client'
 import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
 import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
+import { liberarAcessoAlunoSafe } from '@/lib/access'
 
 const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
 
@@ -160,6 +161,11 @@ export async function PATCH(
       // Se marcou como PAGO: cancelar boleto Cora, emitir NF (se habilitado) e enviar confirmação + NF ao aluno
       if (newMonthStatus === 'PAGO') {
         const isBolsista = Boolean((enrollment as { bolsista?: boolean | null }).bolsista)
+
+        // Liberar acesso à plataforma automaticamente (cria conta + envia e-mail
+        // com login e senha padrão) assim que o pagamento for confirmado.
+        await liberarAcessoAlunoSafe({ enrollmentId, contexto: 'financeiro-pago' })
+
         try {
           const coraInvoice = await prisma.coraInvoice.findUnique({
             where: { enrollmentId_year_month: { enrollmentId, year, month } },
