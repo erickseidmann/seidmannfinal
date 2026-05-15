@@ -30,6 +30,14 @@ export function isLessonScheduledStatus(status: string): boolean {
   return status === 'CONFIRMED' || status === 'REPOSICAO'
 }
 
+/** Aula permite criar ou editar lesson_record (CONFIRMED ou REPOSICAO). */
+export function canRegisterLesson(status: string): boolean {
+  return isLessonScheduledStatus(status)
+}
+
+export const LESSON_RECORD_BLOCKED_MESSAGE =
+  'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.'
+
 export function isLessonCancelledFamily(status: string): boolean {
   return (
     status === 'CANCELLED' ||

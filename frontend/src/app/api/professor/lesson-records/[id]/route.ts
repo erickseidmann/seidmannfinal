@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
 export async function GET(
   request: NextRequest,
@@ -107,12 +108,18 @@ export async function PATCH(
     const { id } = await params
     const existing = await (prisma as any).lessonRecord.findUnique({
       where: { id },
-      include: { lesson: { select: { teacherId: true, startAt: true } } },
+      include: { lesson: { select: { teacherId: true, startAt: true, status: true } } },
     })
     if (!existing) {
       return NextResponse.json(
         { ok: false, message: 'Registro não encontrado' },
         { status: 404 }
+      )
+    }
+    if (!canRegisterLesson(existing.lesson.status)) {
+      return NextResponse.json(
+        { ok: false, message: LESSON_RECORD_BLOCKED_MESSAGE },
+        { status: 400 }
       )
     }
     if (existing.lesson.teacherId !== teacher.id) {

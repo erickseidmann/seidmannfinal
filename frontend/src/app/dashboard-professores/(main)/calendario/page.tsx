@@ -34,6 +34,12 @@ import {
   getDayOfWeekInTZ,
   getDatePartsInTZ,
 } from '@/lib/datetime'
+import {
+  canRegisterLesson,
+  isLessonCancelledFamily,
+  LESSON_STATUS_LABELS,
+  type LessonStatusUi,
+} from '@/lib/lesson-status'
 
 type ViewType = 'month' | 'week' | 'day'
 type ModalStep = 'choose' | 'ver-ultima' | 'registrar'
@@ -42,7 +48,7 @@ interface Lesson {
   id: string
   enrollmentId: string
   teacherId: string
-  status: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  status: LessonStatusUi
   startAt: string
   durationMinutes: number
   notes: string | null
@@ -119,7 +125,8 @@ const statusColor = (s: string, hasPendingRequest?: boolean, hasRecord?: boolean
   if (s === 'CONFIRMED' && hasRecord) {
     return 'bg-orange-100 text-orange-800 border-orange-200'
   }
-  return s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : s === 'CANCELLED' ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'
+  if (isLessonCancelledFamily(s)) return 'bg-red-100 text-red-800 border-red-200'
+  return s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-amber-100 text-amber-800 border-amber-200'
 }
 
 export default function CalendarioProfessorPage() {
@@ -135,8 +142,14 @@ export default function CalendarioProfessorPage() {
     () => [...Array(12)].map((_, i) => formatMonthInTZ(new Date(Date.UTC(2024, i, 15, 12, 0, 0)), dateLocale)),
     [dateLocale]
   )
-  const statusLabel = (s: string) =>
-    s === 'CONFIRMED' ? t('professor.calendar.statusConfirmed') : s === 'CANCELLED' ? t('professor.calendar.statusCancelled') : t('professor.calendar.statusReposicao')
+  const statusLabel = (s: string) => {
+    if (s === 'CONFIRMED') return t('professor.calendar.statusConfirmed')
+    if (s === 'REPOSICAO') return t('professor.calendar.statusReposicao')
+    if (isLessonCancelledFamily(s)) {
+      return LESSON_STATUS_LABELS[s as LessonStatusUi] ?? t('professor.calendar.statusCancelled')
+    }
+    return s
+  }
   const getPresenceLabel = (p: string) =>
     p === 'PRESENTE' ? t('professor.calendar.presencePresent') : p === 'NAO_COMPARECEU' ? t('professor.calendar.presenceAbsent') : t('professor.calendar.presenceLate')
   const getLessonTypeLabel = (type: string) =>
@@ -203,7 +216,7 @@ export default function CalendarioProfessorPage() {
 
   const openLesson = useCallback((lesson: Lesson) => {
     setSelectedLesson(lesson)
-    setModalStep(lesson.status === 'CANCELLED' ? 'ver-ultima' : 'choose')
+    setModalStep(isLessonCancelledFamily(lesson.status) ? 'ver-ultima' : 'choose')
     setUltimaRecord(null)
   }, [])
 
@@ -306,7 +319,9 @@ export default function CalendarioProfessorPage() {
           id: raw.id,
           enrollmentId: raw.enrollment?.id ?? '',
           teacherId: raw.teacher?.id ?? '',
-          status: (raw.status === 'CANCELLED' || raw.status === 'REPOSICAO' ? raw.status : 'CONFIRMED') as Lesson['status'],
+          status: (['CONFIRMED', 'CANCELLED', 'CANCELLED_BY_TEACHER', 'CANCELLED_NO_REPLACEMENT', 'REPOSICAO'].includes(raw.status)
+            ? raw.status
+            : 'CONFIRMED') as Lesson['status'],
           startAt: raw.startAt,
           durationMinutes: raw.durationMinutes ?? 60,
           notes: raw.notes ?? null,
@@ -324,12 +339,16 @@ export default function CalendarioProfessorPage() {
         }
         setCurrentDate(new Date(raw.startAt))
         setSelectedLesson(lesson)
-        setModalStep('registrar')
-        setForm({
-          ...emptyForm,
-          tempoAulaMinutos: raw.durationMinutes ?? '',
-          curso: raw.enrollment?.curso ?? '',
-        })
+        if (canRegisterLesson(lesson.status)) {
+          setModalStep('registrar')
+          setForm({
+            ...emptyForm,
+            tempoAulaMinutos: raw.durationMinutes ?? '',
+            curso: raw.enrollment?.curso ?? '',
+          })
+        } else {
+          setModalStep('choose')
+        }
         window.history.replaceState(null, '', '/dashboard-professores/calendario')
       })
       .catch(() => {})
@@ -433,6 +452,11 @@ export default function CalendarioProfessorPage() {
     return nowTime.hour < lessonTime.hour || (nowTime.hour === lessonTime.hour && nowTime.minute <= lessonTime.minute)
   }, [selectedLesson])
 
+  const selectedLessonBlocked = useMemo(() => {
+    if (!selectedLesson) return false
+    return !canRegisterLesson(selectedLesson.status)
+  }, [selectedLesson])
+
   // Ouvir evento de atualização de aulas (quando solicitação é aprovada)
   useEffect(() => {
     const handleLessonsUpdated = () => {
@@ -493,6 +517,7 @@ export default function CalendarioProfessorPage() {
 
   const handleVerUltima = () => setModalStep('ver-ultima')
   const handleRegistrar = () => {
+    if (!selectedLesson || !canRegisterLesson(selectedLesson.status)) return
     setModalStep('registrar')
     setForm({
       ...emptyForm,
@@ -534,6 +559,14 @@ export default function CalendarioProfessorPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedLesson) return
+    if (!canRegisterLesson(selectedLesson.status)) {
+      setToast({
+        message:
+          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
+        type: 'error',
+      })
+      return
+    }
     if (selectedLessonIsHoliday) {
       setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
       return
@@ -693,7 +726,7 @@ export default function CalendarioProfessorPage() {
 
   const stats = useMemo(() => {
     const confirmed = lessons.filter((l) => l.status === 'CONFIRMED').length
-    const cancelled = lessons.filter((l) => l.status === 'CANCELLED').length
+    const cancelled = lessons.filter((l) => isLessonCancelledFamily(l.status)).length
     const reposicao = lessons.filter((l) => l.status === 'REPOSICAO').length
     return { confirmed, cancelled, reposicao }
   }, [lessons])
@@ -935,13 +968,13 @@ export default function CalendarioProfessorPage() {
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                 {t('professor.calendar.viewLastClass')}
               </Button>
-              {!selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && !selectedLessonIsHoliday && !selectedLessonIsFuture && (
+              {!selectedLesson?.record && canRegisterLesson(selectedLesson?.status ?? '') && !selectedLessonIsHoliday && !selectedLessonIsFuture && (
                 <Button variant="primary" onClick={handleRegistrar} className="flex-1">
                   <ClipboardList className="w-4 h-4 mr-2" />
                   {t('professor.calendar.registerClass')}
                 </Button>
               )}
-            {selectedLessonIsFuture && !selectedLesson?.record && selectedLesson?.status !== 'CANCELLED' && (
+            {selectedLessonIsFuture && !selectedLesson?.record && canRegisterLesson(selectedLesson?.status ?? '') && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800 w-full">
                 {t('professor.calendar.noFutureLessonRecord')}
               </div>
@@ -962,7 +995,7 @@ export default function CalendarioProfessorPage() {
                   {t('professor.calendar.fillFromLast')}
                 </Button>
               )}
-              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonIsHoliday || selectedLessonIsFuture}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || selectedLessonIsHoliday || selectedLessonIsFuture}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 {saving ? t('professor.calendar.saving') : t('professor.calendar.createRecord')}
               </Button>
@@ -1044,6 +1077,12 @@ export default function CalendarioProfessorPage() {
 
         {modalStep === 'registrar' && selectedLesson && (
           <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+            {selectedLessonBlocked && (
+              <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-red-800 text-sm">
+                <strong>Aula cancelada.</strong> Não é possível registrar esta aula porque ela foi marcada como cancelada.
+                Caso a aula tenha realmente acontecido, fale com a administração para reverter o cancelamento ou criar uma aula de reposição.
+              </div>
+            )}
             {selectedLessonIsHoliday && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
                 {t('professor.calendar.noWorkOnHolidays')}

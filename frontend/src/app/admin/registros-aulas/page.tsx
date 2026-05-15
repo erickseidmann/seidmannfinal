@@ -12,6 +12,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Plus, Pencil, Trash2, Loader2, CalendarX } from 'lucide-react'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
 interface StudentPresenceItem {
   enrollmentId: string
@@ -43,6 +44,7 @@ interface LessonRecord {
   studentPresences?: StudentPresenceItem[]
   lesson: {
     id: string
+    status?: string
     startAt: string
     enrollment: { id: string; nome: string; tipoAula?: string | null; nomeGrupo?: string | null }
     teacher: { id: string; nome: string }
@@ -51,6 +53,7 @@ interface LessonRecord {
 
 interface LessonOption {
   id: string
+  status: string
   startAt: string
   durationMinutes: number
   enrollment: { id: string; nome: string; tipoAula?: string | null; nomeGrupo?: string | null; curso?: string | null }
@@ -235,8 +238,14 @@ export default function AdminRegistrosAulasPage() {
   }, [modalOpen, fetchLessons])
 
   const lessonsWithoutRecord = lessons.filter(
-    (l) => !records.some((r) => r.lessonId === l.id)
+    (l) => !records.some((r) => r.lessonId === l.id) && canRegisterLesson(l.status)
   )
+
+  const editingLessonStatus = editingId
+    ? lessons.find((l) => l.id === form.lessonId)?.status ??
+      records.find((r) => r.id === editingId)?.lesson?.status
+    : null
+  const editingLessonBlocked = editingId ? !canRegisterLesson(editingLessonStatus ?? '') : false
 
   const selectedLessonForGroup = form.lessonId
     ? lessonsWithoutRecord.find((l) => l.id === form.lessonId) ?? records.find((r) => r.lessonId === form.lessonId)?.lesson ?? null
@@ -358,6 +367,21 @@ export default function AdminRegistrosAulasPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (editingId) {
+      const status =
+        lessons.find((l) => l.id === form.lessonId)?.status ??
+        records.find((r) => r.id === editingId)?.lesson?.status
+      if (!canRegisterLesson(status ?? '')) {
+        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
+        return
+      }
+    } else {
+      const lesson = lessons.find((l) => l.id === form.lessonId)
+      if (!lesson || !canRegisterLesson(lesson.status)) {
+        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
+        return
+      }
+    }
     setSaving(true)
     try {
       const payload = {
@@ -602,6 +626,7 @@ export default function AdminRegistrosAulasPage() {
                       <td className="px-4 py-3 text-sm max-w-[200px]" title={isGroup && r.studentPresences?.length ? presenceLabel : undefined}>{presenceLabel}</td>
                       <td className="px-4 py-3 text-sm">{LESSON_TYPE_LABELS[r.lessonType] ?? r.lessonType}</td>
                       <td className="px-4 py-3 text-right">
+                        {canRegisterLesson(r.lesson.status ?? '') ? (
                         <button
                           type="button"
                           onClick={() => openEdit(r)}
@@ -610,6 +635,7 @@ export default function AdminRegistrosAulasPage() {
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => handleDelete(r.id)}
@@ -638,7 +664,7 @@ export default function AdminRegistrosAulasPage() {
             <Button variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving}>
+            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || editingLessonBlocked}>
               {saving ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -654,6 +680,11 @@ export default function AdminRegistrosAulasPage() {
         }
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          {editingLessonBlocked && (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-red-800 text-sm">
+              <strong>Aula cancelada.</strong> {LESSON_RECORD_BLOCKED_MESSAGE}
+            </div>
+          )}
           {!editingId && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Aula *</label>

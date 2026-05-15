@@ -16,6 +16,7 @@ import {
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { canRegisterLesson, isLessonCancelledFamily, LESSON_STATUS_LABELS, type LessonStatusUi } from '@/lib/lesson-status'
 
 const BRAZIL_TZ = 'America/Sao_Paulo'
 
@@ -130,7 +131,7 @@ function isLessonOpenPending(
   paidPeriodRange: { start: number; end: number } | null
 ): boolean {
   if (lesson.record?.id) return false
-  if (lesson.status === 'CANCELLED') return false
+  if (!canRegisterLesson(lesson.status)) return false
   if (holidays.has(toDateKeyInTZ(lesson.startAt))) return false
   const lessonStartMs = new Date(lesson.startAt).getTime()
   if (lessonStartMs > Date.now()) return false
@@ -384,7 +385,7 @@ export default function RegistrarAulasPage() {
   const pendingLessons = useMemo(() => {
     const nowMs = Date.now()
     return lessons.filter((l) => {
-      if (l.status === 'CANCELLED') return false
+      if (!canRegisterLesson(l.status)) return false
       const isHoliday = holidays.has(toDateKeyInTZ(l.startAt))
       if (isHoliday) return false
       const startAtMs = new Date(l.startAt).getTime()
@@ -407,6 +408,7 @@ export default function RegistrarAulasPage() {
   const isGroupLesson = selectedLesson?.enrollment?.tipoAula === 'GRUPO' && selectedLesson?.enrollment?.nomeGrupo?.trim()
   const selectedLessonIsHoliday = selectedLesson ? holidays.has(toDateKeyInTZ(selectedLesson.startAt)) : false
   const selectedLessonIsFuture = selectedLesson ? new Date(selectedLesson.startAt) > new Date() : false
+  const selectedLessonBlocked = selectedLesson ? !canRegisterLesson(selectedLesson.status) : false
 
   const closeModal = useCallback(() => {
     setSelectedLesson(null)
@@ -418,7 +420,7 @@ export default function RegistrarAulasPage() {
   }, [])
 
   const handleLessonClick = (lesson: Lesson) => {
-    if (lesson.status === 'CANCELLED' || lesson.record?.id) return
+    if (!canRegisterLesson(lesson.status) || lesson.record?.id) return
     if (registeringLessonId) {
       setToast({ message: t('professor.registerClasses.waitRegistration'), type: 'error' })
       return
@@ -437,7 +439,7 @@ export default function RegistrarAulasPage() {
 
   const handleEditClick = (e: React.MouseEvent, lesson: Lesson) => {
     e.stopPropagation()
-    if (!lesson.record?.id) return
+    if (!lesson.record?.id || !canRegisterLesson(lesson.status)) return
     if (registeringLessonId) {
       setToast({ message: t('professor.registerClasses.waitRegistration'), type: 'error' })
       return
@@ -555,6 +557,14 @@ export default function RegistrarAulasPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedLesson) return
+    if (!canRegisterLesson(selectedLesson.status)) {
+      setToast({
+        message:
+          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
+        type: 'error',
+      })
+      return
+    }
     if (!editingRecordId && selectedLessonIsHoliday) {
       setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
       return
@@ -780,7 +790,7 @@ export default function RegistrarAulasPage() {
               <tbody>
                 {sortedLessons.map((lesson) => {
                   const hasRecord = !!lesson.record?.id
-                  const isCancelled = lesson.status === 'CANCELLED'
+                  const isCancelled = isLessonCancelledFamily(lesson.status)
                   const isHoliday = holidays.has(toDateKeyInTZ(lesson.startAt))
                   const lessonStartMs = new Date(lesson.startAt).getTime()
                   const isFuture = lessonStartMs > Date.now()
@@ -838,7 +848,9 @@ export default function RegistrarAulasPage() {
                             ) : null}
                           </span>
                         ) : isCancelled ? (
-                          <span className="text-gray-400 text-sm">—</span>
+                          <span className="text-red-600 text-sm" title="Aula cancelada não pode ser registrada">
+                            {LESSON_STATUS_LABELS[lesson.status as LessonStatusUi] ?? 'Cancelada'}
+                          </span>
                         ) : isHoliday ? (
                           <span className="inline-flex items-center gap-1 text-amber-800 text-sm">
                             <CalendarX className="w-4 h-4 shrink-0" />
@@ -882,7 +894,7 @@ export default function RegistrarAulasPage() {
                 {t('professor.calendar.fillFromLast')}
               </Button>
             )}
-            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || (!editingRecordId && (selectedLessonIsHoliday || selectedLessonIsFuture))}>
+            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || (!editingRecordId && (selectedLessonIsHoliday || selectedLessonIsFuture))}>
               {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               {saving ? t('professor.calendar.saving') : editingRecordId ? t('professor.registerClasses.saveRecord') : t('professor.calendar.createRecord')}
             </Button>
@@ -899,6 +911,12 @@ export default function RegistrarAulasPage() {
             )}
             {!(editingRecordId && loadingRecord) && (
               <>
+            {selectedLessonBlocked && (
+              <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-red-800 text-sm">
+                <strong>Aula cancelada.</strong> Não é possível registrar esta aula porque ela foi marcada como cancelada.
+                Caso a aula tenha realmente acontecido, fale com a administração para reverter o cancelamento ou criar uma aula de reposição.
+              </div>
+            )}
             {selectedLessonIsHoliday && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
                 {t('professor.calendar.noWorkOnHolidays')}

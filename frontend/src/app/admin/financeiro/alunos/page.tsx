@@ -13,7 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail, Hash } from 'lucide-react'
 
 interface AlunoFinanceiro {
   id: string
@@ -752,6 +752,8 @@ export default function FinanceiroAlunosPage() {
   const [itemsPerPage, setItemsPerPage] = useState<number>(7)
   const [showDicas, setShowDicas] = useState(false)
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
+  const [showIdentificadorPagamento, setShowIdentificadorPagamento] = useState(true)
+  const [identificadorPagamentoInput, setIdentificadorPagamentoInput] = useState('')
   const [showPeriodo, setShowPeriodo] = useState(false)
 
   const [cobrancasMap, setCobrancasMap] = useState<Map<string, CobrancaCora>>(new Map())
@@ -2038,114 +2040,147 @@ export default function FinanceiroAlunosPage() {
           </div>
         ) : (
           <>
-            {/* Seção: Buscar e filtros (recolhível) */}
+            {/* Seções: Identificador de pagamento + Buscar e filtros (mesma largura/cartão) */}
             {!fullTableView && (
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowBuscarFiltros((v) => !v)}
-                className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
-              >
-                <Search className="w-5 h-5 text-brand-orange shrink-0" />
-                <span>Buscar e filtros</span>
-                {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
-              </button>
-              {showBuscarFiltros && (
-                <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
-                  <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
-                    <div className="flex-1 min-w-0">
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Nome, email ou grupo</label>
-                      <input
-                        type="text"
-                        value={filterBusca}
-                        onChange={(e) => setFilterBusca(e.target.value)}
-                        placeholder="Digite para filtrar..."
-                        className="input w-full"
-                      />
+            <div className="space-y-4">
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowIdentificadorPagamento((v) => !v)}
+                  className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+                >
+                  <Hash className="w-5 h-5 text-brand-orange shrink-0" />
+                  <span>Identificador de pagamento</span>
+                  {showIdentificadorPagamento ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
+                </button>
+                {showIdentificadorPagamento && (
+                  <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+                    <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
+                      <div className="flex-1 min-w-0">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Identificador (txid PIX, end-to-end, referência ou ID da cobrança)</label>
+                        <input
+                          type="text"
+                          value={identificadorPagamentoInput}
+                          onChange={(e) => setIdentificadorPagamentoInput(e.target.value)}
+                          placeholder="Cole ou digite o identificador..."
+                          className="input w-full"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 border-t border-gray-100 pt-3">
+                      Localize pagamento por txid PIX, E2E ou ID da cobrança (integração pode ser ligada depois).
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowBuscarFiltros((v) => !v)}
+                  className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+                >
+                  <Search className="w-5 h-5 text-brand-orange shrink-0" />
+                  <span>Buscar e filtros</span>
+                  {showBuscarFiltros ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronRight className="w-5 h-5 ml-auto" />}
+                </button>
+                {showBuscarFiltros && (
+                  <div className="px-5 pb-5 pt-0 space-y-4 border-t border-gray-200">
+                    <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
+                      <div className="flex-1 min-w-0">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Nome, email ou grupo</label>
+                        <input
+                          type="text"
+                          value={filterBusca}
+                          onChange={(e) => setFilterBusca(e.target.value)}
+                          placeholder="Digite para filtrar..."
+                          className="input w-full"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-gray-100">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
+                        <select
+                          value={filterStatus}
+                          onChange={(e) => setFilterStatus(e.target.value)}
+                          className="input w-full sm:min-w-[120px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          {STATUS_OPCOES.filter((o) => o.value).map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Período</label>
+                        <select
+                          value={filterPeriodo}
+                          onChange={(e) => setFilterPeriodo(e.target.value)}
+                          className="input w-full sm:min-w-[120px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          {PERIODO_OPCOES.filter((o) => o.value).map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Quem paga</label>
+                        <select
+                          value={filterQuemPaga}
+                          onChange={(e) => setFilterQuemPaga(e.target.value)}
+                          className="input w-full sm:min-w-[130px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          <option value="ALUNO">Aluno</option>
+                          <option value="RESPONSAVEL">Responsável</option>
+                          <option value="EMPRESA">Empresa</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status NF</label>
+                        <select
+                          value={filterNfEmitida}
+                          onChange={(e) => setFilterNfEmitida(e.target.value)}
+                          className="input w-full sm:min-w-[120px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          <option value="aberto">Em aberto</option>
+                          <option value="emitida">Emitida</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Info de pagamento</label>
+                        <select
+                          value={filterInfoPagamento}
+                          onChange={(e) => setFilterInfoPagamento(e.target.value)}
+                          className="input w-full sm:min-w-[150px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          <option value="comUltimoPag">Com data de último pag.</option>
+                          <option value="semUltimoPag">Sem data de último pag.</option>
+                          <option value="semValorMensal">Sem valor mensal</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
+                        <select
+                          value={filterEscola}
+                          onChange={(e) => setFilterEscola(e.target.value)}
+                          className="input w-full sm:min-w-[120px] text-sm py-2"
+                        >
+                          <option value="">Todos</option>
+                          <option value="SEIDMANN">Seidmann</option>
+                          <option value="YOUBECOME">Youbecome</option>
+                          <option value="HIGHWAY">Highway</option>
+                          <option value="OUTROS">Outros</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-gray-100">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
-                      <select
-                        value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value)}
-                        className="input w-full sm:min-w-[120px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        {STATUS_OPCOES.filter((o) => o.value).map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Período</label>
-                      <select
-                        value={filterPeriodo}
-                        onChange={(e) => setFilterPeriodo(e.target.value)}
-                        className="input w-full sm:min-w-[120px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        {PERIODO_OPCOES.filter((o) => o.value).map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Quem paga</label>
-                      <select
-                        value={filterQuemPaga}
-                        onChange={(e) => setFilterQuemPaga(e.target.value)}
-                        className="input w-full sm:min-w-[130px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        <option value="ALUNO">Aluno</option>
-                        <option value="RESPONSAVEL">Responsável</option>
-                        <option value="EMPRESA">Empresa</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status NF</label>
-                      <select
-                        value={filterNfEmitida}
-                        onChange={(e) => setFilterNfEmitida(e.target.value)}
-                        className="input w-full sm:min-w-[120px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        <option value="aberto">Em aberto</option>
-                        <option value="emitida">Emitida</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Info de pagamento</label>
-                      <select
-                        value={filterInfoPagamento}
-                        onChange={(e) => setFilterInfoPagamento(e.target.value)}
-                        className="input w-full sm:min-w-[150px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        <option value="comUltimoPag">Com data de último pag.</option>
-                        <option value="semUltimoPag">Sem data de último pag.</option>
-                        <option value="semValorMensal">Sem valor mensal</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
-                      <select
-                        value={filterEscola}
-                        onChange={(e) => setFilterEscola(e.target.value)}
-                        className="input w-full sm:min-w-[120px] text-sm py-2"
-                      >
-                        <option value="">Todos</option>
-                        <option value="SEIDMANN">Seidmann</option>
-                        <option value="YOUBECOME">Youbecome</option>
-                        <option value="HIGHWAY">Highway</option>
-                        <option value="OUTROS">Outros</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
             )}
 

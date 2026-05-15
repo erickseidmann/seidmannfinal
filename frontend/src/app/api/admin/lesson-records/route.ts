@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
 import { toDateKeyInTZ } from '@/lib/datetime'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -97,7 +98,10 @@ export async function GET(request: NextRequest) {
           include: { enrollment: { select: { id: true, nome: true } } },
         },
         lesson: {
-          include: {
+          select: {
+            id: true,
+            status: true,
+            startAt: true,
             enrollment: { select: { id: true, nome: true, tipoAula: true, nomeGrupo: true } },
             teacher: { select: { id: true, nome: true } },
           },
@@ -172,6 +176,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: 'Aula não encontrada' },
         { status: 404 }
+      )
+    }
+
+    if (!canRegisterLesson(lesson.status)) {
+      return NextResponse.json(
+        { ok: false, message: LESSON_RECORD_BLOCKED_MESSAGE },
+        { status: 400 }
       )
     }
 

@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type PaymentRecord } from '@/lib/finance'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import { resolveTeacherProofFileUrlFromAuditLogs } from '@/lib/finance/resolve-teacher-proof-url'
 import {
   calendarMonthBoundsUtc,
@@ -253,6 +254,7 @@ export async function GET(request: NextRequest) {
         startAt: Date
         durationMinutes: number
         teacherId: string
+        status: string
         enrollment: { status: string; pausedAt: Date | null; nome: string }
       }
     }[] = []
@@ -262,8 +264,8 @@ export async function GET(request: NextRequest) {
           lesson: {
             teacherId: teacher.id,
             startAt: { gte: periodStart, lt: periodEndExclusive },
+            status: { in: ['CONFIRMED', 'REPOSICAO'] },
           },
-          status: { in: ['CONFIRMED', 'REPOSICAO'] },
         },
         select: {
           tempoAulaMinutos: true,
@@ -273,6 +275,7 @@ export async function GET(request: NextRequest) {
               teacherId: true,
               startAt: true,
               durationMinutes: true,
+              status: true,
               enrollment: {
                 select: {
                   status: true,
@@ -314,12 +317,14 @@ export async function GET(request: NextRequest) {
       const t0 = new Date(rec.lesson.startAt).getTime()
       if (t0 < periodStartMs || t0 >= periodEndExclusiveMs) continue
       if (holidaySet.has(toDateKey(rec.lesson.startAt))) continue
+      if (!isLessonScheduledStatus(rec.lesson.status)) continue
       const asPayment: PaymentRecord = {
         tempoAulaMinutos: rec.tempoAulaMinutos,
         lesson: {
           teacherId: rec.lesson.teacherId,
           startAt: rec.lesson.startAt,
           durationMinutes: rec.lesson.durationMinutes,
+          status: rec.lesson.status,
           enrollment: { status: rec.lesson.enrollment.status, pausedAt: rec.lesson.enrollment.pausedAt },
         },
       }

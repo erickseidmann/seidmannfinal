@@ -6,9 +6,11 @@
  *
  * Período: [periodStart, periodEndExclusive) — alinhado a teacher-paid-period.ts (fim exclusivo).
  *
- * Exclusões: feriados (Holiday), aulas canceladas, alunos pausados
- * (enrollment.status === 'PAUSED' com aula em data >= pausedAt).
+ * Exclusões: feriados (Holiday), aulas com lesson.status fora de CONFIRMED/REPOSICAO,
+ * alunos pausados (enrollment.status === 'PAUSED' com aula em data >= pausedAt).
  */
+
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 
 /** Formato YYYY-MM-DD para comparação com Holiday.dateKey */
 export function toDateKey(d: Date): string {
@@ -25,6 +27,7 @@ export interface PaymentRecord {
     teacherId: string
     startAt: Date
     durationMinutes: number
+    status: string
     enrollment: {
       status: string
       pausedAt: Date | null
@@ -71,7 +74,7 @@ export interface ComputeValorAPagarResult {
 
 /**
  * Calcula o valor a pagar para um professor no período, usando apenas horas registradas (LessonRecord).
- * Exclui: aulas fora do período, em feriado, de outro professor.
+ * Exclui: aulas fora do período, em feriado, de outro professor, lesson cancelada.
  */
 export function computeValorAPagar(params: ComputeValorAPagarParams): ComputeValorAPagarResult {
   const {
@@ -91,6 +94,7 @@ export function computeValorAPagar(params: ComputeValorAPagarParams): ComputeVal
     const startAt = new Date(r.lesson.startAt).getTime()
     if (startAt < periodStart || startAt >= periodEndExclusive) continue
     if (holidaySet.has(toDateKey(r.lesson.startAt))) continue
+    if (!isLessonScheduledStatus(r.lesson.status)) continue
     const mins = r.tempoAulaMinutos ?? r.lesson.durationMinutes ?? 60
     totalMinutos += mins
   }

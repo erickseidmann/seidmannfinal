@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
 export async function GET(
   request: NextRequest,
@@ -66,6 +67,24 @@ export async function PATCH(
     }
 
     const { id } = await params
+
+    const existing = await (prisma as any).lessonRecord.findUnique({
+      where: { id },
+      select: { id: true, lesson: { select: { status: true } } },
+    })
+    if (!existing) {
+      return NextResponse.json(
+        { ok: false, message: 'Registro não encontrado' },
+        { status: 404 }
+      )
+    }
+    if (!canRegisterLesson(existing.lesson.status)) {
+      return NextResponse.json(
+        { ok: false, message: LESSON_RECORD_BLOCKED_MESSAGE },
+        { status: 400 }
+      )
+    }
+
     const body = await request.json()
     const {
       status: statusBody,

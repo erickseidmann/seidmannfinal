@@ -9,6 +9,7 @@ import { requireTeacher } from '@/lib/auth'
 import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
 import { toDateKeyInTZ } from '@/lib/datetime'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -164,6 +165,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, message: 'Esta aula não é sua. Só é possível registrar suas próprias aulas.' },
         { status: 403 }
+      )
+    }
+
+    if (!canRegisterLesson(lesson.status)) {
+      return NextResponse.json(
+        { ok: false, message: LESSON_RECORD_BLOCKED_MESSAGE },
+        { status: 400 }
       )
     }
 

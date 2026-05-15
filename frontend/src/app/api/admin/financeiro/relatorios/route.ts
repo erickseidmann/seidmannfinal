@@ -723,12 +723,11 @@ async function buildDespesasReport(
           lesson: {
             teacherId: { in: teachers.map((t) => t.id) },
             startAt: { gte: periodStart, lt: periodEndExclusive },
-            status: 'CONFIRMED',
+            status: { in: ['CONFIRMED', 'REPOSICAO'] },
             enrollment: {
               OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
             },
           },
-          status: 'CONFIRMED',
         },
         select: {
           tempoAulaMinutos: true,
@@ -737,6 +736,7 @@ async function buildDespesasReport(
               teacherId: true,
               startAt: true,
               durationMinutes: true,
+              status: true,
               enrollment: { select: { status: true, pausedAt: true } },
             },
           },
@@ -906,12 +906,11 @@ async function buildProfessoresReport(
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
           startAt: { gte: periodStart, lt: periodEndExclusive },
-          status: 'CONFIRMED',
+          status: { in: ['CONFIRMED', 'REPOSICAO'] },
           enrollment: {
             OR: [{ status: { not: 'PAUSED' } }, { pausedAt: null }],
           },
         },
-        status: 'CONFIRMED',
       },
       select: {
         tempoAulaMinutos: true,
@@ -920,6 +919,7 @@ async function buildProfessoresReport(
             teacherId: true,
             startAt: true,
             durationMinutes: true,
+            status: true,
             enrollment: { select: { status: true, pausedAt: true } },
           },
         },

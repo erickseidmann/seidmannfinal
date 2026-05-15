@@ -247,11 +247,11 @@ export async function GET(request: NextRequest) {
     })
     const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
 
-    // Aulas canceladas não entram no cálculo de pagamento (apenas CONFIRMED)
+    // Aulas canceladas não entram no cálculo de pagamento (CONFIRMED ou REPOSICAO)
     const lessonsInRange = await prisma.lesson.findMany({
       where: {
         startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
-        status: 'CONFIRMED',
+        status: { in: ['CONFIRMED', 'REPOSICAO'] },
         teacherId: { not: null },
       },
       select: {
@@ -269,8 +269,8 @@ export async function GET(request: NextRequest) {
         lesson: {
           teacherId: { in: teachers.map((t) => t.id) },
           startAt: { gte: globalStartDate, lt: globalEndExclusiveDate },
+          status: { in: ['CONFIRMED', 'REPOSICAO'] },
         },
-        status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
       select: {
         tempoAulaMinutos: true,
@@ -279,6 +279,7 @@ export async function GET(request: NextRequest) {
             teacherId: true,
             startAt: true,
             durationMinutes: true,
+            status: true,
             enrollment: {
               select: {
                 status: true,

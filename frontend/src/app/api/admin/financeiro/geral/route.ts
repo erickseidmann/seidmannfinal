@@ -206,6 +206,7 @@ export async function GET(request: NextRequest) {
                 teacherId: true,
                 startAt: true,
                 durationMinutes: true,
+                status: true,
                 enrollment: { select: { status: true, pausedAt: true } },
               },
             },
