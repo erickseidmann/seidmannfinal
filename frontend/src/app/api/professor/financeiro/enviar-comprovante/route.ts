@@ -75,27 +75,11 @@ export async function POST(request: NextRequest) {
 
     const now = new Date()
 
-    // 1) Resolve PRIMEIRO o (year, month) que será usado no TeacherPaymentMonth.
-    //    Regra (vide resolveTeacherProofTargetMonthKey):
-    //     - se o (bodyYear, bodyMonth) está em AGUARDANDO_REENVIO → usa o do body
-    //       (reenvio precisa cair no mesmo mês que o admin rejeitou);
-    //     - senão, usa o TeacherPaymentMonth cujo periodoInicio…periodoTermino contém "agora"
-    //       (= mês em que o pagamento está em aberto);
-    //     - fallback: o que veio do body.
-    //    Assim o comprovante "sempre vai pro mês correto" (mês de pagamento ativo do
-    //    professor), independente do mês civil que ele tenha selecionado na tela.
-    const target = await resolveTeacherProofTargetMonthKey(
-      teacher.id,
-      bodyYear,
-      bodyMonth,
-      now
-    )
-    const { year, month } = target
-
-    // 2) Carrega feriados bancários do mês resolvido (e do atual) para o cálculo
-    //    de dia de pagamento.
+    // 1) Valida PRIMEIRO a janela de envio usando o mês selecionado pelo
+    //    usuário (mesma lógica que o frontend usa para mostrar/esconder o
+    //    botão). Carrega feriados do mês selecionado e do mês civil corrente.
     const monthKeysToFetch = new Set<string>()
-    monthKeysToFetch.add(`${year}-${String(month).padStart(2, '0')}`)
+    monthKeysToFetch.add(`${bodyYear}-${String(bodyMonth).padStart(2, '0')}`)
     monthKeysToFetch.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
     const holidayRows = await prisma.holiday.findMany({
       where: {
@@ -105,12 +89,9 @@ export async function POST(request: NextRequest) {
     })
     const holidaySet = new Set(holidayRows.map((h) => h.dateKey))
 
-    // 3) Aplica a janela em cima do mês RESOLVIDO (mês vigente/anterior + até D-1).
-    //    Para reenvios, o body já é o mês alvo; para envios normais, é o período
-    //    em aberto. Em qualquer caso, validamos contra o que vai ser gravado.
     const janela = validarJanelaEnvioNf({
-      year,
-      month,
+      year: bodyYear,
+      month: bodyMonth,
       now,
       holidaySet,
     })
@@ -123,13 +104,27 @@ export async function POST(request: NextRequest) {
             dataPagamento: janela.dataPagamento.toISOString(),
             dataLimite: janela.dataLimite.toISOString(),
             motivo: janela.motivo,
-            resolvedYear: year,
-            resolvedMonth: month,
           },
         },
         { status: 400 }
       )
     }
+
+    // 2) Resolve em qual TeacherPaymentMonth gravar o proof.
+    //    - se o (bodyYear, bodyMonth) está em AGUARDANDO_REENVIO → usa o do body;
+    //    - senão, usa o TPM cujo periodoInicio…periodoTermino contém "agora"
+    //      (mês de pagamento ativo);
+    //    - fallback: o que veio do body.
+    //    Isso pode ser DIFERENTE do (bodyYear, bodyMonth) — por exemplo, para
+    //    professores pagos dia 1, ao selecionar Maio na tela o registro a
+    //    atualizar é month=6 (pagamento de 01/06 referente à competência de Maio).
+    const target = await resolveTeacherProofTargetMonthKey(
+      teacher.id,
+      bodyYear,
+      bodyMonth,
+      now
+    )
+    const { year, month } = target
 
     if (!file || !(file instanceof Blob) || file.size === 0) {
       return NextResponse.json(
