@@ -245,8 +245,8 @@ export default function FinanceiroPage() {
 
   /**
    * Janela de envio da nota fiscal/recibo: somente mês vigente ou mês anterior,
-   * e até 1 dia antes do dia de pagamento (dia 25, ou útil anterior em caso de
-   * fim de semana). O servidor reaplica a regra com a lista oficial de feriados.
+   * prazo nominal até 1 dia antes do pagamento (dia 25 ou útil anterior) + 2 dias
+   * de tolerância para anexar (não altera o valor). O servidor reaplica com feriados.
    */
   const janelaNf = useMemo(
     () => validarJanelaEnvioNf({ year: selectedAno, month: selectedMes }),
@@ -593,9 +593,10 @@ export default function FinanceiroPage() {
                 </p>
                 <p className="text-xs text-gray-500">
                   O envio da nota fiscal só é permitido para o <strong>mês vigente</strong> ou para o{' '}
-                  <strong>mês anterior</strong>, e somente até <strong>1 dia antes</strong> do dia de
-                  pagamento (dia 25; se cair em fim de semana ou feriado bancário, o pagamento é
-                  antecipado para o dia útil anterior).
+                  <strong>mês anterior</strong>. O prazo nominal é até <strong>1 dia antes</strong> do
+                  dia de pagamento (dia 25; se cair em fim de semana ou feriado bancário, antecipa para o
+                  dia útil anterior), com <strong>mais 2 dias</strong> de tolerância para anexar no sistema
+                  (isso não altera o valor calculado).
                 </p>
                 {!janelaNf.ok ? (
                   <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">

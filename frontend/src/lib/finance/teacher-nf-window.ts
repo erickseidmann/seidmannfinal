@@ -8,7 +8,8 @@
  *    (na prática, recebíveis raramente são "atrasados" para depois de 25; aqui adotamos
  *     antecipação para preservar a regra "recebe até o dia 25". Ajuste se a política
  *     real for "primeiro dia útil seguinte".)
- *  - O professor pode anexar/confirmar até **D-1** (1 dia antes) do dia de pagamento.
+ *  - Prazo nominal: até **D-1** (1 dia antes) do dia de pagamento.
+ *  - Tolerância de envio da NF: até **2 dias corridos** após esse prazo nominal (não altera valor a pagar).
  *  - O mês de competência precisa ser o **mês civil corrente** ou o **mês civil anterior**.
  *
  * Esta função é pura (sem I/O), serve para o cliente e o servidor.
@@ -21,6 +22,9 @@
  */
 export const DIA_PAGAMENTO_BASE = 25
 export const DEFAULT_TEACHER_PAYMENT_DUE_DAY = DIA_PAGAMENTO_BASE
+
+/** Dias extras para anexar NF/recibo após o prazo nominal (D-1 do pagamento). */
+export const DIAS_TOLERANCIA_NF_APOS_PRAZO = 2
 
 /** Compara dois dias zerando a hora (timezone local). */
 function startOfDay(d: Date): Date {
@@ -62,14 +66,23 @@ export function getDataPagamento(year: number, month: number, holidaySet?: Set<s
 }
 
 /**
- * Retorna a data limite (inclusive) para envio da nota fiscal/recibo.
- * Definida como D-1 (calendário) do dia de pagamento.
+ * Prazo nominal (inclusive): D-1 do dia de pagamento.
  */
-export function getDataLimiteNf(year: number, month: number, holidaySet?: Set<string>): Date {
+export function getDataLimiteNominalNf(year: number, month: number, holidaySet?: Set<string>): Date {
   const pagamento = getDataPagamento(year, month, holidaySet)
   const limite = new Date(pagamento)
   limite.setDate(limite.getDate() - 1)
   limite.setHours(23, 59, 59, 999)
+  return limite
+}
+
+/**
+ * Data limite (inclusive) para envio da nota fiscal/recibo no sistema.
+ * Prazo nominal + {@link DIAS_TOLERANCIA_NF_APOS_PRAZO} dias (não altera cálculo do valor).
+ */
+export function getDataLimiteNf(year: number, month: number, holidaySet?: Set<string>): Date {
+  const limite = getDataLimiteNominalNf(year, month, holidaySet)
+  limite.setDate(limite.getDate() + DIAS_TOLERANCIA_NF_APOS_PRAZO)
   return limite
 }
 
@@ -99,7 +112,7 @@ export type ValidarJanelaNfResult =
  *
  * Regras combinadas:
  *  - mês de competência deve ser o mês civil corrente ou o anterior;
- *  - operação deve ocorrer até D-1 do dia de pagamento (inclusive).
+ *  - operação deve ocorrer até o prazo nominal + tolerância (inclusive).
  */
 export function validarJanelaEnvioNf(args: ValidarJanelaNfArgs): ValidarJanelaNfResult {
   const now = args.now ?? new Date()
@@ -134,14 +147,14 @@ export function validarJanelaEnvioNf(args: ValidarJanelaNfArgs): ValidarJanelaNf
     }
   }
 
-  // Janela temporal: deve ser até D-1 do dia de pagamento, inclusive.
+  // Janela temporal: prazo nominal (D-1) + tolerância de DIAS_TOLERANCIA_NF_APOS_PRAZO dias.
   if (now.getTime() > dataLimite.getTime()) {
     return {
       ok: false,
       motivo: 'apos_prazo',
       mensagem: `O prazo para envio da nota fiscal deste período encerrou em ${dataLimite.toLocaleDateString(
         'pt-BR'
-      )}. O envio é permitido somente até 1 dia antes do dia de pagamento (${dataPagamento.toLocaleDateString(
+      )} (inclui tolerância de ${DIAS_TOLERANCIA_NF_APOS_PRAZO} dias após o prazo nominal, 1 dia antes do pagamento em ${dataPagamento.toLocaleDateString(
         'pt-BR'
       )}).`,
       dataPagamento,
