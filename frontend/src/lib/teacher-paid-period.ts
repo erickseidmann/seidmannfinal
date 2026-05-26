@@ -1,7 +1,13 @@
 /**
  * Intervalos de datas de TeacherPaymentMonth (periodoInicio → periodoTermino, limites em UTC).
  * Usado para períodos PAGO (bloquear registro) e EM_ABERTO (alertas de registro atrasado no admin).
+ *
+ * Chave `year`/`month` do registro = mês/ano de competência BRT do último dia inclusivo
+ * (= mês/ano de `periodoTermino` exclusivo em America/Sao_Paulo, via periodoTermino - 1ms).
  */
+
+/** America/Sao_Paulo é UTC−3 (sem horário de verão desde 2019). */
+export const TEACHER_PAYMENT_BRT_OFFSET_MS = 3 * 60 * 60 * 1000
 
 export type TeacherPaidPeriodRow = {
   periodoInicio: Date | null
@@ -33,6 +39,83 @@ export function calendarMonthBoundsUtc(year: number, month: number): { startMs: 
   const s = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0))
   const e = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0))
   return { startMs: s.getTime(), endExclusiveMs: e.getTime() }
+}
+
+/** Próximo mês civil (1–12). */
+export function nextCompetenceYearMonth(
+  year: number,
+  month: number
+): { year: number; month: number } {
+  if (month === 12) return { year: year + 1, month: 1 }
+  return { year, month: month + 1 }
+}
+
+/**
+ * Mês/ano de competência a partir de `periodoTermino` (exclusivo).
+ * Equivalente a MONTH/YEAR(CONVERT_TZ(periodo_termino, '+00:00', '-03:00')) no último instante inclusivo.
+ */
+export function teacherPaymentCompetenceKeyFromPeriodoTermino(periodoTermino: Date): {
+  year: number
+  month: number
+} {
+  const lastInclusiveMs = periodoTermino.getTime() - 1
+  const brtAsUtcFields = new Date(lastInclusiveMs - TEACHER_PAYMENT_BRT_OFFSET_MS)
+  return {
+    year: brtAsUtcFields.getUTCFullYear(),
+    month: brtAsUtcFields.getUTCMonth() + 1,
+  }
+}
+
+/**
+ * Intervalo de `periodoTermino` cujos registros têm competência BRT = (year, month).
+ * Usado em filtros Prisma: `{ gt: range.gt, lte: range.lte }`.
+ */
+export function periodoTerminoRangeForCompetenceMonthBrt(
+  year: number,
+  month: number
+): { gt: Date; lte: Date } {
+  const minTerminoMs = Date.UTC(year, month - 1, 1, 3, 0, 0, 1)
+  const maxTerminoMs = Date.UTC(
+    month === 12 ? year + 1 : year,
+    month === 12 ? 0 : month,
+    1,
+    3,
+    0,
+    0,
+    0
+  )
+  return {
+    gt: new Date(minTerminoMs - 1),
+    lte: new Date(maxTerminoMs),
+  }
+}
+
+/**
+ * Período [início, término) para o mês de **competência** (year/month) e dia de pagamento.
+ * Para dueDay === 1, a referência de pagamento é o mês civil seguinte à competência.
+ */
+export function teacherPaymentBoundsForCompetenceMonth(
+  competenceYear: number,
+  competenceMonth: number,
+  dueDay: number
+): { inicio: Date; termino: Date } {
+  const ref =
+    dueDay === 1
+      ? nextCompetenceYearMonth(competenceYear, competenceMonth)
+      : { year: competenceYear, month: competenceMonth }
+  return teacherPaymentBoundsFromDueDay(ref.year, ref.month, dueDay)
+}
+
+/** Chaves de upsert: prioriza `periodoTermino`; senão competência informada pelo caller. */
+export function resolveTeacherPaymentUpsertKeys(options: {
+  competenceYear: number
+  competenceMonth: number
+  periodoTermino?: Date | null
+}): { year: number; month: number } {
+  if (options.periodoTermino) {
+    return teacherPaymentCompetenceKeyFromPeriodoTermino(options.periodoTermino)
+  }
+  return { year: options.competenceYear, month: options.competenceMonth }
 }
 
 function lastDayOfMonthUtc(year: number, month: number): number {
@@ -107,7 +190,7 @@ export function resolveTeacherPaymentMonthBoundsUtc(
   if (d0 < 1 || d0 > 31) return b
 
   const shorterCanonical = (refYear: number, refMonth: number) => {
-    const p = teacherPaymentBoundsFromDueDay(refYear, refMonth, d0)
+    const p = teacherPaymentBoundsForCompetenceMonth(refYear, refMonth, d0)
     const corrected = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
     if (!corrected) return null
     if (b.endExclusiveMs > corrected.endExclusiveMs) return corrected
@@ -117,9 +200,9 @@ export function resolveTeacherPaymentMonthBoundsUtc(
   const c1 = shorterCanonical(year, month)
   if (c1) return c1
 
-  const lastInc = new Date(b.endExclusiveMs - 1)
-  const ly = lastInc.getUTCFullYear()
-  const lm = lastInc.getUTCMonth() + 1
+  const terminoKey = teacherPaymentCompetenceKeyFromPeriodoTermino(new Date(b.endExclusiveMs))
+  const ly = terminoKey.year
+  const lm = terminoKey.month
   if (ly !== year || lm !== month) {
     const c2 = shorterCanonical(ly, lm)
     if (c2) return c2

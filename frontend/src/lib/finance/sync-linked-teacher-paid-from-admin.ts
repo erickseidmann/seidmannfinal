@@ -5,6 +5,10 @@
 
 import { prisma } from '@/lib/prisma'
 import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
+import {
+  findTeacherPaymentMonthByCompetenceBrt,
+  upsertKeysForCompetenceMonth,
+} from '@/lib/teacher-payment-month-db'
 
 const MESES_NOMES: Record<number, string> = {
   1: 'janeiro',
@@ -35,16 +39,16 @@ export async function markLinkedTeacherPaidForAdminCompetenceMonth(options: {
   const teacher = await prisma.teacher.findUnique({ where: { id: teacherId }, select: { id: true } })
   if (!teacher) return
 
-  const rangeStart = new Date(Date.UTC(competenceYear, competenceMonth - 1, 1))
-  const rangeEnd = new Date(Date.UTC(competenceYear, competenceMonth, 0, 23, 59, 59, 999))
-  const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
-    where: {
-      teacherId,
-      periodoTermino: { gte: rangeStart, lte: rangeEnd },
-    },
-  })
-  const keyYear = existingByEnd?.year ?? competenceYear
-  const keyMonth = existingByEnd?.month ?? competenceMonth
+  const existingByEnd = await findTeacherPaymentMonthByCompetenceBrt(
+    teacherId,
+    competenceYear,
+    competenceMonth
+  )
+  const { year: keyYear, month: keyMonth } = upsertKeysForCompetenceMonth(
+    competenceYear,
+    competenceMonth,
+    existingByEnd
+  )
 
   const pmExisting = await prisma.teacherPaymentMonth.findUnique({
     where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },

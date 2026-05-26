@@ -13,15 +13,15 @@ import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateTeacherPaymentSchema } from '@/lib/finance'
 import {
   inferDueDayUtcFromSavedPeriod,
-  teacherPaymentBoundsFromDueDay,
+  nextCompetenceYearMonth,
+  teacherPaymentBoundsForCompetenceMonth,
+  teacherPaymentCompetenceKeyFromPeriodoTermino,
 } from '@/lib/teacher-paid-period'
+import {
+  findTeacherPaymentMonthByCompetenceBrt,
+  upsertKeysForCompetenceMonth,
+} from '@/lib/teacher-payment-month-db'
 import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
-
-/** Retorna (year, month) do próximo mês. */
-function nextYearMonth(year: number, month: number): { year: number; month: number } {
-  if (month === 12) return { year: year + 1, month: 1 }
-  return { year, month: month + 1 }
-}
 
 export async function PATCH(
   request: NextRequest,
@@ -111,7 +111,7 @@ export async function PATCH(
       updateData.periodoTermino = periodoTermino ? new Date(periodoTermino) : null
     }
     if (dueDay !== undefined) {
-      const p = teacherPaymentBoundsFromDueDay(year, month, dueDay)
+      const p = teacherPaymentBoundsForCompetenceMonth(year, month, dueDay)
       updateData.periodoInicio = p.inicio
       updateData.periodoTermino = p.termino
       if (dueDay >= 1 && dueDay <= 31) {
@@ -141,21 +141,17 @@ export async function PATCH(
     const wasMarkedAsPaid = paymentStatus === 'PAGO' && updateData.paymentStatus === 'PAGO'
 
     if (Object.keys(updateData).length > 0) {
-      // Encontrar o registro cujo período TERMINA no mês/ano selecionado, se existir.
-      // Isso garante que mudar status/valores na tela de Abril, por exemplo, atualize o período que termina em abril.
-      const rangeStart = new Date(Date.UTC(year, month - 1, 1))
-      const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
-      const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
-        where: {
-          teacherId,
-          periodoTermino: {
-            gte: rangeStart,
-            lte: rangeEnd,
-          },
-        },
-      })
-      const keyYear = existingByEnd?.year ?? year
-      const keyMonth = existingByEnd?.month ?? month
+      const existingByEnd = await findTeacherPaymentMonthByCompetenceBrt(teacherId, year, month)
+      const periodoTerminoForKey =
+        updateData.periodoTermino instanceof Date
+          ? updateData.periodoTermino
+          : existingByEnd?.periodoTermino ?? null
+      const { year: keyYear, month: keyMonth } = upsertKeysForCompetenceMonth(
+        year,
+        month,
+        existingByEnd,
+        periodoTerminoForKey
+      )
 
       const existing = await prisma.teacherPaymentMonth.findUnique({
         where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
@@ -184,10 +180,10 @@ export async function PATCH(
         keyYear,
         keyMonth,
         previousStatus,
-        updateData.paymentStatus
+        updateData.paymentStatus ?? undefined
       )
 
-      // Propagação em cascata: mesmos limites que teacherPaymentBoundsFromDueDay para os meses seguintes.
+      // Propagação em cascata: teacherPaymentBoundsForCompetenceMonth para os 12 meses seguintes.
       const updatedPeriod =
         updateData.periodoInicio !== undefined || updateData.periodoTermino !== undefined
       if (updatedPeriod) {
@@ -200,21 +196,23 @@ export async function PATCH(
             ? inferDueDayUtcFromSavedPeriod(current.periodoInicio, current.periodoTermino)
             : null)
         if (cascadeDue != null && cascadeDue >= 1 && cascadeDue <= 31) {
-          let nextYm = nextYearMonth(keyYear, keyMonth)
+          let compYm = { year: keyYear, month: keyMonth }
           for (let i = 0; i < 12; i++) {
-            const p = teacherPaymentBoundsFromDueDay(nextYm.year, nextYm.month, cascadeDue)
+            compYm = nextCompetenceYearMonth(compYm.year, compYm.month)
+            const p = teacherPaymentBoundsForCompetenceMonth(compYm.year, compYm.month, cascadeDue)
+            const cascadeKey = teacherPaymentCompetenceKeyFromPeriodoTermino(p.termino)
             await prisma.teacherPaymentMonth.upsert({
               where: {
                 teacherId_year_month: {
                   teacherId,
-                  year: nextYm.year,
-                  month: nextYm.month,
+                  year: cascadeKey.year,
+                  month: cascadeKey.month,
                 },
               },
               create: {
                 teacherId,
-                year: nextYm.year,
-                month: nextYm.month,
+                year: cascadeKey.year,
+                month: cascadeKey.month,
                 paymentStatus: null,
                 valorPorPeriodo: null,
                 valorExtra: null,
@@ -226,7 +224,6 @@ export async function PATCH(
                 periodoTermino: p.termino,
               },
             })
-            nextYm = nextYearMonth(nextYm.year, nextYm.month)
           }
         }
       }
@@ -255,9 +252,9 @@ export async function PATCH(
         let competenciaMonth = month
         let competenciaYear = year
         if (monthRow?.periodoTermino) {
-          const lastInclusive = new Date(monthRow.periodoTermino.getTime() - 1)
-          competenciaMonth = lastInclusive.getUTCMonth() + 1
-          competenciaYear = lastInclusive.getUTCFullYear()
+          const key = teacherPaymentCompetenceKeyFromPeriodoTermino(monthRow.periodoTermino)
+          competenciaMonth = key.month
+          competenciaYear = key.year
         }
         const mesNome = MESES_NOMES[competenciaMonth] || String(competenciaMonth)
         const message = `Seu pagamento referente a ${mesNome}/${competenciaYear} foi realizado.`

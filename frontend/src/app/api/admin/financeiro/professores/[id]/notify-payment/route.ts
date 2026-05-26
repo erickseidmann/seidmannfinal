@@ -10,6 +10,10 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
 import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
+import {
+  findTeacherPaymentMonthByCompetenceBrt,
+  upsertKeysForCompetenceMonth,
+} from '@/lib/teacher-payment-month-db'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -125,20 +129,12 @@ export async function POST(
     })
 
     if (markPaid) {
-      // Preferir o registro cujo período TERMINA no mês/ano selecionado (mesma regra da listagem).
-      const rangeStart = new Date(Date.UTC(year, month - 1, 1))
-      const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
-      const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
-        where: {
-          teacherId,
-          periodoTermino: {
-            gte: rangeStart,
-            lte: rangeEnd,
-          },
-        },
-      })
-      const keyYear = existingByEnd?.year ?? year
-      const keyMonth = existingByEnd?.month ?? month
+      const existingByEnd = await findTeacherPaymentMonthByCompetenceBrt(teacherId, year, month)
+      const { year: keyYear, month: keyMonth } = upsertKeysForCompetenceMonth(
+        year,
+        month,
+        existingByEnd
+      )
 
       const pmExisting = await prisma.teacherPaymentMonth.findUnique({
         where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },

@@ -15,7 +15,7 @@ import { resolveTeacherProofFileUrlFromAuditLogs } from '@/lib/finance/resolve-t
 import {
   calendarMonthBoundsUtc,
   inferDueDayUtcFromSavedPeriod,
-  teacherPaymentBoundsFromDueDay,
+  teacherPaymentBoundsForCompetenceMonth,
   teacherPaymentPeriodBoundsUtc,
   resolveTeacherPaymentMonthBoundsUtc,
 } from '@/lib/teacher-paid-period'
@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
 
       let b: { startMs: number; endExclusiveMs: number } | null = null
       if (dueEffective != null) {
-        const p = teacherPaymentBoundsFromDueDay(year!, month!, dueEffective)
+        const p = teacherPaymentBoundsForCompetenceMonth(year!, month!, dueEffective)
         b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
       }
       if (!b) {
@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
         })
         const inferred = inferDueDayUtcFromSavedPeriod(anyPm?.periodoInicio ?? null, anyPm?.periodoTermino ?? null)
         if (inferred != null) {
-          const p = teacherPaymentBoundsFromDueDay(year!, month!, inferred)
+          const p = teacherPaymentBoundsForCompetenceMonth(year!, month!, inferred)
           b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
         }
       }
@@ -174,7 +174,7 @@ export async function GET(request: NextRequest) {
           teacher.periodoPagamentoTermino ?? null
         )
         if (fromTeacherGlobal != null) {
-          const p = teacherPaymentBoundsFromDueDay(year!, month!, fromTeacherGlobal)
+          const p = teacherPaymentBoundsForCompetenceMonth(year!, month!, fromTeacherGlobal)
           b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
         }
       }

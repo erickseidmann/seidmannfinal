@@ -4,6 +4,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { teacherPaymentCompetenceKeyFromPeriodoTermino } from '@/lib/teacher-paid-period'
 
 export async function resolveTeacherPaymentMonthKeyContaining(
   teacherId: string,
@@ -26,13 +27,16 @@ export async function resolveTeacherPaymentMonthKeyContaining(
       r.periodoInicio != null &&
       r.periodoTermino != null &&
       r.periodoInicio.getTime() <= t &&
-      t < r.periodoTermino.getTime() + 24 * 60 * 60 * 1000
+      t < r.periodoTermino.getTime()
   )
   if (matches.length === 0) return null
 
   matches.sort((a, b) => b.periodoInicio!.getTime() - a.periodoInicio!.getTime())
   const pick = matches[0]
-  return { year: pick.year, month: pick.month }
+  if (!pick.periodoTermino) {
+    return { year: pick.year, month: pick.month }
+  }
+  return teacherPaymentCompetenceKeyFromPeriodoTermino(pick.periodoTermino)
 }
 
 /**

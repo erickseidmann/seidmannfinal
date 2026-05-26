@@ -14,8 +14,9 @@ import { toDateKey, filterRecordsByPausedEnrollment, computeValorAPagar, type Pa
 import { resolveTeacherProofFileUrlFromAuditLogs } from '@/lib/finance/resolve-teacher-proof-url'
 import {
   calendarMonthBoundsUtc,
+  periodoTerminoRangeForCompetenceMonthBrt,
   resolveTeacherPaymentMonthBoundsUtc,
-  teacherPaymentBoundsFromDueDay,
+  teacherPaymentBoundsForCompetenceMonth,
   teacherPaymentPeriodBoundsUtc,
 } from '@/lib/teacher-paid-period'
 import { ymdUtc } from '@/lib/datetime'
@@ -111,15 +112,12 @@ export async function GET(request: NextRequest) {
     // Mapa: teacherId|year|month -> fileUrl do comprovante anexado.
     const proofFileByTeacherYearMonth = new Map<string, string>()
     if (useMonthMode && year != null && month != null) {
-      // Regra do mês visualizado: selecionar o período que VENCE no mês (periodoTermino no mês).
-      // Usar limites UTC [início do mês, início do próximo mês) evita ambiguidades de fuso.
-      const monthBounds = calendarMonthBoundsUtc(year, month)
-      const firstDaySel = new Date(monthBounds.startMs)
-      const nextMonthStart = new Date(monthBounds.endExclusiveMs)
+      // Período cuja competência BRT = mês/ano visualizado (via periodoTermino exclusivo).
+      const terminoRange = periodoTerminoRangeForCompetenceMonthBrt(year, month)
       const rowsEnding = await prisma.teacherPaymentMonth.findMany({
         where: {
           teacherId: { in: teachers.map((t) => t.id) },
-          periodoTermino: { gte: firstDaySel, lt: nextMonthStart },
+          periodoTermino: { gt: terminoRange.gt, lte: terminoRange.lte },
         },
         select: {
           teacherId: true,
@@ -205,15 +203,7 @@ export async function GET(request: NextRequest) {
         const due = t.paymentDueDay
         let b: { startMs: number; endExclusiveMs: number } | null = null
         if (due != null && due >= 1 && due <= 31 && viewedYear != null && viewedMonth != null) {
-          // Debug temporário: confirmar que o cálculo usa o mês visualizado na tela.
-          console.log('[financeiro/professores][DEBUG_DUE_CALL]', {
-            teacherId: t.id,
-            teacherName: t.nome,
-            year: viewedYear,
-            month: viewedMonth,
-            dueDay: due,
-          })
-          const p = teacherPaymentBoundsFromDueDay(viewedYear, viewedMonth, due)
+          const p = teacherPaymentBoundsForCompetenceMonth(viewedYear, viewedMonth, due)
           b = teacherPaymentPeriodBoundsUtc(p.inicio, p.termino)
         }
         if (!b) {
@@ -432,24 +422,20 @@ export async function GET(request: NextRequest) {
     let professoresFinais = list
     if (useMonthMode && year != null && month != null) {
       const monthBounds = calendarMonthBoundsUtc(year, month)
+      const terminoCompetence = periodoTerminoRangeForCompetenceMonthBrt(year, month)
       professoresFinais = list.filter((p) => {
         const period = teacherPeriods.find((tp) => tp.id === p.id)
         if (!period) return false
-        // Regra de inclusão no mês visualizado:
-        // 1) período que vence no mês (periodoTermino no mês, incluindo 1º dia 00:00),
-        // 2) período que começa no mês,
-        // 3) sobreposição geral (fallback/legado).
-        const endsInMonth =
-          period.endExclusiveMs >= monthBounds.startMs &&
-          period.endExclusiveMs < monthBounds.endExclusiveMs
-        const endsAtMonthStart = period.endExclusiveMs === monthBounds.startMs
+        const endsInCompetenceMonth =
+          period.endExclusiveMs > terminoCompetence.gt.getTime() &&
+          period.endExclusiveMs <= terminoCompetence.lte.getTime()
         const startsInMonth =
           period.startMs >= monthBounds.startMs &&
           period.startMs < monthBounds.endExclusiveMs
         const overlapsMonth =
           period.startMs < monthBounds.endExclusiveMs &&
           period.endExclusiveMs > monthBounds.startMs
-        return endsInMonth || endsAtMonthStart || startsInMonth || overlapsMonth
+        return endsInCompetenceMonth || startsInMonth || overlapsMonth
       })
     }
 

@@ -9,6 +9,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction } from '@/lib/finance'
+import {
+  findTeacherPaymentMonthByCompetenceBrt,
+  upsertKeysForCompetenceMonth,
+} from '@/lib/teacher-payment-month-db'
 import { z } from 'zod'
 
 const bodySchema = z.object({
@@ -48,16 +52,12 @@ export async function POST(
     }
     const { year, month } = parsed.data
 
-    const rangeStart = new Date(Date.UTC(year, month - 1, 1))
-    const rangeEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
-    const existingByEnd = await prisma.teacherPaymentMonth.findFirst({
-      where: {
-        teacherId,
-        periodoTermino: { gte: rangeStart, lte: rangeEnd },
-      },
-    })
-    const keyYear = existingByEnd?.year ?? year
-    const keyMonth = existingByEnd?.month ?? month
+    const existingByEnd = await findTeacherPaymentMonthByCompetenceBrt(teacherId, year, month)
+    const { year: keyYear, month: keyMonth } = upsertKeysForCompetenceMonth(
+      year,
+      month,
+      existingByEnd
+    )
 
     await prisma.teacherPaymentMonth.upsert({
       where: { teacherId_year_month: { teacherId, year: keyYear, month: keyMonth } },
