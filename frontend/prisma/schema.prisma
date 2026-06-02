@@ -421,6 +421,8 @@ model Enrollment {
   alerts                 StudentAlert[]
   paymentNotifications   PaymentNotification[]
   coraInvoices          CoraInvoice[]
+  payerLinks            PayerLink[]
+  receivedPayments      ReceivedPayment[]
   lessons             Lesson[]
   lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
@@ -479,6 +481,7 @@ model EnrollmentPaymentMonth {
   atualizadoEm         DateTime  @updatedAt @map("updated_at")
 
   enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  receivedPayments     ReceivedPayment[]
 
   @@unique([enrollmentId, year, month])
   @@index([enrollmentId])
@@ -1083,8 +1086,75 @@ model CoraInvoice {
   @@unique([enrollmentId, year, month])
   @@index([status])
   @@index([coraInvoiceId])
+  receivedPayments ReceivedPayment[]
+
   @@index([dueDate])
   @@map("cora_invoices")
+}
+
+enum PaymentProvider {
+  CORA
+  INFINITEPAY
+  SANTANDER
+  LIXEL
+}
+
+enum ReceivedPaymentStatus {
+  PENDENTE
+  VINCULADO
+  IGNORADO
+}
+
+enum DocumentoTipo {
+  CPF
+  CNPJ
+}
+
+model PayerLink {
+  id            String        @id @default(cuid())
+  documento     String
+  documentoTipo DocumentoTipo @map("documento_tipo")
+  enrollmentId  String        @map("enrollment_id")
+  enrollment    Enrollment    @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  nomePagador   String?       @map("nome_pagador") @db.VarChar(255)
+  apelido       String?       @db.VarChar(100)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@unique([documento, enrollmentId])
+  @@index([documento])
+  @@map("payer_link")
+}
+
+model ReceivedPayment {
+  id                        String                @id @default(cuid())
+  provider                  PaymentProvider
+  providerPaymentId         String                @map("provider_payment_id") @db.VarChar(255)
+  valor                     Int
+  dataPagamento             DateTime              @map("data_pagamento")
+  metodo                    String?               @db.VarChar(50)
+  documentoPagador          String?               @map("documento_pagador") @db.VarChar(14)
+  nomePagador               String?               @map("nome_pagador") @db.VarChar(255)
+  txid                      String?               @db.VarChar(255)
+  endToEndId                String?               @map("end_to_end_id") @db.VarChar(255)
+  referencia                String?               @db.VarChar(255)
+  status                    ReceivedPaymentStatus @default(PENDENTE)
+  divergenciaValor          Boolean               @default(false) @map("divergencia_valor")
+  semCobrancaAberta         Boolean               @default(false) @map("sem_cobranca_aberta")
+  enrollmentId              String?               @map("enrollment_id")
+  enrollment                Enrollment?           @relation(fields: [enrollmentId], references: [id])
+  enrollmentPaymentMonthId  String?               @map("enrollment_payment_month_id")
+  enrollmentPaymentMonth    EnrollmentPaymentMonth? @relation(fields: [enrollmentPaymentMonthId], references: [id])
+  coraInvoiceId             String?               @map("cora_invoice_id")
+  coraInvoice               CoraInvoice?          @relation(fields: [coraInvoiceId], references: [id])
+  rawPayload                Json                  @map("raw_payload")
+  createdAt                 DateTime              @default(now()) @map("created_at")
+  updatedAt                 DateTime              @updatedAt @map("updated_at")
+
+  @@unique([provider, providerPaymentId])
+  @@index([status, createdAt])
+  @@index([documentoPagador])
+  @@map("received_payment")
 }
 
 // Eventos de webhook Cora processados (idempotência)

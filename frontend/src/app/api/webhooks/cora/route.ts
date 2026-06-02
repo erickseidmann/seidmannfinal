@@ -1,19 +1,20 @@
 /**
  * Webhook Cora: notificações de pagamento (boleto/PIX).
- * A Cora envia dados nos HEADERS (body vazio).
- * Headers: user-agent, webhook-event-id, webhook-event-type, webhook-resource-id
- * Suporta também formato legado (body JSON) para compatibilidade.
+ * Refatorado para reconcilePayment + confirmEnrollmentPayment.
+ * TODO: validação de assinatura/HMAC.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getInvoice } from '@/lib/cora'
-import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
-import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
-import { sendPaymentConfirmation } from '@/lib/email/payment-notifications'
-import { liberarAcessoAlunoSafe } from '@/lib/access'
-
-const CORA_WEBHOOK_UA = 'Cora-Webhook'
+import { logFinanceAction } from '@/lib/finance'
+import {
+  reconcilePayment,
+  confirmEnrollmentPayment,
+  buildNormalizedPaymentFromCoraInvoicePaid,
+  isCoraHeaderWebhook,
+  readCoraWebhookHeaders,
+  normalizeCoraFromBody,
+} from '@/lib/payments'
 
 export async function GET() {
   return NextResponse.json({
@@ -24,9 +25,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const userAgent = request.headers.get('user-agent') ?? ''
-
-    if (userAgent === CORA_WEBHOOK_UA) {
+    if (isCoraHeaderWebhook(request)) {
       return handleCoraHeaderWebhook(request)
     }
     return handleLegacyBodyWebhook(request)
@@ -37,9 +36,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleCoraHeaderWebhook(request: NextRequest): Promise<NextResponse> {
-  const eventId = request.headers.get('webhook-event-id') ?? ''
-  const eventType = request.headers.get('webhook-event-type') ?? ''
-  const resourceId = request.headers.get('webhook-resource-id') ?? ''
+  const { eventId, eventType, resourceId } = readCoraWebhookHeaders(request)
 
   console.log(`[Cora Webhook] Event: ${eventType}, Resource: ${resourceId}, EventID: ${eventId}`)
 
@@ -58,14 +55,26 @@ async function handleCoraHeaderWebhook(request: NextRequest): Promise<NextRespon
 
   try {
     switch (eventType) {
-      case 'invoice.paid':
-        await handleInvoicePaid(resourceId)
+      case 'invoice.paid': {
+        const np = await buildNormalizedPaymentFromCoraInvoicePaid(resourceId)
+        if (np) {
+          await reconcilePayment(np)
+        }
         break
+      }
       case 'invoice.registered':
-        await handleInvoiceRegistered(resourceId)
+        await prisma.coraInvoice.updateMany({
+          where: { coraInvoiceId: resourceId },
+          data: { status: 'OPEN' },
+        })
+        console.log(`[Cora] Boleto registrado: ${resourceId}`)
         break
       case 'invoice.cancelled':
-        await handleInvoiceCancelled(resourceId)
+        await prisma.coraInvoice.updateMany({
+          where: { coraInvoiceId: resourceId },
+          data: { status: 'CANCELLED' },
+        })
+        console.log(`[Cora] Boleto cancelado: ${resourceId}`)
         break
       default:
         console.log(`[Cora Webhook] Evento não tratado: ${eventType}`)
@@ -80,154 +89,11 @@ async function handleCoraHeaderWebhook(request: NextRequest): Promise<NextRespon
         update: {},
       })
     } catch {
-      // ignorar falha ao registrar idempotência
+      // ignorar falha ao registrar idempotência do evento
     }
   }
 
   return NextResponse.json({ success: true }, { status: 200 })
-}
-
-async function handleInvoicePaid(coraInvoiceId: string): Promise<void> {
-  const invoice = await prisma.coraInvoice.findUnique({
-    where: { coraInvoiceId },
-    include: {
-      enrollment: {
-        include: {
-          user: { select: { email: true } },
-          paymentInfo: true,
-        },
-      },
-    },
-  })
-
-  if (!invoice) {
-    console.error(`[Cora] Invoice ${coraInvoiceId} não encontrada no banco`)
-    return
-  }
-
-  if (invoice.status === 'PAID') {
-    console.log(`[Cora] Invoice ${coraInvoiceId} já processada, ignorando`)
-    return
-  }
-
-  let paidAmount = invoice.amount
-  try {
-    const coraDetails = await getInvoice(coraInvoiceId)
-    paidAmount = coraDetails.total_paid > 0 ? coraDetails.total_paid : invoice.amount
-  } catch {
-    // usar valor do banco
-  }
-
-  await prisma.coraInvoice.update({
-    where: { coraInvoiceId },
-    data: {
-      status: 'PAID',
-      paidAt: new Date(),
-      paidAmount,
-    },
-  })
-
-  const { enrollmentId, year, month, enrollment } = invoice
-  const amountReais = paidAmount / 100
-
-  await prisma.enrollmentPaymentMonth.upsert({
-    where: {
-      enrollmentId_year_month: { enrollmentId, year, month },
-    },
-    create: {
-      enrollmentId,
-      year,
-      month,
-      paymentStatus: 'PAGO',
-    },
-    update: { paymentStatus: 'PAGO' },
-  })
-
-  logFinanceAction({
-    entityType: 'ENROLLMENT',
-    entityId: enrollmentId,
-    action: 'PAYMENT_CONFIRMED',
-    newValue: {
-      paymentStatus: 'PAGO',
-      year,
-      month,
-      paidAmount,
-      coraInvoiceId,
-    },
-    performedBy: 'WEBHOOK_CORA',
-    metadata: { coraInvoiceId },
-  }).catch(() => {})
-
-  if (process.env.NFSE_ENABLED === 'true') {
-    try {
-      const finance = getEnrollmentFinanceData(enrollment)
-      const valorMensalidade =
-        enrollment.valorMensalidade != null
-          ? Number(enrollment.valorMensalidade)
-          : enrollment.paymentInfo?.valorMensal != null
-            ? Number(enrollment.paymentInfo.valorMensal)
-            : null
-      if ((finance.cpf || finance.cnpj) && valorMensalidade && valorMensalidade > 0) {
-        const jaAutorizada = await obterNfAutorizadaExistente(enrollmentId, year, month)
-        if (jaAutorizada) {
-          console.log(`[Cora] NFSe já autorizada para ${finance.nome} (${year}/${month}) — sem reemitir`)
-        } else {
-          await emitirNfseParaAluno({
-            enrollmentId,
-            studentName: finance.nome,
-            cpf: finance.cpf || undefined,
-            cnpj: finance.cnpj || undefined,
-            email: finance.email || undefined,
-            amount: valorMensalidade,
-            year,
-            month,
-            alunoNome: enrollment.nome,
-            frequenciaSemanal: enrollment.frequenciaSemanal ?? undefined,
-            curso: enrollment.curso ?? undefined,
-            customDescricaoEmpresa: enrollment.faturamentoDescricaoNfse ?? undefined,
-          })
-          console.log(`[Cora] NFSe emitida para ${finance.nome} (${year}/${month})`)
-        }
-      }
-    } catch (nfseError) {
-      console.error('[Cora] Erro ao emitir NFSe:', nfseError)
-    }
-  }
-
-  // Liberar acesso à plataforma (cria usuário + envia e-mail com login/senha)
-  // automaticamente assim que o pagamento for confirmado.
-  await liberarAcessoAlunoSafe({ enrollmentId, contexto: 'cora-webhook' })
-
-  try {
-    await sendPaymentConfirmation(
-      enrollment,
-      amountReais,
-      new Date(),
-      year,
-      month,
-      process.env.NFSE_ENABLED === 'true'
-    )
-  } catch (emailErr) {
-    console.error('[Cora] Erro ao enviar confirmação de pagamento:', emailErr)
-  }
-
-  console.log(`[Cora] Pagamento processado: ${enrollmentId} - ${year}/${month}`)
-}
-
-async function handleInvoiceRegistered(coraInvoiceId: string): Promise<void> {
-  await prisma.coraInvoice.updateMany({
-    where: { coraInvoiceId },
-    data: { status: 'OPEN' },
-  })
-  console.log(`[Cora] Boleto registrado: ${coraInvoiceId}`)
-}
-
-async function handleInvoiceCancelled(coraInvoiceId: string): Promise<void> {
-  await prisma.coraInvoice.updateMany({
-    where: { coraInvoiceId },
-    data: { status: 'CANCELLED' },
-  })
-  console.log(`[Cora] Boleto cancelado: ${coraInvoiceId}`)
 }
 
 function mapCoraStatusToOurs(status: string): 'PAGO' | 'ATRASADO' | 'PENDING' | null {
@@ -283,6 +149,25 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
     return NextResponse.json({ ok: true, message: 'Status ignorado' }, { status: 200 })
   }
 
+  if (newStatus === 'PAGO' && id && typeof id === 'string') {
+    const np =
+      (await buildNormalizedPaymentFromCoraInvoicePaid(id)) ??
+      normalizeCoraFromBody({
+        ...body,
+        provider_payment_id: id,
+        amount: total_paid,
+        paid_at: occurrence_date,
+      })
+    if (np) {
+      try {
+        await reconcilePayment(np)
+        return NextResponse.json({ ok: true }, { status: 200 })
+      } catch (err) {
+        console.error('[Cora legacy] reconcile:', err)
+      }
+    }
+  }
+
   if (!code || typeof code !== 'string') {
     return NextResponse.json({ ok: true, message: 'Payload sem code' }, { status: 200 })
   }
@@ -305,12 +190,29 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
     select: { paymentStatus: true },
   })
   const oldStatus = existing?.paymentStatus ?? null
-  // Se já está marcado como PAGO manualmente ou por outro fluxo, não rebaixar para ATRASADO/PENDING
   if (oldStatus === 'PAGO' && newStatus !== 'PAGO') {
     return NextResponse.json({ ok: true, message: 'Status já está PAGO; atualização ignorada' }, { status: 200 })
   }
   if (oldStatus === newStatus) {
     return NextResponse.json({ ok: true, message: 'Já processado' }, { status: 200 })
+  }
+
+  if (newStatus === 'PAGO') {
+    const paymentDate = occurrence_date ? new Date(occurrence_date) : new Date()
+    const paidCents =
+      typeof total_paid === 'number' && total_paid > 0
+        ? Math.round(total_paid)
+        : undefined
+    await confirmEnrollmentPayment({
+      enrollmentId: code,
+      year,
+      month,
+      paidAt: paymentDate,
+      source: 'CORA_LEGACY_WEBHOOK',
+      paidAmountCents: paidCents,
+      coraInvoiceExternalId: typeof id === 'string' ? id : undefined,
+    })
+    return NextResponse.json({ ok: true, enrollmentId: code, year, month, newStatus }, { status: 200 })
   }
 
   await prisma.enrollmentPaymentMonth.upsert({
@@ -322,83 +224,19 @@ async function handleLegacyBodyWebhook(request: NextRequest): Promise<NextRespon
   if (id) {
     await prisma.coraInvoice.updateMany({
       where: { coraInvoiceId: id },
-      data: newStatus === 'PAGO' ? { status: 'PAID', paidAt: new Date(), paidAmount: total_paid } : {},
+      data: {},
     })
   }
 
   logFinanceAction({
     entityType: 'ENROLLMENT',
     entityId: code,
-    action: newStatus === 'PAGO' ? 'PAYMENT_CONFIRMED' : 'PAYMENT_STATUS_CHANGED',
+    action: 'PAYMENT_STATUS_CHANGED',
     oldValue: { paymentStatus: oldStatus },
-    newValue: { paymentStatus: newStatus, year, month, paidAmount: total_paid },
+    newValue: { paymentStatus: newStatus, year, month },
     performedBy: 'WEBHOOK_CORA',
     metadata: { coraInvoiceId: id },
   }).catch(() => {})
-
-  if (newStatus === 'PAGO') {
-    // Liberar acesso à plataforma automaticamente (cria conta + envia e-mail)
-    await liberarAcessoAlunoSafe({ enrollmentId: code, contexto: 'cora-legacy-webhook' })
-
-    const enrollmentCompleto = await prisma.enrollment.findUnique({
-      where: { id: code },
-      include: { user: { select: { email: true } }, paymentInfo: true },
-    })
-    if (enrollmentCompleto) {
-      try {
-        const valorMensalidade =
-          enrollmentCompleto.valorMensalidade != null
-            ? Number(enrollmentCompleto.valorMensalidade)
-            : enrollmentCompleto.paymentInfo?.valorMensal != null
-              ? Number(enrollmentCompleto.paymentInfo.valorMensal)
-              : 0
-        const amount = total_paid > 0 ? Number(total_paid) / 100 : valorMensalidade
-        const paymentDate = occurrence_date ? new Date(occurrence_date) : new Date()
-        await sendPaymentConfirmation(
-          enrollmentCompleto,
-          amount,
-          paymentDate,
-          year,
-          month,
-          process.env.NFSE_ENABLED === 'true'
-        )
-      } catch {
-        /* ignore */
-      }
-      if (process.env.NFSE_ENABLED === 'true') {
-        try {
-          const finance = getEnrollmentFinanceData(enrollmentCompleto)
-          const valorMensalidade =
-            enrollmentCompleto.valorMensalidade != null
-              ? Number(enrollmentCompleto.valorMensalidade)
-              : enrollmentCompleto.paymentInfo?.valorMensal != null
-                ? Number(enrollmentCompleto.paymentInfo.valorMensal)
-                : null
-          if ((finance.cpf || finance.cnpj) && valorMensalidade && valorMensalidade > 0) {
-            const jaAutorizada = await obterNfAutorizadaExistente(code, year, month)
-            if (!jaAutorizada) {
-              await emitirNfseParaAluno({
-                enrollmentId: code,
-                studentName: finance.nome,
-                cpf: finance.cpf || undefined,
-                cnpj: finance.cnpj || undefined,
-                email: finance.email || undefined,
-                amount: valorMensalidade,
-                year,
-                month,
-                alunoNome: enrollmentCompleto.nome,
-                frequenciaSemanal: enrollmentCompleto.frequenciaSemanal ?? undefined,
-                curso: enrollmentCompleto.curso ?? undefined,
-                customDescricaoEmpresa: enrollmentCompleto.faturamentoDescricaoNfse ?? undefined,
-              })
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  }
 
   return NextResponse.json({ ok: true, enrollmentId: code, year, month, newStatus }, { status: 200 })
 }

@@ -308,3 +308,87 @@ export function validateWebhookSecret(receivedSecret: string): boolean {
   if (!WEBHOOK_SECRET) return false
   return receivedSecret === WEBHOOK_SECRET
 }
+
+// --- Webhooks (endpoints) ---
+
+export type CoraWebhookEndpointPayload = {
+  url: string
+  resource: string
+  trigger: string
+}
+
+export type CoraApiResult = { status: number; data: unknown }
+
+/** Chamada à API Cora retornando status + corpo (sem throw) — para rotas admin de webhooks. */
+export async function coraEndpointsRequest(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+  idempotencyKey?: string
+): Promise<CoraApiResult> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  }
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+
+  const fullPath = path.startsWith('http')
+    ? path
+    : `${BASE_URL}${path.startsWith('/') ? path : '/' + path}`
+
+  let { status, data } = await coraFetch(fullPath, {
+    method,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers,
+  })
+
+  if (status === 401) {
+    const newToken = await getAccessToken(true)
+    const retryHeaders: Record<string, string> = {
+      Authorization: `Bearer ${newToken}`,
+    }
+    if (idempotencyKey) retryHeaders['Idempotency-Key'] = idempotencyKey
+    const retry = await coraFetch(fullPath, {
+      method,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers: retryHeaders,
+    })
+    status = retry.status
+    data = retry.data
+  }
+
+  if (status < 200 || status >= 300) {
+    console.error(
+      '[Cora] endpoints API error:',
+      JSON.stringify({ status, path, body: data }, null, 2)
+    )
+  }
+
+  return { status, data }
+}
+
+export async function listCoraWebhookEndpoints(): Promise<CoraApiResult> {
+  return coraEndpointsRequest('GET', '/endpoints/')
+}
+
+export async function createCoraWebhookEndpoint(
+  payload: CoraWebhookEndpointPayload
+): Promise<CoraApiResult> {
+  return coraEndpointsRequest('POST', '/endpoints/', payload, randomUUID())
+}
+
+export async function deleteCoraWebhookEndpoint(endpointId: string): Promise<CoraApiResult> {
+  return coraEndpointsRequest(
+    'DELETE',
+    `/endpoints/${encodeURIComponent(endpointId)}`
+  )
+}
+
+export function formatCoraApiErrorMessage(status: number, data: unknown): string {
+  const err = data as { message?: string; error?: string; errors?: unknown }
+  const msg = err?.message ?? err?.error ?? `Cora API error: ${status}`
+  if (data && typeof data === 'object') {
+    return `${msg} (HTTP ${status}) — ${JSON.stringify(data)}`
+  }
+  return `${msg} (HTTP ${status})`
+}
