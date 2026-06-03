@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const status = (searchParams.get('status') ?? 'PENDENTE') as ReceivedPaymentStatus
+    const statusParam = searchParams.get('status')
     const providerParam = searchParams.get('provider')
     const q = (searchParams.get('q') ?? '').trim()
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1)
@@ -29,7 +29,16 @@ export async function GET(request: NextRequest) {
       Math.max(1, parseInt(searchParams.get('pageSize') ?? '20', 10) || 20)
     )
 
-    const where: Prisma.ReceivedPaymentWhereInput = { status }
+    const where: Prisma.ReceivedPaymentWhereInput = {}
+
+    if (
+      statusParam &&
+      (['PENDENTE', 'VINCULADO', 'IGNORADO'] as ReceivedPaymentStatus[]).includes(
+        statusParam as ReceivedPaymentStatus
+      )
+    ) {
+      where.status = statusParam as ReceivedPaymentStatus
+    }
 
     if (providerParam && PROVIDERS.includes(providerParam as PaymentProvider)) {
       where.provider = providerParam as PaymentProvider
@@ -50,7 +59,7 @@ export async function GET(request: NextRequest) {
       prisma.receivedPayment.count({ where }),
       prisma.receivedPayment.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { dataPagamento: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {

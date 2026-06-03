@@ -392,3 +392,70 @@ export function formatCoraApiErrorMessage(status: number, data: unknown): string
   }
   return `${msg} (HTTP ${status})`
 }
+
+// --- Extrato bancário ---
+
+export interface CoraStatementEntry {
+  id: string
+  type: string
+  amount: number
+  createdAt: string
+  transaction?: {
+    id?: string
+    type?: string
+    description?: string
+    counterParty?: {
+      name?: string
+      identity?: string
+    }
+  }
+}
+
+export interface CoraStatementResponse {
+  start?: { date?: string; balance?: number }
+  entries?: CoraStatementEntry[]
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** GET autenticado com retry em 503/504 (extrato pode sobrecarregar). */
+export async function coraAuthenticatedGet<T>(
+  path: string,
+  maxRetries = 3
+): Promise<T> {
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await coraRequest<T>('GET', path)
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      const msg = lastError.message
+      const retryable =
+        msg.includes('503') || msg.includes('504') || msg.includes('502')
+      if (!retryable || attempt === maxRetries - 1) throw lastError
+      await sleep(1000 * (attempt + 1))
+    }
+  }
+  throw lastError ?? new Error('Cora GET failed')
+}
+
+export async function fetchBankStatementPage(params: {
+  start: string
+  end: string
+  page: number
+  perPage?: number
+}): Promise<CoraStatementResponse> {
+  const perPage = params.perPage ?? 100
+  const q = new URLSearchParams({
+    start: params.start,
+    end: params.end,
+    type: 'CREDIT',
+    page: String(params.page),
+    perPage: String(perPage),
+  })
+  return coraAuthenticatedGet<CoraStatementResponse>(
+    `/bank-statement/statement?${q.toString()}`
+  )
+}

@@ -34,3 +34,8 @@ export {
   readCoraWebhookHeaders,
   CORA_WEBHOOK_UA,
 } from './cora-adapter'
+export {
+  fetchCoraStatement,
+  mapStatementEntryToNormalized,
+  type CoraStatementEntry,
+} from './cora-statement'

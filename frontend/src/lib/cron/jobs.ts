@@ -629,3 +629,114 @@ export async function runNfseScheduled(): Promise<{
     errorDetails: errorDetails.slice(0, 20),
   }
 }
+
+export interface SyncCoraExtratoResult {
+  ok: boolean
+  total: number
+  novas: number
+  conciliadas: number
+  pendentes: number
+  ignoradas: number
+  erros: number
+  start: string
+  end: string
+  message?: string
+}
+
+/**
+ * Consulta extrato Cora (CREDIT) e concilia cada lançamento via reconcilePayment.
+ * Janela: últimas 2h até +1 dia (timezone / atraso da API).
+ */
+export async function runSyncCoraExtrato(): Promise<SyncCoraExtratoResult> {
+  if (!process.env.CORA_CLIENT_ID) {
+    return {
+      ok: true,
+      total: 0,
+      novas: 0,
+      conciliadas: 0,
+      pendentes: 0,
+      ignoradas: 0,
+      erros: 0,
+      start: '',
+      end: '',
+      message: 'CORA_CLIENT_ID não configurado — sync ignorado',
+    }
+  }
+
+  const now = new Date()
+  const start = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  const end = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+
+  const { fetchCoraStatement, mapStatementEntryToNormalized } = await import(
+    '@/lib/payments/cora-statement'
+  )
+  const { reconcilePayment } = await import('@/lib/payments/reconcile')
+
+  let entries: Awaited<ReturnType<typeof fetchCoraStatement>>
+  try {
+    entries = await fetchCoraStatement(start, end)
+  } catch (err) {
+    console.error('[cron/sync-cora-extrato] Erro ao buscar extrato:', err)
+    return {
+      ok: false,
+      total: 0,
+      novas: 0,
+      conciliadas: 0,
+      pendentes: 0,
+      ignoradas: 0,
+      erros: 1,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      message: err instanceof Error ? err.message : String(err),
+    }
+  }
+
+  let novas = 0
+  let conciliadas = 0
+  let pendentes = 0
+  let ignoradas = 0
+  let erros = 0
+
+  for (const entry of entries) {
+    try {
+      const np = mapStatementEntryToNormalized(entry)
+      const existing = await prisma.receivedPayment.findUnique({
+        where: {
+          provider_providerPaymentId: {
+            provider: np.provider,
+            providerPaymentId: np.providerPaymentId,
+          },
+        },
+      })
+      const payment = await reconcilePayment(np)
+      if (!existing) novas++
+      if (payment.status === 'VINCULADO') conciliadas++
+      else if (payment.status === 'PENDENTE') pendentes++
+      else if (payment.status === 'IGNORADO') ignoradas++
+    } catch (err) {
+      erros++
+      console.error(
+        `[cron/sync-cora-extrato] Erro entry ${entry.id}:`,
+        err instanceof Error ? err.message : err
+      )
+    }
+  }
+
+  const result: SyncCoraExtratoResult = {
+    ok: true,
+    total: entries.length,
+    novas,
+    conciliadas,
+    pendentes,
+    ignoradas,
+    erros,
+    start: start.toISOString(),
+    end: end.toISOString(),
+  }
+
+  if (entries.length > 0 || erros > 0) {
+    console.log('[cron/sync-cora-extrato] Concluído', result)
+  }
+
+  return result
+}

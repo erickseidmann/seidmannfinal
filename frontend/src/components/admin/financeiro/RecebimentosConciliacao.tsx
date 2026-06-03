@@ -82,6 +82,22 @@ function providerBadgeClass(provider: string): string {
   }
 }
 
+function conciliacaoStatusBadge(r: RecebimentoItem): { label: string; className: string } {
+  const base = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold'
+  if (r.status === 'VINCULADO') {
+    return { label: 'Conciliado', className: `${base} bg-green-100 text-green-800` }
+  }
+  if (r.status === 'IGNORADO') {
+    return { label: 'Ignorado', className: `${base} bg-gray-100 text-gray-600` }
+  }
+  if (r.divergenciaValor) {
+    return { label: 'Valor divergente', className: `${base} bg-yellow-100 text-yellow-800` }
+  }
+  return { label: 'Pendente', className: `${base} bg-orange-100 text-orange-800` }
+}
+
+const PAGE_SIZE = 20
+
 interface Props {
   onToast: (message: string, type: 'success' | 'error') => void
   onVinculado?: () => void
@@ -91,6 +107,8 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
   const [expanded, setExpanded] = useState(true)
   const [filtroIdentificador, setFiltroIdentificador] = useState('')
   const [filtroProvider, setFiltroProvider] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('')
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState<RecebimentoItem[]>([])
   const [total, setTotal] = useState(0)
@@ -106,10 +124,10 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
     setLoading(true)
     try {
       const params = new URLSearchParams({
-        status: 'PENDENTE',
-        page: '1',
-        pageSize: '50',
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
       })
+      if (filtroStatus) params.set('status', filtroStatus)
       if (filtroProvider) params.set('provider', filtroProvider)
       if (filtroIdentificador.trim()) params.set('q', filtroIdentificador.trim())
 
@@ -128,7 +146,11 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
     } finally {
       setLoading(false)
     }
-  }, [filtroIdentificador, filtroProvider, onToast])
+  }, [filtroIdentificador, filtroProvider, filtroStatus, page, onToast])
+
+  useEffect(() => {
+    setPage(1)
+  }, [filtroIdentificador, filtroProvider, filtroStatus])
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -263,6 +285,21 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                  Status
+                </label>
+                <select
+                  value={filtroStatus}
+                  onChange={(e) => setFiltroStatus(e.target.value)}
+                  className="input text-sm py-2 min-w-[140px]"
+                >
+                  <option value="">Todos</option>
+                  <option value="PENDENTE">Pendente</option>
+                  <option value="VINCULADO">Conciliado</option>
+                  <option value="IGNORADO">Ignorado</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                   Provedor
                 </label>
                 <select
@@ -286,11 +323,14 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
               </div>
             ) : items.length === 0 ? (
               <p className="text-sm text-gray-500 py-6 text-center">
-                Nenhum recebimento pendente de conciliação.
+                Nenhum recebimento encontrado.
               </p>
             ) : (
+              <>
               <ul className="mt-4 space-y-3">
-                {items.map((r) => (
+                {items.map((r) => {
+                  const statusBadge = conciliacaoStatusBadge(r)
+                  return (
                   <li
                     key={r.id}
                     className="rounded-lg border border-gray-100 bg-gray-50/80 p-4 flex flex-col sm:flex-row sm:items-start gap-3"
@@ -300,6 +340,9 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                         <span className={providerBadgeClass(r.provider)}>
                           {PROVIDER_LABELS[r.provider] ?? r.provider}
                         </span>
+                        <span className={statusBadge.className}>
+                          {statusBadge.label}
+                        </span>
                         <span className="text-lg font-bold text-gray-900">
                           {formatMoneyCents(r.valor)}
                         </span>
@@ -307,6 +350,11 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                           {formatDate(r.dataPagamento)}
                         </span>
                       </div>
+                      {r.status === 'VINCULADO' && r.enrollmentNome && (
+                        <p className="text-sm text-green-700 font-medium">
+                          Aluno: {r.enrollmentNome}
+                        </p>
+                      )}
                       {(r.nomePagador || r.documentoPagador) && (
                         <p className="text-sm text-gray-700">
                           {r.nomePagador ?? '—'}
@@ -317,20 +365,26 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                           )}
                         </p>
                       )}
-                      {(r.txid || r.endToEndId || r.referencia) && (
+                      {(r.txid || r.endToEndId || r.referencia || r.providerPaymentId) && (
                         <p className="text-xs text-gray-500 font-mono break-all">
-                          {[r.txid, r.endToEndId, r.referencia]
+                          {[r.txid, r.endToEndId, r.referencia, r.providerPaymentId]
                             .filter(Boolean)
                             .join(' · ')}
                         </p>
                       )}
-                      {r.divergenciaValor && (
-                        <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
+                      {r.status === 'PENDENTE' && r.divergenciaValor && (
+                        <p className="text-xs font-semibold text-yellow-700 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           Valor diferente da mensalidade — vincule manualmente
                         </p>
                       )}
+                      {r.semCobrancaAberta && r.status === 'VINCULADO' && (
+                        <p className="text-xs text-gray-500">
+                          Vinculado sem cobrança em aberto
+                        </p>
+                      )}
                     </div>
+                    {r.status === 'PENDENTE' && (
                     <div className="flex shrink-0 gap-2">
                       <Button
                         variant="primary"
@@ -351,9 +405,38 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                         Ignorar
                       </Button>
                     </div>
+                    )}
                   </li>
-                ))}
+                  )
+                })}
               </ul>
+              {total > PAGE_SIZE && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                  <p className="text-sm text-gray-500">
+                    {total} recebimento{total !== 1 ? 's' : ''} · página {page} de{' '}
+                    {Math.ceil(total / PAGE_SIZE)}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1 || loading}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page >= Math.ceil(total / PAGE_SIZE) || loading}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Próxima
+                    </Button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </div>
         )}

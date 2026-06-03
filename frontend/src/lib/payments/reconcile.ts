@@ -130,6 +130,64 @@ type SideEffectPayload = {
   alreadyPaid: boolean
 }
 
+const DUPLICATE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Evita dupla quitação quando webhook (inv_) e extrato (ent_) registram o mesmo pagamento. */
+async function findDuplicateLinkedPayment(
+  tx: Tx,
+  np: NormalizedPaymentWithHint,
+  targetEnrollmentId: string,
+  excludeId: string
+): Promise<ReceivedPayment | null> {
+  if (np.provider !== 'CORA') return null
+
+  if (np.txid) {
+    const byTxid = await tx.receivedPayment.findFirst({
+      where: {
+        provider: 'CORA',
+        status: 'VINCULADO',
+        txid: np.txid,
+        NOT: { id: excludeId },
+      },
+    })
+    if (byTxid) return byTxid
+  }
+
+  const windowStart = new Date(np.dataPagamento.getTime() - DUPLICATE_WINDOW_MS)
+  const windowEnd = new Date(np.dataPagamento.getTime() + DUPLICATE_WINDOW_MS)
+
+  return tx.receivedPayment.findFirst({
+    where: {
+      provider: 'CORA',
+      status: 'VINCULADO',
+      enrollmentId: targetEnrollmentId,
+      valor: np.valor,
+      dataPagamento: { gte: windowStart, lte: windowEnd },
+      NOT: { id: excludeId },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+async function linkAsDuplicateInTx(
+  tx: Tx,
+  receivedPaymentId: string,
+  enrollmentId: string,
+  duplicateOf: ReceivedPayment
+): Promise<ReceivedPayment> {
+  return tx.receivedPayment.update({
+    where: { id: receivedPaymentId },
+    data: {
+      status: 'VINCULADO',
+      enrollmentId,
+      enrollmentPaymentMonthId: duplicateOf.enrollmentPaymentMonthId,
+      coraInvoiceId: duplicateOf.coraInvoiceId,
+      semCobrancaAberta: true,
+      divergenciaValor: false,
+    },
+  })
+}
+
 async function linkAndConfirmInTx(
   tx: Tx,
   receivedPaymentId: string,
@@ -151,30 +209,46 @@ async function linkAndConfirmInTx(
   let sideEffects: SideEffectPayload | null = null
 
   if (!quitar.semCobrancaAberta && quitar.year != null && quitar.month != null) {
-    const confirmResult = await applyEnrollmentPaymentConfirmation(tx, {
-      enrollmentId,
-      year: quitar.year,
-      month: quitar.month,
-      paidAt: np.dataPagamento,
-      metodo: np.metodo,
-      source,
-      performedBy,
-      paidAmountCents: np.valor,
-      coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId ?? undefined,
+    const existingMonth = await tx.enrollmentPaymentMonth.findUnique({
+      where: {
+        enrollmentId_year_month: {
+          enrollmentId,
+          year: quitar.year,
+          month: quitar.month,
+        },
+      },
+      select: { id: true, paymentStatus: true },
     })
-    enrollmentPaymentMonthId = confirmResult.enrollmentPaymentMonthId
-    sideEffects = {
-      enrollmentId,
-      year: quitar.year,
-      month: quitar.month,
-      paidAt: np.dataPagamento,
-      metodo: np.metodo,
-      source,
-      performedBy,
-      paidAmountCents: np.valor,
-      coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId,
-      amountReais: confirmResult.amountReais,
-      alreadyPaid: confirmResult.alreadyPaid,
+    const monthAlreadyPaid = existingMonth?.paymentStatus === 'PAGO'
+
+    if (!monthAlreadyPaid) {
+      const confirmResult = await applyEnrollmentPaymentConfirmation(tx, {
+        enrollmentId,
+        year: quitar.year,
+        month: quitar.month,
+        paidAt: np.dataPagamento,
+        metodo: np.metodo,
+        source,
+        performedBy,
+        paidAmountCents: np.valor,
+        coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId ?? undefined,
+      })
+      enrollmentPaymentMonthId = confirmResult.enrollmentPaymentMonthId
+      sideEffects = {
+        enrollmentId,
+        year: quitar.year,
+        month: quitar.month,
+        paidAt: np.dataPagamento,
+        metodo: np.metodo,
+        source,
+        performedBy,
+        paidAmountCents: np.valor,
+        coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId,
+        amountReais: confirmResult.amountReais,
+        alreadyPaid: confirmResult.alreadyPaid,
+      }
+    } else if (existingMonth) {
+      enrollmentPaymentMonthId = existingMonth.id
     }
   }
 
@@ -283,6 +357,22 @@ export async function reconcilePayment(
         return { payment: pending, sideEffects: null }
       }
       return { payment: created, sideEffects: null }
+    }
+
+    const duplicate = await findDuplicateLinkedPayment(
+      tx,
+      np,
+      targetEnrollmentId,
+      created.id
+    )
+    if (duplicate) {
+      const linked = await linkAsDuplicateInTx(
+        tx,
+        created.id,
+        targetEnrollmentId,
+        duplicate
+      )
+      return { payment: linked, sideEffects: null }
     }
 
     const linked = await linkAndConfirmInTx(

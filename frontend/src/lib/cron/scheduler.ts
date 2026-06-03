@@ -10,6 +10,7 @@
  * - nfse-retry: 10h UTC diariamente
  * - payment-notifications: 12h UTC (9h BRT) diariamente
  * - nfse-status: a cada 5 minutos
+ * - sync-cora-extrato: a cada 5 minutos
  */
 
 import * as cron from 'node-cron'
@@ -20,6 +21,7 @@ import {
   runPaymentNotifications,
   runNfseStatus,
   runNfseScheduled,
+  runSyncCoraExtrato,
 } from './jobs'
 
 const log = (job: string, msg: string, data?: unknown) => {
@@ -77,6 +79,18 @@ export function initScheduler() {
       }
     } catch (err) {
       console.error('[cron/nfse-status] Erro:', err)
+    }
+  })
+
+  // Extrato Cora (CREDIT) → conciliação — a cada 5 minutos
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const result = await runSyncCoraExtrato()
+      if (result.total > 0 || result.erros > 0) {
+        log('sync-cora-extrato', 'Concluído', result)
+      }
+    } catch (err) {
+      console.error('[cron/sync-cora-extrato] Erro:', err)
     }
   })
 
