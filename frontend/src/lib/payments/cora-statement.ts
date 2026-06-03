@@ -9,6 +9,20 @@ import {
 import type { NormalizedPayment } from './types'
 import { inferDocumentoTipo, onlyDigits } from './normalize'
 
+function parseCoraDate(raw: string): Date {
+  if (!raw) return new Date(NaN)
+  let s = raw.trim()
+  // Cora envia "+00" (sem minutos). Normalizar offsets de timezone:
+  s = s.replace(/([+-]\d{2})$/, '$1:00')
+  s = s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) {
+    console.warn('[cora-statement] createdAt inválido, usando now:', raw)
+    return new Date()
+  }
+  return d
+}
+
 function formatDateParam(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
@@ -53,7 +67,7 @@ export function mapStatementEntryToNormalized(
     provider: 'CORA',
     providerPaymentId: entry.id,
     valor: entry.amount,
-    dataPagamento: new Date(entry.createdAt),
+    dataPagamento: parseCoraDate(entry.createdAt),
     metodo: entry.transaction?.type,
     documentoPagador,
     nomePagador: entry.transaction?.counterParty?.name,
