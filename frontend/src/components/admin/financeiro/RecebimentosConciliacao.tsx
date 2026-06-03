@@ -9,9 +9,18 @@ import {
   Loader2,
   Ban,
   AlertTriangle,
+  Plus,
+  Trash2,
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
+
+export interface RecebimentoAllocation {
+  id?: string
+  enrollmentId: string
+  enrollmentNome: string
+  valorCentavos: number
+}
 
 export interface RecebimentoItem {
   id: string
@@ -30,11 +39,39 @@ export interface RecebimentoItem {
   semCobrancaAberta: boolean
   enrollmentId: string | null
   enrollmentNome: string | null
+  allocations?: RecebimentoAllocation[]
   createdAt: string
+}
+
+interface AlocacaoLinha {
+  enrollmentId: string
+  nome: string
+  email: string
+  valorReais: string
+}
+
+function formatReaisInput(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return ''
+  return value.toFixed(2).replace('.', ',')
+}
+
+function parseReaisToCentavos(s: string): number {
+  const cleaned = s.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.')
+  const n = parseFloat(cleaned)
+  if (Number.isNaN(n) || n <= 0) return 0
+  return Math.round(n * 100)
 }
 
 interface AlunoBusca {
   id: string
+  nome: string
+  email: string
+  cpf: string | null
+  valorMensalidade: number | null
+}
+
+interface CandidatoDocumento {
+  enrollmentId: string
   nome: string
   email: string
   cpf: string | null
@@ -116,8 +153,10 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
   const [vincularId, setVincularId] = useState<string | null>(null)
   const [buscaAluno, setBuscaAluno] = useState('')
   const [alunosBusca, setAlunosBusca] = useState<AlunoBusca[]>([])
+  const [candidatosDoc, setCandidatosDoc] = useState<CandidatoDocumento[]>([])
+  const [candidatosLoading, setCandidatosLoading] = useState(false)
+  const [alocacoes, setAlocacoes] = useState<AlocacaoLinha[]>([])
   const [buscaLoading, setBuscaLoading] = useState(false)
-  const [selectedAlunoId, setSelectedAlunoId] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   const fetchRecebimentos = useCallback(async () => {
@@ -160,6 +199,24 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
   }, [fetchRecebimentos])
 
   useEffect(() => {
+    if (!vincularId) {
+      setCandidatosDoc([])
+      return
+    }
+    setCandidatosLoading(true)
+    fetch(`/api/admin/financeiro/recebimentos/${vincularId}/candidatos`, {
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.ok) {
+          setCandidatosDoc(json.data.items ?? [])
+        }
+      })
+      .finally(() => setCandidatosLoading(false))
+  }, [vincularId])
+
+  useEffect(() => {
     if (!vincularId || buscaAluno.trim().length < 2) {
       setAlunosBusca([])
       return
@@ -180,30 +237,94 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
     return () => clearTimeout(t)
   }, [buscaAluno, vincularId])
 
+  const recebimentoAtual = items.find((i) => i.id === vincularId)
+
+  const addAlunoToAlocacoes = (aluno: {
+    enrollmentId: string
+    nome: string
+    email: string
+    valorMensalidade: number | null
+  }) => {
+    if (alocacoes.some((a) => a.enrollmentId === aluno.enrollmentId)) return
+    const defaultReais =
+      aluno.valorMensalidade ??
+      (recebimentoAtual ? recebimentoAtual.valor / 100 : 0)
+    setAlocacoes((prev) => [
+      ...prev,
+      {
+        enrollmentId: aluno.enrollmentId,
+        nome: aluno.nome,
+        email: aluno.email,
+        valorReais: formatReaisInput(defaultReais),
+      },
+    ])
+    setBuscaAluno('')
+    setAlunosBusca([])
+  }
+
+  const removeAlocacao = (enrollmentId: string) => {
+    setAlocacoes((prev) => prev.filter((a) => a.enrollmentId !== enrollmentId))
+  }
+
+  const updateValorAlocacao = (enrollmentId: string, valorReais: string) => {
+    setAlocacoes((prev) =>
+      prev.map((a) =>
+        a.enrollmentId === enrollmentId ? { ...a, valorReais } : a
+      )
+    )
+  }
+
+  const somaAlocadaCentavos = alocacoes.reduce(
+    (s, a) => s + parseReaisToCentavos(a.valorReais),
+    0
+  )
+
   const openVincular = (id: string) => {
     setVincularId(id)
     setBuscaAluno('')
     setAlunosBusca([])
-    setSelectedAlunoId(null)
+    setAlocacoes([])
   }
 
   const closeVincular = () => {
     setVincularId(null)
     setBuscaAluno('')
-    setSelectedAlunoId(null)
+    setAlocacoes([])
   }
 
   const handleVincular = async () => {
-    if (!vincularId || !selectedAlunoId) return
+    if (!vincularId || alocacoes.length === 0) return
+    const payload = alocacoes
+      .map((a) => ({
+        enrollmentId: a.enrollmentId,
+        valorCentavos: parseReaisToCentavos(a.valorReais),
+      }))
+      .filter((a) => a.valorCentavos > 0)
+
+    if (payload.length === 0) {
+      onToast('Informe valores válidos para cada aluno', 'error')
+      return
+    }
+    if (payload.reduce((s, a) => s + a.valorCentavos, 0) > (recebimentoAtual?.valor ?? 0)) {
+      onToast('A soma alocada excede o valor do pagamento', 'error')
+      return
+    }
+
     setActionLoading(true)
     try {
+      const body =
+        payload.length === 1 &&
+        payload[0].valorCentavos === recebimentoAtual?.valor
+          ? { enrollmentId: payload[0].enrollmentId }
+          : { alocacoes: payload }
+
       const res = await fetch(
         `/api/admin/financeiro/recebimentos/${vincularId}/vincular`,
         {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enrollmentId: selectedAlunoId }),
+          body: JSON.stringify(body),
         }
       )
       const json = await res.json()
@@ -243,8 +364,6 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
       setActionLoading(false)
     }
   }
-
-  const recebimentoAtual = items.find((i) => i.id === vincularId)
 
   return (
     <>
@@ -350,11 +469,18 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                           {formatDate(r.dataPagamento)}
                         </span>
                       </div>
-                      {r.status === 'VINCULADO' && r.enrollmentNome && (
-                        <p className="text-sm text-green-700 font-medium">
-                          Aluno: {r.enrollmentNome}
-                        </p>
-                      )}
+                      {r.status === 'VINCULADO' &&
+                        (r.allocations && r.allocations.length > 0 ? (
+                          <p className="text-sm text-green-700 font-medium">
+                            {r.allocations.length === 1
+                              ? `Aluno: ${r.allocations[0].enrollmentNome}`
+                              : `Alunos: ${r.allocations.map((a) => `${a.enrollmentNome} (${formatMoneyCents(a.valorCentavos)})`).join(' · ')}`}
+                          </p>
+                        ) : r.enrollmentNome ? (
+                          <p className="text-sm text-green-700 font-medium">
+                            Aluno: {r.enrollmentNome}
+                          </p>
+                        ) : null)}
                       {(r.nomePagador || r.documentoPagador) && (
                         <p className="text-sm text-gray-700">
                           {r.nomePagador ?? '—'}
@@ -445,49 +571,146 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
       <Modal
         isOpen={!!vincularId}
         onClose={closeVincular}
-        title="Vincular pagamento ao aluno"
+        title="Vincular pagamento"
       >
         {recebimentoAtual && (
-          <p className="text-sm text-gray-600 mb-4">
-            {formatMoneyCents(recebimentoAtual.valor)} —{' '}
-            {PROVIDER_LABELS[recebimentoAtual.provider] ?? recebimentoAtual.provider}
-          </p>
+          <div className="text-sm text-gray-600 mb-4 space-y-1">
+            <p>
+              Total: {formatMoneyCents(recebimentoAtual.valor)} —{' '}
+              {PROVIDER_LABELS[recebimentoAtual.provider] ?? recebimentoAtual.provider}
+            </p>
+            {alocacoes.length > 0 && (
+              <p
+                className={
+                  somaAlocadaCentavos > recebimentoAtual.valor
+                    ? 'text-red-600 font-semibold'
+                    : somaAlocadaCentavos < recebimentoAtual.valor
+                      ? 'text-amber-700'
+                      : 'text-green-700'
+                }
+              >
+                Alocado: {formatMoneyCents(somaAlocadaCentavos)}
+                {somaAlocadaCentavos > recebimentoAtual.valor &&
+                  ' — excede o total'}
+                {somaAlocadaCentavos < recebimentoAtual.valor &&
+                  ` — sobram ${formatMoneyCents(recebimentoAtual.valor - somaAlocadaCentavos)}`}
+              </p>
+            )}
+          </div>
         )}
+
+        {candidatosLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin text-brand-orange mb-3" />
+        ) : candidatosDoc.length > 0 ? (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+              Sugeridos pelo documento do pagador
+            </p>
+            <ul className="border border-orange-100 rounded-lg divide-y max-h-36 overflow-y-auto bg-orange-50/50">
+              {candidatosDoc.map((c) => (
+                <li key={c.enrollmentId}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-orange-100 flex items-center justify-between gap-2"
+                    onClick={() =>
+                      addAlunoToAlocacoes({
+                        enrollmentId: c.enrollmentId,
+                        nome: c.nome,
+                        email: c.email,
+                        valorMensalidade: c.valorMensalidade,
+                      })
+                    }
+                    disabled={alocacoes.some((a) => a.enrollmentId === c.enrollmentId)}
+                  >
+                    <span>
+                      <span className="block text-gray-900 font-medium">{c.nome}</span>
+                      <span className="text-xs text-gray-500">{c.email}</span>
+                    </span>
+                    <Plus className="w-4 h-4 text-brand-orange shrink-0" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {alocacoes.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase">
+              Alunos selecionados
+            </p>
+            {alocacoes.map((a) => (
+              <div
+                key={a.enrollmentId}
+                className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{a.nome}</p>
+                  <p className="text-xs text-gray-500 truncate">{a.email}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">R$</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={a.valorReais}
+                    onChange={(e) => updateValorAlocacao(a.enrollmentId, e.target.value)}
+                    className="input w-28 text-sm py-1.5"
+                  />
+                  <button
+                    type="button"
+                    className="p-1.5 text-gray-400 hover:text-red-600"
+                    onClick={() => removeAlocacao(a.enrollmentId)}
+                    aria-label="Remover aluno"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
           Buscar aluno (nome, e-mail ou CPF)
         </label>
         <input
           type="text"
           value={buscaAluno}
-          onChange={(e) => {
-            setBuscaAluno(e.target.value)
-            setSelectedAlunoId(null)
-          }}
+          onChange={(e) => setBuscaAluno(e.target.value)}
           className="input w-full mb-3"
           placeholder="Digite ao menos 2 caracteres..."
-          autoFocus
         />
         {buscaLoading && (
           <Loader2 className="w-5 h-5 animate-spin text-brand-orange mx-auto mb-2" />
         )}
-        <ul className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y">
+        <ul className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y mb-4">
           {alunosBusca.map((a) => (
             <li key={a.id}>
               <button
                 type="button"
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-orange-50 ${
-                  selectedAlunoId === a.id ? 'bg-orange-100 font-semibold' : ''
-                }`}
-                onClick={() => setSelectedAlunoId(a.id)}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 flex items-center justify-between gap-2"
+                onClick={() =>
+                  addAlunoToAlocacoes({
+                    enrollmentId: a.id,
+                    nome: a.nome,
+                    email: a.email,
+                    valorMensalidade: a.valorMensalidade,
+                  })
+                }
+                disabled={alocacoes.some((x) => x.enrollmentId === a.id)}
               >
-                <span className="block text-gray-900">{a.nome}</span>
-                <span className="text-xs text-gray-500">
-                  {a.email}
-                  {a.cpf ? ` · CPF ${a.cpf}` : ''}
-                  {a.valorMensalidade != null
-                    ? ` · ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(a.valorMensalidade)}`
-                    : ''}
+                <span>
+                  <span className="block text-gray-900">{a.nome}</span>
+                  <span className="text-xs text-gray-500">
+                    {a.email}
+                    {a.cpf ? ` · CPF ${a.cpf}` : ''}
+                    {a.valorMensalidade != null
+                      ? ` · ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(a.valorMensalidade)}`
+                      : ''}
+                  </span>
                 </span>
+                <Plus className="w-4 h-4 text-brand-orange shrink-0" />
               </button>
             </li>
           ))}
@@ -497,14 +720,18 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
             </li>
           )}
         </ul>
-        <div className="flex justify-end gap-2 mt-4">
+        <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={closeVincular} disabled={actionLoading}>
             Cancelar
           </Button>
           <Button
             variant="primary"
             onClick={handleVincular}
-            disabled={!selectedAlunoId || actionLoading}
+            disabled={
+              alocacoes.length === 0 ||
+              actionLoading ||
+              somaAlocadaCentavos > (recebimentoAtual?.valor ?? 0)
+            }
           >
             {actionLoading ? (
               <Loader2 className="w-4 h-4 animate-spin" />

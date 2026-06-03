@@ -1,4 +1,4 @@
-import type { ReceivedPayment, Prisma } from '@prisma/client'
+import type { ReceivedPayment, DocumentoTipo, Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import type { NormalizedPaymentWithHint, InvoiceMonthHint } from './types'
 import { inferDocumentoTipo, onlyDigits } from './normalize'
@@ -69,28 +69,26 @@ export async function quitarCobrancaMaisAntiga(
   }
 }
 
-async function resolveEnrollmentCandidates(
-  tx: Tx,
-  documento: string | undefined
-): Promise<
-  Array<{
-    enrollmentId: string
-    valorMensalidade: unknown
-    paymentInfo: { valorMensal: unknown } | null
-  }>
-> {
-  if (!documento) return []
+export type EnrollmentCandidate = {
+  enrollmentId: string
+  valorMensalidade: unknown
+  paymentInfo: { valorMensal: unknown } | null
+}
 
+const candidateSelect = {
+  valorMensalidade: true,
+  paymentInfo: { select: { valorMensal: true } },
+} as const
+
+async function resolveFromPayerLink(
+  tx: Tx,
+  documento: string
+): Promise<EnrollmentCandidate[]> {
   const links = await tx.payerLink.findMany({
     where: { documento },
     select: {
       enrollmentId: true,
-      enrollment: {
-        select: {
-          valorMensalidade: true,
-          paymentInfo: { select: { valorMensal: true } },
-        },
-      },
+      enrollment: { select: candidateSelect },
     },
   })
 
@@ -101,19 +99,123 @@ async function resolveEnrollmentCandidates(
   }))
 }
 
-function pickEnrollmentByValue(
-  candidates: Array<{
+async function resolveFromEnrollmentRegistry(
+  tx: Tx,
+  documento: string
+): Promise<EnrollmentCandidate[]> {
+  const rows = await tx.enrollment.findMany({
+    where: {
+      status: 'ACTIVE',
+      OR: [
+        { cpf: { contains: documento } },
+        { cpfResponsavel: { contains: documento } },
+        { faturamentoCnpj: { contains: documento } },
+      ],
+    },
+    select: {
+      id: true,
+      cpf: true,
+      cpfResponsavel: true,
+      faturamentoCnpj: true,
+      ...candidateSelect,
+    },
+  })
+
+  const seen = new Set<string>()
+  const out: EnrollmentCandidate[] = []
+  for (const row of rows) {
+    const fields = [row.cpf, row.cpfResponsavel, row.faturamentoCnpj]
+    const matches = fields.some((f) => f && onlyDigits(f) === documento)
+    if (!matches || seen.has(row.id)) continue
+    seen.add(row.id)
+    out.push({
+      enrollmentId: row.id,
+      valorMensalidade: row.valorMensalidade,
+      paymentInfo: row.paymentInfo,
+    })
+  }
+  return out
+}
+
+/** Candidatos por documento: PayerLink primeiro; se vazio, cadastro (cpf/responsável/CNPJ). */
+async function resolveEnrollmentCandidates(
+  tx: Tx,
+  documento: string | undefined
+): Promise<EnrollmentCandidate[]> {
+  if (!documento) return []
+
+  const fromLinks = await resolveFromPayerLink(tx, documento)
+  if (fromLinks.length > 0) return fromLinks
+
+  return resolveFromEnrollmentRegistry(tx, documento)
+}
+
+/** Para API/UI: candidatos sugeridos pelo documento do pagador. */
+export async function findEnrollmentCandidatesByDocumento(
+  documentoRaw: string | null | undefined
+): Promise<
+  Array<{
     enrollmentId: string
-    valorMensalidade: unknown
-    paymentInfo: { valorMensal: unknown } | null
-  }>,
-  valorCentavos: number
-): string | null {
-  const matches = candidates.filter(
-    (c) => mensalidadeCentavos(c) === valorCentavos
+    nome: string
+    email: string
+    cpf: string | null
+    valorMensalidade: number | null
+  }>
+> {
+  const documento = documentoRaw ? onlyDigits(documentoRaw) : ''
+  if (!documento || !inferDocumentoTipo(documento)) return []
+
+  const candidates = await prisma.$transaction((tx) =>
+    resolveEnrollmentCandidates(tx, documento)
   )
-  if (matches.length === 1) return matches[0].enrollmentId
-  return null
+
+  if (candidates.length === 0) return []
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: { id: { in: candidates.map((c) => c.enrollmentId) } },
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      cpf: true,
+      valorMensalidade: true,
+      paymentInfo: { select: { valorMensal: true } },
+    },
+    orderBy: { nome: 'asc' },
+  })
+
+  return enrollments.map((e) => ({
+    enrollmentId: e.id,
+    nome: e.nome,
+    email: e.email,
+    cpf: e.cpf,
+    valorMensalidade:
+      mensalidadeCentavos(e) > 0 ? mensalidadeCentavos(e) / 100 : null,
+  }))
+}
+
+async function upsertPayerLinkInTx(
+  tx: Tx,
+  documento: string | undefined,
+  docTipo: DocumentoTipo | null,
+  enrollmentId: string,
+  nomePagador?: string | null
+): Promise<void> {
+  if (!documento || !docTipo) return
+  await tx.payerLink.upsert({
+    where: {
+      documento_enrollmentId: { documento, enrollmentId },
+    },
+    create: {
+      documento,
+      documentoTipo: docTipo,
+      enrollmentId,
+      nomePagador: nomePagador ?? undefined,
+    },
+    update: {
+      nomePagador: nomePagador ?? undefined,
+    },
+  })
 }
 
 type SideEffectPayload = {
@@ -194,8 +296,14 @@ async function linkAndConfirmInTx(
   enrollmentId: string,
   np: NormalizedPaymentWithHint,
   source: ConfirmPaymentSource,
-  performedBy?: string | null
-): Promise<{ payment: ReceivedPayment; sideEffects: SideEffectPayload | null }> {
+  performedBy?: string | null,
+  options?: { valorCentavosOverride?: number; skipPaymentStatusUpdate?: boolean }
+): Promise<{ payment: ReceivedPayment | null; sideEffects: SideEffectPayload | null }> {
+  const valorAlocacao = options?.valorCentavosOverride ?? np.valor
+  const documento =
+    np.documentoPagador != null ? onlyDigits(np.documentoPagador) : undefined
+  const docTipo = documento ? inferDocumentoTipo(documento) : null
+
   const invoiceHint: InvoiceMonthHint | null = np.coraHint
     ? {
         year: np.coraHint.year,
@@ -230,7 +338,7 @@ async function linkAndConfirmInTx(
         metodo: np.metodo,
         source,
         performedBy,
-        paidAmountCents: np.valor,
+        paidAmountCents: valorAlocacao,
         coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId ?? undefined,
       })
       enrollmentPaymentMonthId = confirmResult.enrollmentPaymentMonthId
@@ -242,7 +350,7 @@ async function linkAndConfirmInTx(
         metodo: np.metodo,
         source,
         performedBy,
-        paidAmountCents: np.valor,
+        paidAmountCents: valorAlocacao,
         coraInvoiceExternalId: np.coraHint?.coraInvoiceExternalId,
         amountReais: confirmResult.amountReais,
         alreadyPaid: confirmResult.alreadyPaid,
@@ -250,6 +358,21 @@ async function linkAndConfirmInTx(
     } else if (existingMonth) {
       enrollmentPaymentMonthId = existingMonth.id
     }
+  }
+
+  await upsertPayerLinkInTx(tx, documento, docTipo, enrollmentId, np.nomePagador)
+
+  await tx.receivedPaymentAllocation.create({
+    data: {
+      receivedPaymentId,
+      enrollmentId,
+      enrollmentPaymentMonthId,
+      valorCentavos: valorAlocacao,
+    },
+  })
+
+  if (options?.skipPaymentStatusUpdate) {
+    return { payment: null, sideEffects }
   }
 
   const payment = await tx.receivedPayment.update({
@@ -339,13 +462,7 @@ export async function reconcilePayment(
         divergenciaValor = true
       }
     } else if (!targetEnrollmentId && candidates.length > 1) {
-      targetEnrollmentId = pickEnrollmentByValue(candidates, np.valor)
-      if (!targetEnrollmentId) {
-        const matches = candidates.filter(
-          (c) => mensalidadeCentavos(c) === np.valor
-        )
-        if (matches.length > 1) divergenciaValor = true
-      }
+      divergenciaValor = false
     }
 
     if (!targetEnrollmentId) {
@@ -382,21 +499,41 @@ export async function reconcilePayment(
       np,
       'RECEBIMENTO_AUTO'
     )
-    return { payment: linked.payment, sideEffects: linked.sideEffects }
+    return { payment: linked.payment!, sideEffects: linked.sideEffects }
   })
 
   if (result.sideEffects) {
     await runConfirmEnrollmentPaymentSideEffects(result.sideEffects)
   }
 
-  return result.payment
+  return result.payment!
 }
 
-export async function manualLinkReceivedPayment(
+export interface PaymentAllocationInput {
+  enrollmentId: string
+  valorCentavos: number
+}
+
+export async function manualLinkReceivedPaymentAllocations(
   receivedPaymentId: string,
-  enrollmentId: string,
+  alocacoes: PaymentAllocationInput[],
   performedBy: string | null
 ): Promise<ReceivedPayment> {
+  if (alocacoes.length === 0) {
+    throw new Error('Informe ao menos uma alocação')
+  }
+
+  const ids = alocacoes.map((a) => a.enrollmentId)
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('Não é permitido repetir o mesmo aluno nas alocações')
+  }
+
+  for (const a of alocacoes) {
+    if (!Number.isInteger(a.valorCentavos) || a.valorCentavos <= 0) {
+      throw new Error('Cada alocação deve ter valorCentavos inteiro positivo')
+    }
+  }
+
   const rp = await prisma.receivedPayment.findUnique({
     where: { id: receivedPaymentId },
   })
@@ -406,9 +543,12 @@ export async function manualLinkReceivedPayment(
   }
   if (rp.status === 'VINCULADO') return rp
 
-  const documento = rp.documentoPagador
-  const docTipo = documento ? inferDocumentoTipo(documento) : null
+  const soma = alocacoes.reduce((s, a) => s + a.valorCentavos, 0)
+  if (soma > rp.valor) {
+    throw new Error('A soma das alocações não pode exceder o valor do recebimento')
+  }
 
+  const documento = rp.documentoPagador
   const np: NormalizedPaymentWithHint = {
     provider: rp.provider,
     providerPaymentId: rp.providerPaymentId,
@@ -436,39 +576,90 @@ export async function manualLinkReceivedPayment(
     }
   }
 
-  const linked = await prisma.$transaction(async (tx) => {
-    if (documento && docTipo) {
-      await tx.payerLink.upsert({
-        where: {
-          documento_enrollmentId: { documento, enrollmentId },
-        },
-        create: {
-          documento,
-          documentoTipo: docTipo,
-          enrollmentId,
-          nomePagador: rp.nomePagador,
-        },
-        update: {
-          nomePagador: rp.nomePagador ?? undefined,
+  const multi = alocacoes.length > 1
+  const sideEffectsList: SideEffectPayload[] = []
+  let firstEnrollmentId: string | null = null
+  let firstMonthId: string | null = null
+
+  const payment = await prisma.$transaction(async (tx) => {
+    for (const aloc of alocacoes) {
+      const npForAloc: NormalizedPaymentWithHint = { ...np }
+      if (
+        multi ||
+        (npForAloc.coraHint &&
+          npForAloc.coraHint.enrollmentId !== aloc.enrollmentId)
+      ) {
+        delete npForAloc.coraHint
+      }
+
+      const linked = await linkAndConfirmInTx(
+        tx,
+        receivedPaymentId,
+        aloc.enrollmentId,
+        npForAloc,
+        'RECEBIMENTO_MANUAL',
+        performedBy,
+        {
+          valorCentavosOverride: aloc.valorCentavos,
+          skipPaymentStatusUpdate: multi,
+        }
+      )
+      if (linked.sideEffects) sideEffectsList.push(linked.sideEffects)
+      if (!firstEnrollmentId) {
+        firstEnrollmentId = aloc.enrollmentId
+        const alloc = await tx.receivedPaymentAllocation.findFirst({
+          where: {
+            receivedPaymentId,
+            enrollmentId: aloc.enrollmentId,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { enrollmentPaymentMonthId: true },
+        })
+        firstMonthId = alloc?.enrollmentPaymentMonthId ?? null
+      }
+    }
+
+    if (multi) {
+      return tx.receivedPayment.update({
+        where: { id: receivedPaymentId },
+        data: {
+          status: 'VINCULADO',
+          enrollmentId: firstEnrollmentId,
+          enrollmentPaymentMonthId: firstMonthId,
+          divergenciaValor: false,
         },
       })
     }
 
-    return linkAndConfirmInTx(
-      tx,
-      receivedPaymentId,
-      enrollmentId,
-      np,
-      'RECEBIMENTO_MANUAL',
-      performedBy
-    )
+    const updated = await tx.receivedPayment.findUnique({
+      where: { id: receivedPaymentId },
+    })
+    if (!updated) throw new Error('Recebimento não encontrado após vínculo')
+    return updated
   })
 
-  if (linked.sideEffects) {
-    await runConfirmEnrollmentPaymentSideEffects(linked.sideEffects)
+  for (const se of sideEffectsList) {
+    await runConfirmEnrollmentPaymentSideEffects(se)
   }
 
-  return linked.payment
+  return payment
+}
+
+export async function manualLinkReceivedPayment(
+  receivedPaymentId: string,
+  enrollmentId: string,
+  performedBy: string | null
+): Promise<ReceivedPayment> {
+  const rp = await prisma.receivedPayment.findUnique({
+    where: { id: receivedPaymentId },
+  })
+  if (!rp) throw new Error('Recebimento não encontrado')
+
+  return manualLinkReceivedPaymentAllocations(
+    receivedPaymentId,
+    [{ enrollmentId, valorCentavos: rp.valor }],
+    performedBy
+  )
 }
 
 export async function ignoreReceivedPayment(

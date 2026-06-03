@@ -64,6 +64,12 @@ export async function GET(request: NextRequest) {
         take: pageSize,
         include: {
           enrollment: { select: { id: true, nome: true, email: true } },
+          allocations: {
+            orderBy: { createdAt: 'asc' },
+            include: {
+              enrollment: { select: { id: true, nome: true } },
+            },
+          },
         },
       }),
     ])
@@ -88,6 +94,12 @@ export async function GET(request: NextRequest) {
           semCobrancaAberta: r.semCobrancaAberta,
           enrollmentId: r.enrollmentId,
           enrollmentNome: r.enrollment?.nome ?? null,
+          allocations: r.allocations.map((a) => ({
+            id: a.id,
+            enrollmentId: a.enrollmentId,
+            enrollmentNome: a.enrollment.nome,
+            valorCentavos: a.valorCentavos,
+          })),
           createdAt: r.createdAt.toISOString(),
         })),
         total,

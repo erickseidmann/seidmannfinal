@@ -423,6 +423,7 @@ model Enrollment {
   coraInvoices          CoraInvoice[]
   payerLinks            PayerLink[]
   receivedPayments      ReceivedPayment[]
+  receivedPaymentAllocations ReceivedPaymentAllocation[]
   lessons             Lesson[]
   lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
@@ -482,6 +483,7 @@ model EnrollmentPaymentMonth {
 
   enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   receivedPayments     ReceivedPayment[]
+  receivedPaymentAllocations ReceivedPaymentAllocation[]
 
   @@unique([enrollmentId, year, month])
   @@index([enrollmentId])
@@ -1150,11 +1152,29 @@ model ReceivedPayment {
   rawPayload                Json                  @map("raw_payload")
   createdAt                 DateTime              @default(now()) @map("created_at")
   updatedAt                 DateTime              @updatedAt @map("updated_at")
+  allocations               ReceivedPaymentAllocation[]
 
   @@unique([provider, providerPaymentId])
   @@index([status, createdAt])
   @@index([documentoPagador])
   @@map("received_payment")
+}
+
+model ReceivedPaymentAllocation {
+  id                       String    @id @default(cuid())
+  receivedPaymentId        String    @map("received_payment_id")
+  enrollmentId             String    @map("enrollment_id")
+  enrollmentPaymentMonthId String?   @map("enrollment_payment_month_id")
+  valorCentavos            Int       @map("valor_centavos")
+  createdAt                DateTime  @default(now()) @map("created_at")
+
+  receivedPayment          ReceivedPayment         @relation(fields: [receivedPaymentId], references: [id], onDelete: Cascade)
+  enrollment               Enrollment              @relation(fields: [enrollmentId], references: [id])
+  enrollmentPaymentMonth   EnrollmentPaymentMonth? @relation(fields: [enrollmentPaymentMonthId], references: [id])
+
+  @@index([receivedPaymentId])
+  @@index([enrollmentId])
+  @@map("received_payment_allocation")
 }
 
 // Eventos de webhook Cora processados (idempotência)

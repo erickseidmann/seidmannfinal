@@ -16,8 +16,12 @@ export {
 export {
   reconcilePayment,
   manualLinkReceivedPayment,
+  manualLinkReceivedPaymentAllocations,
+  findEnrollmentCandidatesByDocumento,
   ignoreReceivedPayment,
   quitarCobrancaMaisAntiga,
+  type PaymentAllocationInput,
+  type EnrollmentCandidate,
 } from './reconcile'
 export {
   confirmEnrollmentPayment,
