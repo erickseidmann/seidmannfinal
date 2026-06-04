@@ -1,0 +1,43 @@
+---
+description: Proibir alert/confirm nativos — usar ConfirmModal ou useConfirmDialog
+globs: frontend/**/*.{tsx,ts,jsx,js}
+alwaysApply: false
+---
+
+# Diálogos e confirmações na UI
+
+Nunca use `window.confirm`, `confirm()` ou `alert()` no frontend.
+
+## Usar
+
+- **`ConfirmModal`** (`@/components/admin/ConfirmModal`) — estado local com `title`, `message`, `onConfirm`, `onClose`
+- **`useConfirmDialog`** (`@/hooks/useConfirmDialog`) — fluxos async: `const ok = await confirm({ title, message })`
+- **`Modal`** (`@/components/admin/Modal`) — formulários e conteúdo maior
+
+## Padrão async
+
+```tsx
+const { confirm, ConfirmDialog } = useConfirmDialog()
+
+const handleDelete = async () => {
+  const ok = await confirm({
+    title: 'Excluir item',
+    message: 'Esta ação não pode ser desfeita.',
+    confirmLabel: 'Excluir',
+    variant: 'danger',
+  })
+  if (!ok) return
+  // ...
+}
+
+return (
+  <>
+    {/* ... */}
+    <ConfirmDialog />
+  </>
+)
+```
+
+## Erros ao usuário
+
+Preferir toast (`onToast` / componente `Toast`) em vez de `alert()`.

@@ -100,7 +100,7 @@ export function normalizeInfinitePay(body: unknown): NormalizedPayment | null {
 }
 
 export function normalizeSantander(body: unknown): NormalizedPayment | null {
-  // TODO: Santander — mapear campos reais do webhook
+  // Recebimentos Santander em produção vêm do extrato (cron santander-statement), não deste webhook.
   return parseGenericBody('SANTANDER', body)
 }
 

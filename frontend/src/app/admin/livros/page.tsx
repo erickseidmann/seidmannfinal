@@ -12,6 +12,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Table from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import Button from '@/components/ui/Button'
 import { Plus, Search, BookOpen, Upload, X, Headphones, Trash2, Loader2 } from 'lucide-react'
 
@@ -102,6 +103,7 @@ interface UserForRelease {
 }
 
 export default function AdminLivrosPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const router = useRouter()
   const [tab, setTab] = useState<'catalogo' | 'liberacoes'>('catalogo')
   const [books, setBooks] = useState<Book[]>([])
@@ -532,7 +534,13 @@ export default function AdminLivrosPage() {
 
   const handleDeleteBookAudio = async (audioId: string) => {
     if (!editingBook) return
-    if (!confirm('Remover este áudio?')) return
+    const ok = await confirm({
+      title: 'Remover áudio',
+      message: 'Remover este áudio?',
+      confirmLabel: 'Remover',
+      variant: 'danger',
+    })
+    if (!ok) return
     setDeletingAudioId(audioId)
     try {
       const res = await fetch(`/api/admin/books/${editingBook.id}/audios/${encodeURIComponent(audioId)}`, {
@@ -599,13 +607,17 @@ export default function AdminLivrosPage() {
 
   const handleDeleteBook = async () => {
     if (!editingBook) return
-    const confirmacao = window.confirm(
-      `Tem certeza que deseja EXCLUIR o livro "${editingBook.nome}"?\n\n` +
+    const ok = await confirm({
+      title: 'Excluir livro',
+      message:
+        `Tem certeza que deseja EXCLUIR o livro "${editingBook.nome}"?\n\n` +
         'Esta ação remove o livro do catálogo, seus áudios e o PDF/capa enviados.\n' +
         'As liberações já feitas para alunos serão preservadas no histórico, ' +
-        'mas ficarão sem o livro vinculado.\n\nEsta ação não pode ser desfeita.'
-    )
-    if (!confirmacao) return
+        'mas ficarão sem o livro vinculado.\n\nEsta ação não pode ser desfeita.',
+      confirmLabel: 'Excluir livro',
+      variant: 'danger',
+    })
+    if (!ok) return
 
     setDeletingBookLoading(true)
     try {
@@ -1941,6 +1953,7 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
             onClose={() => setToast(null)}
           />
         )}
+        <ConfirmDialog />
       </div>
     </AdminLayout>
   )

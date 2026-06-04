@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
+import Toast from '@/components/admin/Toast'
 import { MessageCircle, Plus, Send, Users, ArrowLeft } from 'lucide-react'
 
 interface ChatUser {
@@ -81,6 +82,7 @@ export default function AdminChatPage() {
   const [newGroupName, setNewGroupName] = useState('')
   const [creating, setCreating] = useState(false)
   const [viewAllConversations, setViewAllConversations] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const fetchConversations = useCallback(async () => {
@@ -205,7 +207,7 @@ export default function AdminChatPage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
-        alert(json.message || 'Erro ao criar conversa')
+        setToast({ message: json.message || 'Erro ao criar conversa', type: 'error' })
         return
       }
       const conv = json.data.conversation
@@ -517,6 +519,9 @@ export default function AdminChatPage() {
           </div>
         </div>
       </Modal>
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      )}
     </AdminLayout>
   )
 }

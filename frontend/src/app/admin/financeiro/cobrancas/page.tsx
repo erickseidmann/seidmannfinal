@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import {
   Loader2,
   FileText,
@@ -74,6 +75,7 @@ interface GenerationError {
 }
 
 export default function FinanceiroCobrancasPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
 
@@ -164,7 +166,13 @@ export default function FinanceiroCobrancasPage() {
   }
 
   const handleCancel = async (invoiceId: string) => {
-    if (!confirm('Tem certeza que deseja cancelar este boleto?')) return
+    const ok = await confirm({
+      title: 'Cancelar boleto',
+      message: 'Tem certeza que deseja cancelar este boleto?',
+      confirmLabel: 'Cancelar boleto',
+      variant: 'danger',
+    })
+    if (!ok) return
     setCancellingId(invoiceId)
     setToast(null)
     try {
@@ -232,6 +240,7 @@ export default function FinanceiroCobrancasPage() {
         {toast && (
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
         )}
+        <ConfirmDialog />
 
         {generationErrors && generationErrors.length > 0 && (
           <section className="rounded-xl border border-red-200 bg-red-50 p-4 shadow-sm">

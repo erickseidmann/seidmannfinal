@@ -11,6 +11,7 @@ import Table, { Column } from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Plus, Trash2, Calendar, ChevronDown, ChevronRight, FileDown, Upload, Download } from 'lucide-react'
 import { shouldIncludeValorInTotalEntradaRegis } from '@/lib/admin-movimentacao'
 
@@ -119,6 +120,7 @@ function getCategoriaSaida(row: ExpenseRow): string {
 }
 
 export default function FinanceiroSaidasPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
   const [selectedAno, setSelectedAno] = useState<number>(anoAtual)
@@ -384,7 +386,13 @@ export default function FinanceiroSaidasPage() {
   }
 
   const deleteExpense = async (expenseId: string) => {
-    if (!confirm('Remover esta despesa?')) return
+    const ok = await confirm({
+      title: 'Remover despesa',
+      message: 'Remover esta despesa?',
+      confirmLabel: 'Remover',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/admin/financeiro/administracao/expenses/${expenseId}`, {
         method: 'DELETE',
@@ -557,7 +565,13 @@ export default function FinanceiroSaidasPage() {
   }
 
   const removeExtrato = async (id: string) => {
-    if (!confirm('Remover este extrato deste mês?')) return
+    const ok = await confirm({
+      title: 'Remover extrato',
+      message: 'Remover este extrato deste mês?',
+      confirmLabel: 'Remover',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/admin/financeiro/administracao/bank-extratos/${id}`, {
         method: 'DELETE',
@@ -907,6 +921,7 @@ export default function FinanceiroSaidasPage() {
         </section>
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        <ConfirmDialog />
       </div>
 
       <Modal

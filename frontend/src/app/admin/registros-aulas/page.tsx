@@ -11,6 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Plus, Pencil, Trash2, Loader2, CalendarX } from 'lucide-react'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
 
@@ -160,6 +161,7 @@ function getLessonOptionLabel(l: LessonOption): string {
 }
 
 export default function AdminRegistrosAulasPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const router = useRouter()
   const [records, setRecords] = useState<LessonRecord[]>([])
   const [lessons, setLessons] = useState<LessonOption[]>([])
@@ -503,7 +505,13 @@ export default function AdminRegistrosAulasPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Excluir este registro?')) return
+    const ok = await confirm({
+      title: 'Excluir registro',
+      message: 'Excluir este registro?',
+      confirmLabel: 'Excluir',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/admin/lesson-records/${id}`, {
         method: 'DELETE',
@@ -1113,6 +1121,7 @@ export default function AdminRegistrosAulasPage() {
           onClose={() => setToast(null)}
         />
       )}
+      <ConfirmDialog />
     </AdminLayout>
   )
 }

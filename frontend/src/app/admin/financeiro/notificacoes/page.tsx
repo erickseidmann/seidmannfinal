@@ -8,6 +8,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import { Loader2, Mail, AlertTriangle, AlertCircle, UserX, Send, ChevronDown } from 'lucide-react'
+import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -150,6 +152,7 @@ function AlunoAcoesDropdown({
 }
 
 export default function FinanceiroNotificacoesPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
 
@@ -236,7 +239,13 @@ export default function FinanceiroNotificacoesPage() {
   }, [fetchData])
 
   const handleDesativar = useCallback(async (id: string, nome: string) => {
-    if (!confirm(`Desativar o aluno ${nome}? Esta ação marcará a matrícula como inativa.`)) return
+    const ok = await confirm({
+      title: 'Desativar aluno',
+      message: `Desativar o aluno ${nome}? Esta ação marcará a matrícula como inativa.`,
+      confirmLabel: 'Desativar',
+      variant: 'danger',
+    })
+    if (!ok) return
     setLoadingDesativar(id)
     try {
       const res = await fetch(`/api/admin/enrollments/${id}/status`, {
@@ -260,7 +269,7 @@ export default function FinanceiroNotificacoesPage() {
     } finally {
       setLoadingDesativar(null)
     }
-  }, [fetchData])
+  }, [fetchData, confirm])
 
   return (
     <AdminLayout>
@@ -513,6 +522,10 @@ export default function FinanceiroNotificacoesPage() {
           </>
         )}
       </div>
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      )}
+      <ConfirmDialog />
     </AdminLayout>
   )
 }

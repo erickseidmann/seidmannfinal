@@ -5,6 +5,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Table, { Column } from '@/components/admin/Table'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Calendar, ChevronDown, ChevronRight, Download, Save, Trash2, Upload } from 'lucide-react'
 import {
   extractTipoMovimentacao as extractTipo,
@@ -241,6 +242,7 @@ function isCategoriaValida(row: EditableRow): boolean {
 }
 
 export default function FinanceiroMovimentacaoPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
   const [selectedAno, setSelectedAno] = useState<number>(anoAtual)
@@ -478,7 +480,13 @@ export default function FinanceiroMovimentacaoPage() {
   }
 
   const removeExtrato = async (id: string) => {
-    if (!confirm('Remover este extrato deste mês?')) return
+    const ok = await confirm({
+      title: 'Remover extrato',
+      message: 'Remover este extrato deste mês?',
+      confirmLabel: 'Remover',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/admin/financeiro/administracao/bank-extratos/${id}`, {
         method: 'DELETE',
@@ -517,7 +525,13 @@ export default function FinanceiroMovimentacaoPage() {
 
   const removeSelecionados = async () => {
     if (selectedIds.length === 0) return
-    if (!confirm(`Remover ${selectedIds.length} movimentação(ões) selecionada(s)?`)) return
+    const ok = await confirm({
+      title: 'Remover movimentações',
+      message: `Remover ${selectedIds.length} movimentação(ões) selecionada(s)?`,
+      confirmLabel: 'Remover',
+      variant: 'danger',
+    })
+    if (!ok) return
     const idsToRemove = [...selectedIds]
     setRemovingBatch(true)
     setRemoveDone(0)
@@ -1239,6 +1253,7 @@ export default function FinanceiroMovimentacaoPage() {
         </section>
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        <ConfirmDialog />
       </div>
     </AdminLayout>
   )

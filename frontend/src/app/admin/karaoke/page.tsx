@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
+import Toast from '@/components/admin/Toast'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Loader2, Music, Pencil, Plus, Trash2 } from 'lucide-react'
 
 type KaraokeSongRow = {
@@ -27,10 +29,12 @@ function difficultyClass(d: string) {
 }
 
 export default function AdminKaraokeListPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const [songs, setSongs] = useState<KaraokeSongRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -77,7 +81,7 @@ export default function AdminKaraokeListPage() {
       })
       const json = await res.json()
       if (!json.ok) {
-        alert(json.message || 'Erro ao atualizar')
+        setToast({ message: json.message || 'Erro ao atualizar', type: 'error' })
         return
       }
       await load()
@@ -87,7 +91,13 @@ export default function AdminKaraokeListPage() {
   }
 
   const deleteSong = async (song: KaraokeSongRow) => {
-    if (!confirm(`Excluir "${song.title}"? Esta ação não pode ser desfeita.`)) return
+    const ok = await confirm({
+      title: 'Excluir música',
+      message: `Excluir "${song.title}"? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Excluir',
+      variant: 'danger',
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/admin/karaoke/${song.id}`, {
         method: 'DELETE',
@@ -95,12 +105,12 @@ export default function AdminKaraokeListPage() {
       })
       const json = await res.json()
       if (!json.ok) {
-        alert(json.message || 'Erro ao excluir')
+        setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
         return
       }
       await load()
     } catch {
-      alert('Erro ao excluir')
+      setToast({ message: 'Erro ao excluir', type: 'error' })
     }
   }
 
@@ -204,6 +214,10 @@ export default function AdminKaraokeListPage() {
           </div>
         )}
       </div>
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      )}
+      <ConfirmDialog />
     </AdminLayout>
   )
 }

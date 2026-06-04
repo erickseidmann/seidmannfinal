@@ -11,6 +11,7 @@
  * - payment-notifications: 12h UTC (9h BRT) diariamente
  * - nfse-status: a cada 5 minutos
  * - sync-cora-extrato: a cada 5 minutos
+ * - sync-santander-extrato: a cada 5 minutos
  */
 
 import * as cron from 'node-cron'
@@ -22,6 +23,7 @@ import {
   runNfseStatus,
   runNfseScheduled,
   runSyncCoraExtrato,
+  runSyncSantanderExtrato,
 } from './jobs'
 
 const log = (job: string, msg: string, data?: unknown) => {
@@ -91,6 +93,18 @@ export function initScheduler() {
       }
     } catch (err) {
       console.error('[cron/sync-cora-extrato] Erro:', err)
+    }
+  })
+
+  // Extrato Santander (CREDITO) → conciliação — a cada 5 minutos
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const result = await runSyncSantanderExtrato()
+      if (result.total > 0 || result.erros > 0) {
+        log('sync-santander-extrato', 'Concluído', result)
+      }
+    } catch (err) {
+      console.error('[cron/sync-santander-extrato] Erro:', err)
     }
   })
 

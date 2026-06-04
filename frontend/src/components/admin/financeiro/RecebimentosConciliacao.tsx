@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 
 export interface RecebimentoAllocation {
   id?: string
@@ -141,6 +142,7 @@ interface Props {
 }
 
 export default function RecebimentosConciliacao({ onToast, onVinculado }: Props) {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const [expanded, setExpanded] = useState(true)
   const [filtroIdentificador, setFiltroIdentificador] = useState('')
   const [filtroProvider, setFiltroProvider] = useState('')
@@ -149,6 +151,7 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState<RecebimentoItem[]>([])
   const [total, setTotal] = useState(0)
+  const [totalPendentes, setTotalPendentes] = useState(0)
 
   const [vincularId, setVincularId] = useState<string | null>(null)
   const [buscaAluno, setBuscaAluno] = useState('')
@@ -173,12 +176,27 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
       const res = await fetch(`/api/admin/financeiro/recebimentos?${params}`, {
         credentials: 'include',
       })
-      const json = await res.json()
+      const countParams = new URLSearchParams({
+        status: 'PENDENTE',
+        page: '1',
+        pageSize: '1',
+      })
+      if (filtroProvider) countParams.set('provider', filtroProvider)
+
+      const [json, countRes] = await Promise.all([
+        res.json(),
+        fetch(`/api/admin/financeiro/recebimentos?${countParams}`, {
+          credentials: 'include',
+        }).then((r) => r.json()),
+      ])
       if (json.ok) {
         setItems(json.data.items ?? [])
         setTotal(json.data.total ?? 0)
       } else {
         onToast(json.message ?? 'Erro ao carregar recebimentos', 'error')
+      }
+      if (countRes.ok) {
+        setTotalPendentes(countRes.data.total ?? 0)
       }
     } catch {
       onToast('Erro ao carregar recebimentos', 'error')
@@ -344,7 +362,13 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
   }
 
   const handleIgnorar = async (id: string) => {
-    if (!confirm('Ignorar este recebimento? Não será possível reabrir na v1.')) return
+    const ok = await confirm({
+      title: 'Ignorar recebimento',
+      message: 'Ignorar este recebimento? Não será possível reabrir na v1.',
+      confirmLabel: 'Ignorar',
+      variant: 'danger',
+    })
+    if (!ok) return
     setActionLoading(true)
     try {
       const res = await fetch(`/api/admin/financeiro/recebimentos/${id}/ignorar`, {
@@ -375,9 +399,9 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
         >
           <Hash className="w-5 h-5 text-brand-orange shrink-0" />
           <span>Recebimentos a conciliar</span>
-          {total > 0 && (
+          {totalPendentes > 0 && (
             <span className="ml-1 rounded-full bg-gradient-to-r from-[#FF5200] to-[#FFAA00] px-2 py-0.5 text-xs font-bold text-white">
-              {total}
+              {totalPendentes}
             </span>
           )}
           {expanded ? (
@@ -741,6 +765,7 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
           </Button>
         </div>
       </Modal>
+      <ConfirmDialog />
     </>
   )
 }

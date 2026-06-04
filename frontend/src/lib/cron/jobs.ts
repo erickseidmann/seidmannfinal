@@ -15,6 +15,8 @@ import { emitirNfse, generateNfseRef } from '@/lib/nfse/client'
 import { buildNfsePayload } from '@/lib/nfse/builder'
 import { promises as fs } from 'fs'
 import path from 'path'
+import type { SyncStatementPaymentsResult } from '@/lib/payments/sync-statement-payments'
+import { syncNormalizedPayments } from '@/lib/payments/sync-statement-payments'
 
 const TOLERANCE_DAYS = 3
 const BATCH_SIZE = 50
@@ -630,37 +632,31 @@ export async function runNfseScheduled(): Promise<{
   }
 }
 
-export interface SyncCoraExtratoResult {
-  ok: boolean
-  total: number
-  novas: number
-  conciliadas: number
-  pendentes: number
-  ignoradas: number
-  erros: number
-  start: string
-  end: string
+export type { SyncStatementPaymentsResult as SyncCoraExtratoResult } from '@/lib/payments/sync-statement-payments'
+export type { SyncStatementPaymentsResult as SyncSantanderExtratoResult } from '@/lib/payments/sync-statement-payments'
+
+const emptySyncResult = (
   message?: string
-}
+): SyncStatementPaymentsResult => ({
+  ok: true,
+  total: 0,
+  novas: 0,
+  conciliadas: 0,
+  pendentes: 0,
+  ignoradas: 0,
+  erros: 0,
+  start: '',
+  end: '',
+  message,
+})
 
 /**
  * Consulta extrato Cora (CREDIT) e concilia cada lançamento via reconcilePayment.
  * Janela: últimas 2h até +1 dia (timezone / atraso da API).
  */
-export async function runSyncCoraExtrato(): Promise<SyncCoraExtratoResult> {
+export async function runSyncCoraExtrato(): Promise<SyncStatementPaymentsResult> {
   if (!process.env.CORA_CLIENT_ID) {
-    return {
-      ok: true,
-      total: 0,
-      novas: 0,
-      conciliadas: 0,
-      pendentes: 0,
-      ignoradas: 0,
-      erros: 0,
-      start: '',
-      end: '',
-      message: 'CORA_CLIENT_ID não configurado — sync ignorado',
-    }
+    return emptySyncResult('CORA_CLIENT_ID não configurado — sync ignorado')
   }
 
   const now = new Date()
@@ -670,7 +666,6 @@ export async function runSyncCoraExtrato(): Promise<SyncCoraExtratoResult> {
   const { fetchCoraStatement, mapStatementEntryToNormalized } = await import(
     '@/lib/payments/cora-statement'
   )
-  const { reconcilePayment } = await import('@/lib/payments/reconcile')
 
   let entries: Awaited<ReturnType<typeof fetchCoraStatement>>
   try {
@@ -691,52 +686,59 @@ export async function runSyncCoraExtrato(): Promise<SyncCoraExtratoResult> {
     }
   }
 
-  let novas = 0
-  let conciliadas = 0
-  let pendentes = 0
-  let ignoradas = 0
-  let erros = 0
+  return syncNormalizedPayments({
+    entries,
+    mapFn: mapStatementEntryToNormalized,
+    logPrefix: 'cron/sync-cora-extrato',
+    getEntryIdForLog: (e) => e.id,
+    start: start.toISOString(),
+    end: end.toISOString(),
+  })
+}
 
-  for (const entry of entries) {
-    try {
-      const np = mapStatementEntryToNormalized(entry)
-      const existing = await prisma.receivedPayment.findUnique({
-        where: {
-          provider_providerPaymentId: {
-            provider: np.provider,
-            providerPaymentId: np.providerPaymentId,
-          },
-        },
-      })
-      const payment = await reconcilePayment(np)
-      if (!existing) novas++
-      if (payment.status === 'VINCULADO') conciliadas++
-      else if (payment.status === 'PENDENTE') pendentes++
-      else if (payment.status === 'IGNORADO') ignoradas++
-    } catch (err) {
-      erros++
-      console.error(
-        `[cron/sync-cora-extrato] Erro entry ${entry.id}:`,
-        err instanceof Error ? err.message : err
-      )
+/**
+ * Extrato Santander (CREDITO) → conciliação.
+ * Janela: ontem + hoje (America/Sao_Paulo); idempotência via providerPaymentId sintético.
+ */
+export async function runSyncSantanderExtrato(): Promise<SyncStatementPaymentsResult> {
+  const { isSantanderStatementSyncEnabled, getSantanderSyncDateWindow, fetchSantanderPreparedEntries, mapPreparedToNormalized, buildProviderPaymentId } =
+    await import('@/lib/payments/santander-statement')
+
+  if (!isSantanderStatementSyncEnabled()) {
+    return emptySyncResult(
+      'Santander extrato não configurado ou SANTANDER_STATEMENT_SYNC_ENABLED=false — sync ignorado'
+    )
+  }
+
+  const { initialDate, finalDate } = getSantanderSyncDateWindow()
+  const start = initialDate
+  const end = finalDate
+
+  let prepared: Awaited<ReturnType<typeof fetchSantanderPreparedEntries>>
+  try {
+    prepared = await fetchSantanderPreparedEntries(initialDate, finalDate)
+  } catch (err) {
+    console.error('[cron/sync-santander-extrato] Erro ao buscar extrato:', err)
+    return {
+      ok: false,
+      total: 0,
+      novas: 0,
+      conciliadas: 0,
+      pendentes: 0,
+      ignoradas: 0,
+      erros: 1,
+      start,
+      end,
+      message: err instanceof Error ? err.message : String(err),
     }
   }
 
-  const result: SyncCoraExtratoResult = {
-    ok: true,
-    total: entries.length,
-    novas,
-    conciliadas,
-    pendentes,
-    ignoradas,
-    erros,
-    start: start.toISOString(),
-    end: end.toISOString(),
-  }
-
-  if (entries.length > 0 || erros > 0) {
-    console.log('[cron/sync-cora-extrato] Concluído', result)
-  }
-
-  return result
+  return syncNormalizedPayments({
+    entries: prepared,
+    mapFn: mapPreparedToNormalized,
+    logPrefix: 'cron/sync-santander-extrato',
+    getEntryIdForLog: (p) => buildProviderPaymentId(p),
+    start,
+    end,
+  })
 }

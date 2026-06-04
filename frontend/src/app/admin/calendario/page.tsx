@@ -13,6 +13,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
@@ -292,6 +293,7 @@ function toDateKey(d: Date): string {
 
 export default function AdminCalendarioPage() {
   console.log('render')
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const router = useRouter()
   const searchParams = useSearchParams()
   const searchParamsKey = searchParams?.toString() ?? ''
@@ -1414,8 +1416,14 @@ export default function AdminCalendarioPage() {
         const startChanged = new Date(editingLesson.startAt).getTime() !== startAt.getTime()
         let applyToFuture = false
 
-        if ((teacherChanged || startChanged) && window.confirm('Deseja aplicar esta alteração de professor/horário também para todas as aulas futuras deste aluno?')) {
-          applyToFuture = true
+        if (teacherChanged || startChanged) {
+          applyToFuture = await confirm({
+            title: 'Aplicar a aulas futuras?',
+            message:
+              'Deseja aplicar esta alteração de professor/horário também para todas as aulas futuras deste aluno?',
+            confirmLabel: 'Sim, aplicar',
+            cancelLabel: 'Só esta aula',
+          })
         }
 
         const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
@@ -3782,6 +3790,7 @@ export default function AdminCalendarioPage() {
         {toast && (
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
         )}
+        <ConfirmDialog />
       </div>
     </AdminLayout>
   )
