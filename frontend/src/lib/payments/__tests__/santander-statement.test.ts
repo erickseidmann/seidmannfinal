@@ -1,3 +1,4 @@
+import { toDateKeyInTZ } from '@/lib/datetime'
 import {
   assignStableSeq,
   buildProviderPaymentId,
@@ -56,10 +57,10 @@ describe('santander-statement', () => {
     expect(prepared).toHaveLength(0)
   })
 
-  it('getSantanderSyncDateWindow retorna ontem e hoje', () => {
+  it('getSantanderSyncDateWindow retorna hoje-3 até hoje+1', () => {
+    const today = toDateKeyInTZ(new Date())
     const { initialDate, finalDate } = getSantanderSyncDateWindow()
-    expect(initialDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(finalDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(addDaysToDateKey(finalDate, -1)).toBe(initialDate)
+    expect(initialDate).toBe(addDaysToDateKey(today, -3))
+    expect(finalDate).toBe(addDaysToDateKey(today, 1))
   })
 })

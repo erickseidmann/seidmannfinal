@@ -698,7 +698,7 @@ export async function runSyncCoraExtrato(): Promise<SyncStatementPaymentsResult>
 
 /**
  * Extrato Santander (CREDITO) → conciliação.
- * Janela: ontem + hoje (America/Sao_Paulo); idempotência via providerPaymentId sintético.
+ * Janela: hoje−3 … hoje+1 (America/Sao_Paulo); idempotência via providerPaymentId sintético.
  */
 export async function runSyncSantanderExtrato(): Promise<SyncStatementPaymentsResult> {
   const { isSantanderStatementSyncEnabled, getSantanderSyncDateWindow, fetchSantanderPreparedEntries, mapPreparedToNormalized, buildProviderPaymentId } =

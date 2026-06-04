@@ -4,8 +4,8 @@
  * Idempotência: providerPaymentId sintético com dataISO do LANÇAMENTO (não da janela do cron).
  * seq estável: ordenação fixa + contador por (dateKey, valor, documento) em batch após todas as páginas.
  *
- * Cron: janela initialDate=ontem, finalDate=hoje (America/Sao_Paulo) por atraso da API;
- * re-sync não duplica graças à chave determinística.
+ * Cron: janela initialDate=hoje−3, finalDate=hoje+1 (America/Sao_Paulo) — cobre atraso da API
+ * e descompasso de data do extrato (D+1 vs servidor); re-sync não duplica (chave por lançamento).
  */
 
 import { santanderAuthenticatedGet } from '@/lib/santander/client'
@@ -51,15 +51,20 @@ export function addDaysToDateKey(dateKey: string, days: number): string {
 }
 
 /**
- * Janela do sync: ontem + hoje no calendário de São Paulo (API exige initialDate/finalDate).
+ * Janela do sync (America/Sao_Paulo): últimos 4 dias civis até amanhã.
+ * initialDate = hoje − 3, finalDate = hoje + 1 (âncora em today).
+ * Em produção vimos transactionDate D+1 vs "hoje" do servidor e atraso da API;
+ * idempotência usa dateKey do lançamento — alargar a janela não duplica.
  */
 export function getSantanderSyncDateWindow(): {
   initialDate: string
   finalDate: string
 } {
-  const finalDate = toDateKeyInTZ(new Date())
-  const initialDate = addDaysToDateKey(finalDate, -1)
-  return { initialDate, finalDate }
+  const today = toDateKeyInTZ(new Date())
+  return {
+    initialDate: addDaysToDateKey(today, -3),
+    finalDate: addDaysToDateKey(today, 1),
+  }
 }
 
 export function parseSantanderTransactionDate(
