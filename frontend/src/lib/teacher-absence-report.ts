@@ -275,3 +275,102 @@ export async function confirmTeacherAbsenceForReplacement(params: {
     lessonStatus: result.lesson.status,
   }
 }
+
+/** Falso positivo de ausência: libera registro da aula e encerra o alerta + to-do. */
+export async function releaseTeacherRegistrationFromAbsenceReport(params: {
+  reportId: string
+  adminUserId: string
+  adminName: string
+}) {
+  const existing = await prisma.teacherAbsenceReport.findUnique({
+    where: { id: params.reportId },
+    include: {
+      enrollment: { select: { nome: true } },
+      teacher: { select: { id: true, nome: true } },
+      lesson: {
+        select: {
+          id: true,
+          startAt: true,
+          status: true,
+          record: { select: { id: true } },
+        },
+      },
+    },
+  })
+
+  if (!existing) {
+    return { ok: false as const, status: 404, message: 'Reporte não encontrado' }
+  }
+  if (existing.status === 'RESOLVED') {
+    return { ok: false as const, status: 400, message: 'Este reporte já foi resolvido' }
+  }
+  if (existing.lesson.record) {
+    return {
+      ok: false as const,
+      status: 400,
+      message: 'Esta aula já possui registro. Não é necessário liberar.',
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existingUnlock = await tx.lessonRecordUnlockRequest.findFirst({
+      where: { lessonId: existing.lessonId, teacherId: existing.teacherId },
+      orderBy: { criadoEm: 'desc' },
+    })
+
+    if (existingUnlock) {
+      await tx.lessonRecordUnlockRequest.update({
+        where: { id: existingUnlock.id },
+        data: {
+          status: 'APPROVED',
+          adminNotes: 'Registro liberado pelo admin — alerta de ausência incorreto.',
+          processedById: params.adminUserId,
+          processedAt: new Date(),
+        },
+      })
+    } else {
+      await tx.lessonRecordUnlockRequest.create({
+        data: {
+          lessonId: existing.lessonId,
+          teacherId: existing.teacherId,
+          status: 'APPROVED',
+          message: 'Liberação via alerta de professor ausente (falso positivo).',
+          adminNotes: 'Registro liberado pelo admin — alerta de ausência incorreto.',
+          processedById: params.adminUserId,
+          processedAt: new Date(),
+        },
+      })
+    }
+
+    const report = await tx.teacherAbsenceReport.update({
+      where: { id: params.reportId },
+      data: {
+        status: 'RESOLVED',
+        resolvedByUserId: params.adminUserId,
+      },
+      include: {
+        enrollment: { select: { nome: true } },
+        teacher: { select: { nome: true } },
+        verifyingBy: { select: { id: true, nome: true } },
+        resolvedBy: { select: { id: true, nome: true } },
+        lesson: { select: { id: true, startAt: true, status: true } },
+      },
+    })
+
+    if (report.todoId) {
+      await tx.adminDashboardTodo.update({
+        where: { id: report.todoId },
+        data: {
+          status: 'DONE',
+          completedAt: new Date(),
+          completedByUserId: params.adminUserId,
+          resolutionNote: `${params.adminName} liberou o registro da aula — professor pode registrar normalmente (alerta incorreto).`,
+        },
+      })
+    }
+
+    return report
+  })
+
+  return { ok: true as const, report: result }
+}

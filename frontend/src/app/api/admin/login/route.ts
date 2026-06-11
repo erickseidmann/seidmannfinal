@@ -10,6 +10,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { setSessionCookie } from '@/lib/adminSession'
 import bcrypt from 'bcryptjs'
+import {
+  LOGIN_ERROR_EMAIL_NOT_FOUND,
+  LOGIN_ERROR_WRONG_PASSWORD,
+} from '@/lib/login-messages'
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@seidmann.com'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''
@@ -71,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Apenas emails @seidmann.com podem fazer login admin
     if (!normalizedEmail.endsWith('@seidmann.com')) {
       return NextResponse.json(
-        { ok: false, message: 'Credenciais inválidas' },
+        { ok: false, message: LOGIN_ERROR_EMAIL_NOT_FOUND },
         { status: 401 }
       )
     }
@@ -96,7 +100,7 @@ export async function POST(request: NextRequest) {
 
     if (!admin) {
       return NextResponse.json(
-        { ok: false, message: 'Credenciais inválidas' },
+        { ok: false, message: LOGIN_ERROR_EMAIL_NOT_FOUND },
         { status: 401 }
       )
     }
@@ -104,7 +108,7 @@ export async function POST(request: NextRequest) {
     const senhaValida = await bcrypt.compare(senha, admin.senha)
     if (!senhaValida) {
       return NextResponse.json(
-        { ok: false, message: 'Credenciais inválidas' },
+        { ok: false, message: LOGIN_ERROR_WRONG_PASSWORD },
         { status: 401 }
       )
     }

@@ -1,6 +1,6 @@
 /**
  * PATCH /api/admin/teacher-absence-reports/[id]
- * { action: 'VERIFYING' | 'RESOLVED' | 'CONFIRM_ABSENCE' }
+ * { action: 'VERIFYING' | 'RESOLVED' | 'CONFIRM_ABSENCE' | 'RELEASE_REGISTRATION' }
  *
  * CONFIRM_ABSENCE: regra de reposição — professor ausente confirmado → cancela aula e gestão reagenda.
  */
@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import {
   confirmTeacherAbsenceForReplacement,
+  releaseTeacherRegistrationFromAbsenceReport,
   teacherAbsenceReportTypeLabel,
 } from '@/lib/teacher-absence-report'
 
@@ -65,9 +66,17 @@ export async function PATCH(
 
     const action =
       typeof body === 'object' && body !== null ? (body as { action?: unknown }).action : undefined
-    if (action !== 'VERIFYING' && action !== 'RESOLVED' && action !== 'CONFIRM_ABSENCE') {
+    if (
+      action !== 'VERIFYING' &&
+      action !== 'RESOLVED' &&
+      action !== 'CONFIRM_ABSENCE' &&
+      action !== 'RELEASE_REGISTRATION'
+    ) {
       return NextResponse.json(
-        { ok: false, message: 'Ação inválida. Use VERIFYING, RESOLVED ou CONFIRM_ABSENCE.' },
+        {
+          ok: false,
+          message: 'Ação inválida. Use VERIFYING, RESOLVED, CONFIRM_ABSENCE ou RELEASE_REGISTRATION.',
+        },
         { status: 400 }
       )
     }
@@ -98,6 +107,24 @@ export async function PATCH(
           lessonId: outcome.lessonId,
           scheduleReplacement: true,
         },
+      })
+    }
+
+    if (action === 'RELEASE_REGISTRATION') {
+      const outcome = await releaseTeacherRegistrationFromAbsenceReport({
+        reportId: id,
+        adminUserId,
+        adminName,
+      })
+      if (!outcome.ok) {
+        return NextResponse.json(
+          { ok: false, message: outcome.message },
+          { status: outcome.status }
+        )
+      }
+      return NextResponse.json({
+        ok: true,
+        data: { report: reportPayload(outcome.report) },
       })
     }
 

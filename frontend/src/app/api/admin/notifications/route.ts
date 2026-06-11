@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { notificationRetentionCutoff } from '@/lib/notification-retention'
+import { adminNotificationListWhere } from '@/lib/notification-retention'
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,10 +26,8 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const cutoff = notificationRetentionCutoff()
-
     const notifications = await prisma.adminNotification.findMany({
-      where: { userId, criadoEm: { gte: cutoff } },
+      where: adminNotificationListWhere(userId),
       orderBy: { criadoEm: 'desc' },
       take: 50,
     })

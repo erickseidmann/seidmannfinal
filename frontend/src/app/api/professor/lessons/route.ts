@@ -118,8 +118,10 @@ export async function GET(request: NextRequest) {
           })
         : []
     const unlockByLessonId = new Map<string, (typeof unlockRows)[number]>()
+    const approvedUnlockLessonIds = new Set<string>()
     for (const row of unlockRows) {
       if (!unlockByLessonId.has(row.lessonId)) unlockByLessonId.set(row.lessonId, row)
+      if (row.status === 'APPROVED') approvedUnlockLessonIds.add(row.lessonId)
     }
 
     const attendanceRows =
@@ -183,7 +185,8 @@ export async function GET(request: NextRequest) {
             adminNotes: u.adminNotes,
           }
         })(),
-        teacherAbsentFromCall: teacherAbsentFlags.get(l.id) ?? false,
+        teacherAbsentFromCall:
+          (teacherAbsentFlags.get(l.id) ?? false) && !approvedUnlockLessonIds.has(l.id),
       }
     })
 

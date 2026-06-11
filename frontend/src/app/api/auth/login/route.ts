@@ -8,6 +8,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isValidEmail } from '@/lib/validators'
 import bcrypt from 'bcryptjs'
+import {
+  LOGIN_ERROR_EMAIL_NOT_FOUND,
+  LOGIN_ERROR_WRONG_PASSWORD,
+} from '@/lib/login-messages'
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,20 +46,13 @@ export async function POST(request: NextRequest) {
     })
 
     if (!user) {
-      return NextResponse.json(
-        { error: 'Email ou senha inválidos' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: LOGIN_ERROR_EMAIL_NOT_FOUND }, { status: 401 })
     }
 
-    // Comparar senha
     const passwordMatch = await bcrypt.compare(password, user.senha)
 
     if (!passwordMatch) {
-      return NextResponse.json(
-        { error: 'Email ou senha inválidos' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: LOGIN_ERROR_WRONG_PASSWORD }, { status: 401 })
     }
 
     // Retornar sucesso (sem passwordHash)

@@ -366,7 +366,11 @@ export default function AdminDashboardPage() {
   }, [])
 
   const updateTeacherAbsenceReport = useCallback(
-    async (reportId: string, action: 'VERIFYING' | 'RESOLVED' | 'CONFIRM_ABSENCE', lessonId?: string) => {
+    async (
+      reportId: string,
+      action: 'VERIFYING' | 'RESOLVED' | 'CONFIRM_ABSENCE' | 'RELEASE_REGISTRATION',
+      lessonId?: string
+    ) => {
       setUpdatingAbsenceReportId(reportId)
       try {
         const res = await fetch(`/api/admin/teacher-absence-reports/${reportId}`, {
@@ -389,7 +393,7 @@ export default function AdminDashboardPage() {
             }
             return
           }
-          if (action === 'RESOLVED') {
+          if (action === 'RESOLVED' || action === 'RELEASE_REGISTRATION') {
             setListData((prev) => prev.filter((item) => item.id !== reportId))
           } else if (json.data?.report) {
             const updated = json.data.report as ListItemTeacherAbsenceReport
@@ -1224,20 +1228,32 @@ export default function AdminDashboardPage() {
                                 </button>
                               ) : null}
                               {row.entitlesReplacement && row.status !== 'RESOLVED' ? (
-                                <button
-                                  type="button"
-                                  disabled={isUpdating}
-                                  onClick={() =>
-                                    updateTeacherAbsenceReport(
-                                      row.id,
-                                      'CONFIRM_ABSENCE',
-                                      row.lessonId
-                                    )
-                                  }
-                                  className="px-3 py-1.5 text-sm rounded-lg border border-sky-300 text-sky-800 hover:bg-sky-50 disabled:opacity-50"
-                                >
-                                  Confirmar ausência e reagendar
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isUpdating}
+                                    onClick={() =>
+                                      updateTeacherAbsenceReport(row.id, 'RELEASE_REGISTRATION')
+                                    }
+                                    className="px-3 py-1.5 text-sm rounded-lg border border-emerald-300 text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                                  >
+                                    Liberar o registro
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isUpdating}
+                                    onClick={() =>
+                                      updateTeacherAbsenceReport(
+                                        row.id,
+                                        'CONFIRM_ABSENCE',
+                                        row.lessonId
+                                      )
+                                    }
+                                    className="px-3 py-1.5 text-sm rounded-lg border border-sky-300 text-sky-800 hover:bg-sky-50 disabled:opacity-50"
+                                  >
+                                    Confirmar ausência e reagendar
+                                  </button>
+                                </>
                               ) : null}
                               {!row.entitlesReplacement && row.status !== 'RESOLVED' ? (
                                 <button

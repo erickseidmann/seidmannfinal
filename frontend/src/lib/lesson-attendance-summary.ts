@@ -330,8 +330,17 @@ export function teacherAbsentFlagsByLessonId(
 export async function assertTeacherAttendedLessonForRecord(
   lessonId: string,
   lessonStartAt: Date,
-  durationMinutes: number
+  durationMinutes: number,
+  teacherId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (teacherId) {
+    const unlock = await prisma.lessonRecordUnlockRequest.findFirst({
+      where: { lessonId, teacherId, status: 'APPROVED' },
+      select: { id: true },
+    })
+    if (unlock) return { ok: true }
+  }
+
   const rows = await prisma.lessonAttendance.findMany({
     where: { lessonId },
     select: { role: true, joinedAt: true, leftAt: true, lastSeen: true, status: true },

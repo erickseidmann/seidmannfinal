@@ -5,7 +5,7 @@
  *
  * Proteções:
  * - Rate limiting por IP (5 tentativas / 15 min) — desativado em NODE_ENV=development
- * - Mensagem genérica de erro (não revela se email existe)
+ * - Mensagens específicas: e-mail sem cadastro vs senha incorreta
  *
  * Endpoint usado pela página /login
  */
@@ -17,6 +17,11 @@ import { checkRateLimit, getClientIP } from '@/lib/rateLimit'
 import { createSession } from '@/lib/session'
 import { setSessionCookie } from '@/lib/adminSession'
 import bcrypt from 'bcryptjs'
+import {
+  LOGIN_ERROR_ACCESS_NOT_RELEASED,
+  LOGIN_ERROR_EMAIL_NOT_FOUND,
+  LOGIN_ERROR_WRONG_PASSWORD,
+} from '@/lib/login-messages'
 
 export async function POST(request: NextRequest) {
   try {
@@ -89,30 +94,36 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Sempre retornar mensagem genérica (não revelar se email existe ou não)
-    // Isso evita enumeração de emails cadastrados
-    const genericErrorMessage = 'Credenciais inválidas'
-
-    // Se não encontrou usuário OU senha inválida, retornar mesma mensagem
     if (!user) {
+      const [enrollment, teacher] = await Promise.all([
+        prisma.enrollment.findFirst({
+          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          select: { id: true },
+        }),
+        prisma.teacher.findFirst({
+          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          select: { id: true, userId: true },
+        }),
+      ])
+
+      if (enrollment || (teacher && !teacher.userId)) {
+        return NextResponse.json(
+          { ok: false, message: LOGIN_ERROR_ACCESS_NOT_RELEASED },
+          { status: 403 }
+        )
+      }
+
       return NextResponse.json(
-        { 
-          ok: false,
-          message: genericErrorMessage
-        },
+        { ok: false, message: LOGIN_ERROR_EMAIL_NOT_FOUND },
         { status: 401 }
       )
     }
 
-    // Comparar senha
     const senhaValida = await bcrypt.compare(senha, user.senha)
 
     if (!senhaValida) {
       return NextResponse.json(
-        { 
-          ok: false,
-          message: genericErrorMessage
-        },
+        { ok: false, message: LOGIN_ERROR_WRONG_PASSWORD },
         { status: 401 }
       )
     }

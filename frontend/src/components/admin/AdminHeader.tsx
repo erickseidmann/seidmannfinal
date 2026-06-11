@@ -33,6 +33,7 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
   const [unreadCount, setUnreadCount] = useState(0)
   const [loadingNotif, setLoadingNotif] = useState(false)
   const [markingId, setMarkingId] = useState<string | null>(null)
+  const [markingAll, setMarkingAll] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
 
   const fetchUnreadCount = () => {
@@ -86,6 +87,24 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
       .finally(() => setMarkingId(null))
   }
 
+  const handleMarkAllRead = () => {
+    if (unreadCount === 0) return
+    setMarkingAll(true)
+    const readAt = new Date().toISOString()
+    fetch('/api/admin/notifications/read-all', { method: 'PATCH', credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok) {
+          const stamped = json.data?.readAt ?? readAt
+          setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? stamped })))
+          setUnreadCount(0)
+        }
+      })
+      .finally(() => setMarkingAll(false))
+  }
+
+  const hasUnread = notifications.some((n) => !n.readAt)
+
   const handleLogout = async () => {
     try {
       await fetch('/api/admin/logout', {
@@ -137,8 +156,22 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
               </button>
               {notifOpen && (
                 <div className="absolute right-0 top-full mt-1 w-80 max-h-[320px] overflow-y-auto bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
-                  <div className="px-3 py-2 border-b border-gray-100">
+                  <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-gray-800">Notificações</h3>
+                    {(unreadCount > 0 || hasUnread) && (
+                      <button
+                        type="button"
+                        onClick={handleMarkAllRead}
+                        disabled={markingAll || !!markingId}
+                        className="text-xs text-brand-orange hover:underline disabled:opacity-50 shrink-0"
+                      >
+                        {markingAll ? (
+                          <Loader2 className="w-3 h-3 animate-spin inline" />
+                        ) : (
+                          'Marcar todas lidas'
+                        )}
+                      </button>
+                    )}
                   </div>
                   {loadingNotif ? (
                     <div className="flex justify-center py-6">

@@ -188,7 +188,8 @@ export async function POST(request: NextRequest) {
     const attendanceCheck = await assertTeacherAttendedLessonForRecord(
       lesson.id,
       lesson.startAt,
-      lesson.durationMinutes ?? 60
+      lesson.durationMinutes ?? 60,
+      teacher.id
     )
     if (!attendanceCheck.ok) {
       return NextResponse.json({ ok: false, message: attendanceCheck.message }, { status: 400 })
