@@ -4,7 +4,7 @@ import {
 } from '@/lib/lesson-attendance-summary'
 
 describe('teacher absence grace period', () => {
-  const start = new Date('2026-06-09T23:19:00.000Z')
+  const start = new Date('2026-06-11T14:00:00.000Z')
 
   it('não marca ausência antes de 5 minutos', () => {
     const now = new Date(start.getTime() + 4 * 60 * 1000)

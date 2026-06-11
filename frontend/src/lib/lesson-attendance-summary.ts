@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/prisma'
 
 /** Presença em chamada passou a ser rastreada a partir desta data (migration lesson_attendance). */
-export const LESSON_ATTENDANCE_TRACKING_SINCE = new Date('2026-06-08T00:00:00.000Z')
+// Rastreamento de presença/ausência vale a partir de 11/06/2026 (meia-noite BRT = 03:00 UTC).
+// Antes disso os professores não tinham link do Meet, então não há "entrada na chamada" a cobrar.
+export const LESSON_ATTENDANCE_TRACKING_SINCE = new Date('2026-06-11T03:00:00.000Z')
 
 /** Minutos após o início da aula para marcar ausência do professor (monitoramento / dashboard). */
 export const TEACHER_ABSENCE_GRACE_MINUTES = 5
