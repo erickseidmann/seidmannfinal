@@ -14,9 +14,14 @@ import Toast from '@/components/admin/Toast'
 import {
   formatTimeInTZ,
   formatDateTimeInTZ,
+  formatDateOnlyInTZ,
+  formatDayMonthInTZ,
+  formatLessonDayLongInTZ,
+  formatMonthYearInTZ,
   isSameDayInTZ,
   getDateInTZ,
   getTimeInTZ,
+  startOfCalendarDayBrazilDateKey,
   ymdInTZ,
 } from '@/lib/datetime'
 import { buildRescheduleLinks } from '@/lib/lesson-reschedule'
@@ -850,7 +855,7 @@ export default function CalendarioAlunoPage() {
                             <ChevronLeft className="w-5 h-5" />
                           </button>
                           <h3 className="text-lg font-semibold">
-                            {calendarMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                            {formatMonthYearInTZ(calendarMonth)}
                           </h3>
                           <button
                             type="button"
@@ -983,7 +988,12 @@ export default function CalendarioAlunoPage() {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Horários disponíveis - {selectedDate ? new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' }) : ''}
+                        Horários disponíveis -{' '}
+                        {selectedDate
+                          ? formatLessonDayLongInTZ(
+                              startOfCalendarDayBrazilDateKey(selectedDate)!.toISOString()
+                            )
+                          : ''}
                       </label>
                       {loadingSlots ? (
                         <p className="text-sm text-gray-500">Carregando horários...</p>
@@ -993,7 +1003,6 @@ export default function CalendarioAlunoPage() {
                         <div className="space-y-2 max-h-60 overflow-y-auto">
                           {teacherSlots.map((slot, idx) => {
                             const slotKey = slot.date
-                            const slotDate = new Date(slot.date)
                             return (
                               <button
                                 key={idx}
@@ -1010,7 +1019,7 @@ export default function CalendarioAlunoPage() {
                               >
                                 <span className="font-medium">{slot.startTime}</span> às {slot.endTime}
                                 <span className="text-xs text-gray-500 ml-2">
-                                  ({slotDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })})
+                                  ({formatDayMonthInTZ(slot.date)})
                                 </span>
                               </button>
                             )
@@ -1078,7 +1087,6 @@ export default function CalendarioAlunoPage() {
         <div className="max-h-[60vh] overflow-y-auto space-y-3">
           {lessonRequests.length > 0 ? (
             lessonRequests.slice(0, 5).map((request) => {
-              const lessonDate = new Date(request.lesson.startAt)
               const getRequestStatusLabel = (status: string) => {
                 const labels: Record<string, string> = {
                   PENDING: 'Pendente',
@@ -1118,12 +1126,14 @@ export default function CalendarioAlunoPage() {
                         {getRequestTypeLabel(request.type)}
                       </p>
                       <p className="text-xs text-gray-600 mt-1">
-                        Aula: {lessonDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })} às {lessonDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        Aula: {formatDateOnlyInTZ(request.lesson.startAt)} às{' '}
+                        {formatTimeInTZ(request.lesson.startAt)}
                       </p>
                       <p className="text-xs text-gray-600">Professor: {request.lesson.teacher.nome}</p>
                       {request.requestedStartAt && (
                         <p className="text-xs text-gray-600 mt-1">
-                          Solicitado para: {new Date(request.requestedStartAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })} às {new Date(request.requestedStartAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                          Solicitado para: {formatDateOnlyInTZ(request.requestedStartAt)} às{' '}
+                          {formatTimeInTZ(request.requestedStartAt)}
                         </p>
                       )}
                       {request.requestedTeacher && (

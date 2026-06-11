@@ -5,6 +5,11 @@
 import {
   formatTimeInTZ,
   formatDateTimeInTZ,
+  formatLessonDateShortInTZ,
+  formatDateOnlyInTZ,
+  formatDayMonthInTZ,
+  formatLessonDayLongInTZ,
+  formatMonthYearInTZ,
   isSameDayInTZ,
   ymdInTZ,
   getTimeInTZ,
@@ -61,9 +66,11 @@ describe('datetime utilities', () => {
       expect(isSameDayInTZ(date1, date2)).toBe(true)
     })
 
-    it('should return false for different days', () => {
-      const date1 = new Date('2024-01-15T23:00:00Z')
-      const date2 = new Date('2024-01-16T01:00:00Z')
+    it('should return false for different days in Brazil timezone', () => {
+      // 15/01 meio-dia BRT e 16/01 meio-dia BRT — dias civis distintos em SP
+      // (não usar 15T23:00Z vs 16T01:00Z: ambos caem em 15/01 no fuso BR)
+      const date1 = new Date('2024-01-15T15:00:00Z')
+      const date2 = new Date('2024-01-16T15:00:00Z')
       expect(isSameDayInTZ(date1, date2)).toBe(false)
     })
 
@@ -101,6 +108,43 @@ describe('datetime utilities', () => {
       const result = formatMonthInTZ(testISO, 'pt-BR')
       expect(result).toBeTruthy()
       expect(typeof result).toBe('string')
+    })
+  })
+
+  describe('formatLessonDateShortInTZ', () => {
+    it('should format short lesson date in Brazil timezone', () => {
+      const result = formatLessonDateShortInTZ(testISO, 'pt-BR')
+      expect(result).toBeTruthy()
+      expect(result).toMatch(/\d{2}/)
+    })
+  })
+
+  describe('formatDateOnlyInTZ', () => {
+    it('should format DD/MM/YYYY in Brazil timezone', () => {
+      const result = formatDateOnlyInTZ(testISO, 'pt-BR')
+      expect(result).toMatch(/\d{2}\/\d{2}\/\d{4}/)
+    })
+  })
+
+  describe('formatDayMonthInTZ', () => {
+    it('should format DD/MM in Brazil timezone', () => {
+      const result = formatDayMonthInTZ(testISO, 'pt-BR')
+      expect(result).toMatch(/\d{2}\/\d{2}/)
+    })
+  })
+
+  describe('formatLessonDayLongInTZ', () => {
+    it('should format long weekday and day without year', () => {
+      const result = formatLessonDayLongInTZ(testISO, 'pt-BR')
+      expect(result).toBeTruthy()
+      expect(result).not.toMatch(/2024/)
+    })
+  })
+
+  describe('formatMonthYearInTZ', () => {
+    it('should format month and year in Brazil timezone', () => {
+      const result = formatMonthYearInTZ(testISO, 'pt-BR')
+      expect(result).toContain('2024')
     })
   })
 })

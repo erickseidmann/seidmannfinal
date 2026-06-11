@@ -172,6 +172,89 @@ export function getTimeInTZ(iso: string, tz: string = BRAZIL_TZ): { hour: number
 }
 
 /**
+ * Data curta da aula (ex.: seg., 11 de jan.) no fuso de Brasília.
+ */
+export function formatLessonDateShortInTZ(
+  iso: string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+  }).format(date)
+}
+
+/**
+ * Data numérica da aula DD/MM/AAAA no fuso de Brasília.
+ */
+export function formatDateOnlyInTZ(
+  iso: string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+/**
+ * Dia e mês DD/MM no fuso de Brasília.
+ */
+export function formatDayMonthInTZ(
+  iso: string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    day: '2-digit',
+    month: '2-digit',
+  }).format(date)
+}
+
+/**
+ * Dia longo da aula sem ano (ex.: quinta-feira, 11 de junho) no fuso de Brasília.
+ */
+export function formatLessonDayLongInTZ(
+  iso: string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+  }).format(date)
+}
+
+/**
+ * Mês e ano (ex.: janeiro de 2024) no fuso de Brasília.
+ */
+export function formatMonthYearInTZ(
+  date: Date | string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    month: 'long',
+    year: 'numeric',
+  }).format(d)
+}
+
+/**
  * Data longa da aula (ex.: quinta-feira, 11 de junho de 2026) no fuso de Brasília.
  */
 export function formatLessonDateLongInTZ(

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
-import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import { isLessonScheduledStatus, LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 const TOLERANCE_MINUTES = 15
 
@@ -148,6 +148,20 @@ export async function GET(
       ...(groupMemberNames !== undefined && { groupMemberNames }),
     }
 
+    const nextLessonRow = await prisma.lesson.findFirst({
+      where: {
+        teacherId: teacher.id,
+        startAt: { gt: now },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
+      },
+      orderBy: { startAt: 'asc' },
+      select: { id: true, startAt: true },
+    })
+
+    const nextLesson = nextLessonRow
+      ? { id: nextLessonRow.id, startAt: nextLessonRow.startAt.toISOString() }
+      : null
+
     return NextResponse.json({
       ok: true,
       data: {
@@ -170,6 +184,7 @@ export async function GET(
           windowEnd: windowEnd.toISOString(),
           reason,
         },
+        nextLesson,
       },
     })
   } catch (error) {

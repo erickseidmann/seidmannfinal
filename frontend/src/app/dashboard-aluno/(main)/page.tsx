@@ -21,6 +21,11 @@ import {
   BookOpen,
   ClipboardList,
 } from 'lucide-react'
+import {
+  formatDateOnlyInTZ,
+  formatLessonDateShortInTZ,
+  formatTimeInTZ,
+} from '@/lib/datetime'
 
 interface Aluno {
   nome: string
@@ -94,16 +99,6 @@ function formatDateHour(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function formatShortDate(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })
-}
-
-function formatTimeShort(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
 export default function DashboardAlunoInicioPage() {
@@ -296,8 +291,8 @@ export default function DashboardAlunoInicioPage() {
             <div>
               <p className="font-semibold text-emerald-900">Sua aula está prestes a começar</p>
               <p className="text-sm text-emerald-800/80 mt-0.5">
-                Com {nextLesson.teacherName} · {formatShortDate(nextLesson.startAt)} ·{' '}
-                {formatTimeShort(nextLesson.startAt)}
+                Com {nextLesson.teacherName} · {formatLessonDateShortInTZ(nextLesson.startAt)} ·{' '}
+                {formatTimeInTZ(nextLesson.startAt)}
               </p>
             </div>
           </div>
@@ -343,10 +338,10 @@ export default function DashboardAlunoInicioPage() {
                       </p>
                     </div>
                     <p className="text-gray-900 font-semibold">
-                      {formatShortDate(nextLesson.startAt)}
+                      {formatLessonDateShortInTZ(nextLesson.startAt)}
                       <span className="font-normal text-gray-600">
                         {' '}
-                        · {formatTimeShort(nextLesson.startAt)}
+                        · {formatTimeInTZ(nextLesson.startAt)}
                       </span>
                     </p>
                     <p className="text-sm text-gray-600 mt-1">
@@ -402,14 +397,14 @@ export default function DashboardAlunoInicioPage() {
                         lastLesson.status === 'CANCELLED' ? 'text-red-900' : 'text-gray-900'
                       }`}
                     >
-                      {formatShortDate(lastLesson.startAt)}
+                      {formatLessonDateShortInTZ(lastLesson.startAt)}
                       <span
                         className={`font-normal ${
                           lastLesson.status === 'CANCELLED' ? 'text-red-700' : 'text-gray-600'
                         }`}
                       >
                         {' '}
-                        · {formatTimeShort(lastLesson.startAt)}
+                        · {formatTimeInTZ(lastLesson.startAt)}
                       </span>
                     </p>
                     <p
@@ -488,7 +483,6 @@ export default function DashboardAlunoInicioPage() {
             ) : (
               <>
                 {pendingRequests.slice(0, 5).map((request) => {
-                  const lessonDate = new Date(request.lesson.startAt)
                   return (
                     <div
                       key={request.id}
@@ -507,26 +501,16 @@ export default function DashboardAlunoInicioPage() {
                         </span>
                       </div>
                       <p className="text-xs text-gray-700 mt-1.5">
-                        Aula:{' '}
-                        {lessonDate.toLocaleDateString('pt-BR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                        })}{' '}
-                        às {formatTimeShort(request.lesson.startAt)}
+                        Aula: {formatDateOnlyInTZ(request.lesson.startAt)} às{' '}
+                        {formatTimeInTZ(request.lesson.startAt)}
                       </p>
                       <p className="text-xs text-gray-600">
                         Professor: {request.lesson.teacher.nome}
                       </p>
                       {request.requestedStartAt && (
                         <p className="text-xs text-gray-600 mt-0.5">
-                          Solicitado para:{' '}
-                          {new Date(request.requestedStartAt).toLocaleDateString('pt-BR', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                          })}{' '}
-                          às {formatTimeShort(request.requestedStartAt)}
+                          Solicitado para: {formatDateOnlyInTZ(request.requestedStartAt)} às{' '}
+                          {formatTimeInTZ(request.requestedStartAt)}
                         </p>
                       )}
                       {request.requestedTeacher && (
@@ -630,10 +614,10 @@ export default function DashboardAlunoInicioPage() {
                       </p>
                     )}
                     <p className="text-gray-900 font-semibold">
-                      {formatShortDate(record.startAt)}
+                      {formatLessonDateShortInTZ(record.startAt)}
                       <span className="font-normal text-gray-600">
                         {' '}
-                        · {formatTimeShort(record.startAt)}
+                        · {formatTimeInTZ(record.startAt)}
                       </span>
                     </p>
                     <p className="text-sm text-gray-600 mt-0.5">

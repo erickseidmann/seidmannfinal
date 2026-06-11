@@ -69,6 +69,11 @@ interface ClassroomAccess {
   reason: string | null
 }
 
+interface NextLessonRef {
+  id: string
+  startAt: string
+}
+
 function idiomaLabel(idioma: string | null): string {
   if (!idioma) return 'Aula'
   const u = idioma.toUpperCase()
@@ -132,6 +137,7 @@ export default function AulaProfessorPage() {
 
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [classroom, setClassroom] = useState<ClassroomAccess | null>(null)
+  const [nextLesson, setNextLesson] = useState<NextLessonRef | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -149,15 +155,18 @@ export default function AulaProfessorPage() {
         setError(json.message || 'Erro ao carregar a aula')
         setLesson(null)
         setClassroom(null)
+        setNextLesson(null)
         return
       }
       setError(null)
       setLesson(json.data.lesson)
       setClassroom(json.data.classroom)
+      setNextLesson(json.data.nextLesson ?? null)
     } catch (e) {
       setError('Erro de conexão. Tente novamente.')
       setLesson(null)
       setClassroom(null)
+      setNextLesson(null)
     } finally {
       setLoading(false)
     }
@@ -203,7 +212,10 @@ export default function AulaProfessorPage() {
   if (!lesson || !classroom) return null
 
   const windowStartTime = new Date(classroom.windowStart).getTime()
-  const showCountdown = !classroom.canJoin && now < windowStartTime
+  const windowEndTime = new Date(classroom.windowEnd).getTime()
+  const lessonEnded = now > windowEndTime
+  const showJoin = classroom.canJoin && !lessonEnded
+  const showCountdown = !lessonEnded && !showJoin && now < windowStartTime
   const isGroup = lesson.enrollment.tipoAula === 'GRUPO'
   const groupMembers = lesson.enrollment.groupMemberNames ?? []
 
@@ -252,7 +264,36 @@ export default function AulaProfessorPage() {
               </h2>
               <p className="text-sm text-gray-500 mb-4">Você entrará como moderador da sala.</p>
 
-              {classroom.canJoin ? (
+              {lessonEnded ? (
+                <div className="flex flex-col items-center text-center py-4">
+                  <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-3">
+                    <VideoOff className="w-8 h-8 text-brand-orange" />
+                  </div>
+                  <p className="text-lg font-semibold text-gray-900">Aula encerrada</p>
+                  <p className="text-gray-600 mt-1">
+                    O tempo de acesso à sala desta aula terminou.
+                  </p>
+                  {nextLesson && nextLesson.id !== lesson.id ? (
+                    <Link
+                      href={`/dashboard-professores/aula/${nextLesson.id}`}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
+                    >
+                      <Video className="w-5 h-5" />
+                      Ir para a próxima aula
+                      <span className="text-sm font-normal opacity-90">
+                        ({formatTimeInTZ(nextLesson.startAt)})
+                      </span>
+                    </Link>
+                  ) : (
+                    <Link href="/dashboard-professores/calendario" className="mt-4">
+                      <Button variant="primary" className="inline-flex items-center gap-2">
+                        <Calendar className="w-5 h-5" />
+                        Voltar ao calendário
+                      </Button>
+                    </Link>
+                  )}
+                </div>
+              ) : showJoin ? (
                 <>
                   <div className="flex flex-col items-center text-center py-4">
                     <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-3">
@@ -304,7 +345,7 @@ export default function AulaProfessorPage() {
                     <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
                       <Clock className="w-8 h-8 text-gray-500" />
                     </div>
-                    {classroom.reason && (
+                    {classroom.reason && !showCountdown && (
                       <p className="text-gray-700 font-medium">{classroom.reason}</p>
                     )}
                     {showCountdown && (
