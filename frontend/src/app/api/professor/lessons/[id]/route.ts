@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 
 const TOLERANCE_MINUTES = 15
 
@@ -101,11 +102,11 @@ export async function GET(
     const canJoin =
       now >= windowStart &&
       now <= windowEnd &&
-      lesson.status === 'CONFIRMED'
+      isLessonScheduledStatus(lesson.status)
 
     let reason: string | null = null
     if (!canJoin) {
-      if (lesson.status !== 'CONFIRMED') {
+      if (!isLessonScheduledStatus(lesson.status)) {
         reason = 'Aula não está confirmada'
       } else if (now < windowStart) {
         reason = 'A sala abre 15 minutos antes do início da aula'

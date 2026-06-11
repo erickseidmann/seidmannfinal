@@ -14,6 +14,7 @@ import { findTeacherAlertsForProfessorWidgets } from '@/lib/prisma-teacher-alert
 import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert'
 import { PROFESSOR_SYSTEM_ALERT_TYPES } from '@/lib/teacher-alert-kinds'
 import { requireTeacher } from '@/lib/auth'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 
 function studentLabel(
   enr: { nome: string; tipoAula: string | null; nomeGrupo: string | null }
@@ -111,7 +112,7 @@ export async function GET(request: NextRequest) {
     })
 
     const joinableRow = lessons.find((l) => {
-      if (l.status !== 'CONFIRMED') return false
+      if (!isLessonScheduledStatus(l.status)) return false
       const lessonStart = l.startAt.getTime()
       const lessonEnd = lessonStart + (l.durationMinutes ?? 60) * 60 * 1000
       const ts = now.getTime()

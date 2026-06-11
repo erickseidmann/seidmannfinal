@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import StudentHeader from '@/components/aluno/StudentHeader'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import {
   LayoutDashboard,
   User,
@@ -54,7 +55,7 @@ export default function DashboardAlunoMainLayout({
           const active = lessons.find((l) => {
             const start = new Date(l.startAt).getTime()
             const end = start + (l.durationMinutes || 60) * 60 * 1000
-            return l.status === 'CONFIRMED' && now >= start - 3 * 60 * 1000 && now <= end + 15 * 60 * 1000
+            return isLessonScheduledStatus(l.status) && now >= start - 3 * 60 * 1000 && now <= end + 15 * 60 * 1000
           })
           if (active) {
             setActiveClassroomId(active.id)
@@ -62,7 +63,7 @@ export default function DashboardAlunoMainLayout({
           } else {
             setActiveClassroomId(null)
             const future = lessons
-              .filter((l) => l.status === 'CONFIRMED' && new Date(l.startAt).getTime() > now)
+              .filter((l) => isLessonScheduledStatus(l.status) && new Date(l.startAt).getTime() > now)
               .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
             const next = future[0]
             setNextLessonStartAt(next ? new Date(next.startAt).getTime() : null)

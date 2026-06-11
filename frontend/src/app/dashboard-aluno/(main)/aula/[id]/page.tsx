@@ -23,6 +23,7 @@ import {
 import Button from '@/components/ui/Button'
 import { useLessonAttendance } from '@/hooks/useLessonAttendance'
 import { formatLessonDateLongInTZ, formatTimeInTZ } from '@/lib/datetime'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 
 // ——— Tipos ———
 interface LessonData {
@@ -257,7 +258,7 @@ export default function AulaAlunoPage() {
   const reportWindowExpired = now > reportWindowEndTime
   const showTeacherAbsenceSection =
     classroom.canJoin &&
-    lesson.status === 'CONFIRMED' &&
+    isLessonScheduledStatus(lesson.status) &&
     !!lesson.teacher?.id &&
     !lessonEnded
 

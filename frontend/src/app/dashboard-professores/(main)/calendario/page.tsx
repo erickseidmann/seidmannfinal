@@ -37,6 +37,7 @@ import {
 import {
   canRegisterLesson,
   isLessonCancelledFamily,
+  isLessonScheduledStatus,
   LESSON_STATUS_LABELS,
   type LessonStatusUi,
 } from '@/lib/lesson-status'
@@ -1143,7 +1144,7 @@ export default function CalendarioProfessorPage() {
                 const lessonStart = new Date(selectedLesson.startAt).getTime()
                 const lessonEnd = lessonStart + (selectedLesson.durationMinutes || 60) * 60 * 1000
                 const now = Date.now()
-                const canJoin = selectedLesson.status === 'CONFIRMED' && now >= lessonStart - 15 * 60 * 1000 && now <= lessonEnd + 15 * 60 * 1000
+                const canJoin = isLessonScheduledStatus(selectedLesson.status) && now >= lessonStart - 15 * 60 * 1000 && now <= lessonEnd + 15 * 60 * 1000
                 if (!canJoin) return null
                 return (
                   <Link

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 
 export async function GET(request: NextRequest) {
   try {
@@ -115,7 +116,7 @@ export async function GET(request: NextRequest) {
           where: {
             enrollmentId: { in: enrollmentIds },
             startAt: { gt: now },
-            status: 'CONFIRMED',
+            status: { in: [...LESSON_STATUSES_SCHEDULED] },
           },
           orderBy: { startAt: 'asc' },
           include: { teacher: { select: { nome: true } } },

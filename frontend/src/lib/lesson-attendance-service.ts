@@ -3,6 +3,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import { LessonAttendanceRole, LessonAttendanceStatus } from '@prisma/client'
 
 export type TeacherIdentity = { role: 'TEACHER'; teacherId: string }
@@ -30,7 +31,7 @@ function isWithinJoinWindow(lesson: {
   durationMinutes: number
   status: string
 }): { allowed: boolean; message?: string } {
-  if (lesson.status !== 'CONFIRMED') {
+  if (!isLessonScheduledStatus(lesson.status)) {
     return { allowed: false, message: 'Aula não está confirmada' }
   }
   const now = new Date()

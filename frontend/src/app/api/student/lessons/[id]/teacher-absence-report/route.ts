@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { TeacherAbsenceReportType } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import { requireStudent } from '@/lib/auth'
 import {
   createTeacherAbsenceReportWithTodo,
@@ -70,9 +71,9 @@ export async function POST(
       return NextResponse.json({ ok: false, message: 'Sem permissão para esta aula' }, { status: 403 })
     }
 
-    if (lesson.status !== 'CONFIRMED') {
+    if (!isLessonScheduledStatus(lesson.status)) {
       return NextResponse.json(
-        { ok: false, message: 'Só é possível reportar em aulas confirmadas' },
+        { ok: false, message: 'Só é possível reportar em aulas confirmadas ou de reposição' },
         { status: 400 }
       )
     }

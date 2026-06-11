@@ -20,6 +20,7 @@ import {
   ymdInTZ,
 } from '@/lib/datetime'
 import { buildRescheduleLinks } from '@/lib/lesson-reschedule'
+import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import LessonCalendarBlock from '@/components/calendar/LessonCalendarBlock'
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -609,7 +610,7 @@ export default function CalendarioAlunoPage() {
                 const lessonStart = new Date(selectedLesson.startAt)
                 const lessonEnd = new Date(lessonStart.getTime() + selectedLesson.durationMinutes * 60 * 1000)
                 const now = new Date()
-                const canJoin = now >= new Date(lessonStart.getTime() - 15 * 60 * 1000) && now <= new Date(lessonEnd.getTime() + 15 * 60 * 1000) && selectedLesson.status === 'CONFIRMED'
+                const canJoin = now >= new Date(lessonStart.getTime() - 15 * 60 * 1000) && now <= new Date(lessonEnd.getTime() + 15 * 60 * 1000) && isLessonScheduledStatus(selectedLesson.status)
                 if (!canJoin) return null
                 return (
                   <Link
