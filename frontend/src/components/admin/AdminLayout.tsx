@@ -1,6 +1,6 @@
 /**
  * Layout Admin
- * 
+ *
  * Layout compartilhado para todas as páginas admin com sidebar e topbar
  */
 
@@ -14,23 +14,15 @@ import { useTranslation } from '@/contexts/LanguageContext'
 import {
   LayoutDashboard,
   Users,
-  UserCircle,
-  BookOpen,
-  Bell,
-  GraduationCap,
-  CalendarDays,
-  ClipboardList,
   Wallet,
   ChevronDown,
   ChevronRight,
   ChevronLeft,
   MessageCircle,
-  Menu,
   X,
-  ListTodo,
   StickyNote,
-  Music,
-  School,
+  Briefcase,
+  Library,
 } from 'lucide-react'
 
 interface AdminLayoutProps {
@@ -44,16 +36,21 @@ interface MenuItem {
   superAdminOnly?: boolean
 }
 
+type MenuGroupId = 'gestao' | 'material' | 'financeiro'
+
 interface MenuGroup {
   type: 'group'
+  id: MenuGroupId
   labelKey: string
   icon: typeof Wallet
+  expandedPrefixes: string[]
   children: { href: string; labelKey: string }[]
 }
 
 const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/dashboard': 'dashboard',
   '/admin/professores': 'professores',
+  '/admin/professores/inativos': 'professores',
   '/admin/alunos': 'alunos',
   '/admin/alunos/bolsistas': 'alunos',
   '/admin/usuarios': 'usuarios',
@@ -61,9 +58,12 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/alertas': 'alertas',
   '/admin/calendario': 'calendario',
   '/admin/registros-aulas': 'registros-aulas',
+  '/admin/acompanhar-chamadas': 'acompanhar-chamadas',
   '/admin/financeiro/geral': 'financeiro-geral',
   '/admin/financeiro/alunos': 'financeiro-alunos',
+  '/admin/financeiro/recebimentos': 'financeiro-alunos',
   '/admin/financeiro/professores': 'financeiro-professores',
+  '/admin/financeiro/pagamentos': 'financeiro-pagamentos',
   '/admin/financeiro/administracao': 'financeiro-administracao',
   '/admin/financeiro/movimentacao': 'financeiro-movimentacao',
   '/admin/financeiro/saidas': 'financeiro-saidas',
@@ -75,50 +75,157 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/chat': 'chat',
   '/admin/todos': 'todos',
   '/admin/bloco-de-notas': 'bloco-notas',
+  '/admin/minhas-financas': 'minhas-financas',
   '/admin/karaoke': 'karaoke',
+  '/admin/treinamentos': 'treinamentos',
   '/admin/escolas-parceiras': 'escolas-parceiras',
 }
 
-const FINANCEIRO_SUB_KEYS = ['financeiro-geral', 'financeiro-alunos', 'financeiro-professores', 'financeiro-administracao', 'financeiro-movimentacao', 'financeiro-saidas', 'financeiro-relatorios', 'financeiro-cupons', 'financeiro-nfse', 'financeiro-notificacoes', 'financeiro-cobrancas'] as const
+const GESTAO_SUB_KEYS = ['professores', 'alunos', 'calendario', 'registros-aulas', 'acompanhar-chamadas', 'alertas', 'todos'] as const
+const MATERIAL_SUB_KEYS = ['livros', 'karaoke', 'treinamentos'] as const
+const FINANCEIRO_SUB_KEYS = [
+  'financeiro-geral',
+  'financeiro-alunos',
+  'financeiro-professores',
+  'financeiro-administracao',
+  'financeiro-movimentacao',
+  'financeiro-saidas',
+  'financeiro-relatorios',
+  'financeiro-cupons',
+  'financeiro-nfse',
+  'financeiro-notificacoes',
+  'financeiro-cobrancas',
+] as const
+
+function hasGestaoAccess(adminPages: string[], subKey: string): boolean {
+  if (subKey === 'todos') return true
+  return adminPages.includes(subKey)
+}
+function hasAnyGestaoAccess(adminPages: string[]): boolean {
+  return GESTAO_SUB_KEYS.some((k) => hasGestaoAccess(adminPages, k))
+}
+
+function hasMaterialAccess(adminPages: string[], subKey: string): boolean {
+  if (subKey === 'karaoke' || subKey === 'treinamentos') return true
+  return adminPages.includes(subKey)
+}
+function hasAnyMaterialAccess(adminPages: string[]): boolean {
+  return MATERIAL_SUB_KEYS.some((k) => hasMaterialAccess(adminPages, k))
+}
+
 function hasFinanceiroAccess(adminPages: string[], subKey: string): boolean {
+  if (subKey === 'escolas-parceiras') {
+    return (
+      adminPages.includes('escolas-parceiras') || adminPages.includes('alunos')
+    )
+  }
   if (adminPages.includes('financeiro')) return true
   return adminPages.includes(subKey)
 }
 function hasAnyFinanceiroAccess(adminPages: string[]): boolean {
   if (adminPages.includes('financeiro')) return true
+  if (adminPages.includes('escolas-parceiras') || adminPages.includes('alunos')) {
+    return true
+  }
   return FINANCEIRO_SUB_KEYS.some((k) => adminPages.includes(k))
+}
+
+function canAccessGroupChild(
+  groupId: MenuGroupId,
+  pageKey: string | undefined,
+  adminPages: string[],
+  isSuperAdmin: boolean
+): boolean {
+  if (!pageKey) return false
+  if (isSuperAdmin) return true
+  if (groupId === 'gestao') return hasGestaoAccess(adminPages, pageKey)
+  if (groupId === 'material') return hasMaterialAccess(adminPages, pageKey)
+  return hasFinanceiroAccess(adminPages, pageKey)
+}
+
+function hasAnyGroupAccess(groupId: MenuGroupId, adminPages: string[]): boolean {
+  if (groupId === 'gestao') return hasAnyGestaoAccess(adminPages)
+  if (groupId === 'material') return hasAnyMaterialAccess(adminPages)
+  return hasAnyFinanceiroAccess(adminPages)
+}
+
+function isGroupExpanded(group: MenuGroup, pathname: string | null): boolean {
+  if (!pathname) return false
+  return group.expandedPrefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+}
+
+function isChildActive(href: string, pathname: string | null): boolean {
+  if (!pathname) return false
+  if (pathname === href) return true
+  if (href === '/admin/alunos' && pathname.startsWith('/admin/alunos/')) return true
+  if (href === '/admin/professores' && pathname.startsWith('/admin/professores/')) return true
+  if (href === '/admin/karaoke' && pathname.startsWith('/admin/karaoke/')) return true
+  if (href === '/admin/treinamentos' && pathname.startsWith('/admin/treinamentos/')) return true
+  return false
 }
 
 const baseMenuItems: (MenuItem | MenuGroup)[] = [
   { href: '/admin/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
-  { href: '/admin/professores', labelKey: 'admin.professors', icon: GraduationCap },
-  { href: '/admin/alunos', labelKey: 'admin.students', icon: UserCircle },
-  { href: '/admin/usuarios', labelKey: 'admin.users', icon: Users, superAdminOnly: true },
-  { href: '/admin/livros', labelKey: 'admin.books', icon: BookOpen },
-  { href: '/admin/alertas', labelKey: 'admin.alerts', icon: Bell },
-  { href: '/admin/calendario', labelKey: 'admin.calendar', icon: CalendarDays },
-  { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords', icon: ClipboardList },
-  { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
-  { href: '/admin/todos', labelKey: 'admin.todos', icon: ListTodo },
-  { href: '/admin/bloco-de-notas', labelKey: 'admin.notesPad', icon: StickyNote },
-  { href: '/admin/karaoke', labelKey: 'admin.karaoke', icon: Music },
-  { href: '/admin/escolas-parceiras', labelKey: 'admin.partnerSchools', icon: School },
   {
     type: 'group',
+    id: 'gestao',
+    labelKey: 'admin.gestao',
+    icon: Briefcase,
+    expandedPrefixes: [
+      '/admin/professores',
+      '/admin/alunos',
+      '/admin/calendario',
+      '/admin/registros-aulas',
+      '/admin/acompanhar-chamadas',
+      '/admin/alertas',
+      '/admin/todos',
+    ],
+    children: [
+      { href: '/admin/professores', labelKey: 'admin.professors' },
+      { href: '/admin/alunos', labelKey: 'admin.students' },
+      { href: '/admin/calendario', labelKey: 'admin.calendar' },
+      { href: '/admin/registros-aulas', labelKey: 'admin.lessonRecords' },
+      { href: '/admin/acompanhar-chamadas', labelKey: 'admin.lessonAttendance' },
+      { href: '/admin/alertas', labelKey: 'admin.alerts' },
+      { href: '/admin/todos', labelKey: 'admin.todos' },
+    ],
+  },
+  {
+    type: 'group',
+    id: 'material',
+    labelKey: 'admin.material',
+    icon: Library,
+    expandedPrefixes: ['/admin/livros', '/admin/karaoke', '/admin/treinamentos'],
+    children: [
+      { href: '/admin/livros', labelKey: 'admin.books' },
+      { href: '/admin/karaoke', labelKey: 'admin.karaoke' },
+      { href: '/admin/treinamentos', labelKey: 'admin.trainings' },
+    ],
+  },
+  {
+    type: 'group',
+    id: 'financeiro',
     labelKey: 'admin.financeiro',
     icon: Wallet,
+    expandedPrefixes: ['/admin/financeiro', '/admin/escolas-parceiras'],
     children: [
       { href: '/admin/financeiro/geral', labelKey: 'admin.financeiroGeral' },
       { href: '/admin/financeiro/alunos', labelKey: 'admin.financeiroAlunos' },
       { href: '/admin/financeiro/professores', labelKey: 'admin.financeiroProfessores' },
+      { href: '/admin/financeiro/pagamentos', labelKey: 'admin.financeiroPagamentos' },
       { href: '/admin/financeiro/administracao', labelKey: 'admin.financeiroAdministracao' },
       { href: '/admin/financeiro/movimentacao', labelKey: 'admin.financeiroMovimentacao' },
       { href: '/admin/financeiro/saidas', labelKey: 'admin.financeiroSaidas' },
       { href: '/admin/financeiro/relatorios', labelKey: 'admin.financeiroRelatorios' },
       { href: '/admin/financeiro/nfse', labelKey: 'admin.financeiroNfse' },
       { href: '/admin/financeiro/cupons', labelKey: 'admin.financeiroCupons' },
+      { href: '/admin/escolas-parceiras', labelKey: 'admin.partnerSchools' },
     ],
   },
+  { href: '/admin/chat', labelKey: 'admin.chat', icon: MessageCircle },
+  { href: '/admin/bloco-de-notas', labelKey: 'admin.notesPad', icon: StickyNote },
+  { href: '/admin/minhas-financas', labelKey: 'admin.myFinances', icon: Wallet },
+  { href: '/admin/usuarios', labelKey: 'admin.users', icon: Users, superAdminOnly: true },
 ]
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
@@ -130,8 +237,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const [meLoaded, setMeLoaded] = useState(false)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  /** Toggle manual dos grupos (Gestão, Material, Financeiro); undefined = segue a rota atual */
+  const [groupOpen, setGroupOpen] = useState<Partial<Record<MenuGroupId, boolean>>>({})
 
-  // No mobile, começar com sidebar fechado
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setSidebarOpen(false)
@@ -142,7 +250,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => {
       controller.abort()
-    }, 5000) // 5s: se a API não responder, mostramos o menu mesmo assim
+    }, 5000)
 
     fetch('/api/admin/me', { credentials: 'include', signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
@@ -163,13 +271,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       })
   }, [])
 
-  // Redirecionar se não tiver acesso à página atual (delegar acessos)
   useEffect(() => {
     if (!meLoaded) return
     const pageKey =
       PAGE_KEY_BY_HREF[pathname ?? ''] ??
       (pathname?.startsWith('/admin/alunos/') ? 'alunos' : undefined) ??
-      (pathname?.startsWith('/admin/karaoke/') ? 'karaoke' : undefined)
+      (pathname?.startsWith('/admin/professores/') ? 'professores' : undefined) ??
+      (pathname?.startsWith('/admin/karaoke/') ? 'karaoke' : undefined) ??
+      (pathname?.startsWith('/admin/treinamentos/') ? 'treinamentos' : undefined)
     if (!pageKey) return
     if (isSuperAdmin) return
     if (pageKey === 'usuarios') {
@@ -182,11 +291,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
       }
       return
     }
-    // Páginas gerais: disponíveis para todos os usuários admin
-    if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') {
+    if (
+      pageKey === 'todos' ||
+      pageKey === 'bloco-notas' ||
+      pageKey === 'minhas-financas' ||
+      pageKey === 'karaoke' ||
+      pageKey === 'treinamentos'
+    ) {
       return
     }
-    // Escolas parceiras: permissão dedicada (com fallback para legado "alunos")
     if (
       pageKey === 'escolas-parceiras' &&
       (adminPages.includes('escolas-parceiras') || adminPages.includes('alunos'))
@@ -222,36 +335,62 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const menuItems = baseMenuItems.filter((item) => {
     if ('type' in item && item.type === 'group') {
       if (isSuperAdmin) return true
-      return hasAnyFinanceiroAccess(adminPages)
+      return hasAnyGroupAccess(item.id, adminPages)
     }
     const menuItem = item as MenuItem
     if (menuItem.superAdminOnly) return isSuperAdmin
     if (isSuperAdmin) return true
     const pageKey = PAGE_KEY_BY_HREF[menuItem.href]
     if (pageKey === 'dashboard' && adminPages.length === 0) return true
-    // Páginas gerais: disponíveis para todos os usuários admin
-    if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'karaoke') return true
-    // Escolas parceiras: permissão dedicada (com fallback para legado "alunos")
-    if (pageKey === 'escolas-parceiras') {
-      return adminPages.includes('escolas-parceiras') || adminPages.includes('alunos')
-    }
+    if (pageKey === 'todos' || pageKey === 'bloco-notas' || pageKey === 'minhas-financas') return true
     return pageKey ? adminPages.includes(pageKey) : false
   })
 
-  const isFinanceiroExpanded = pathname?.startsWith('/admin/financeiro')
-
-  // Fechar sidebar ao navegar apenas em mobile
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setSidebarOpen(false)
     }
   }, [pathname])
 
+  // Ao entrar em uma rota do grupo, abre o submenu; ao sair, limpa fechado manual
+  useEffect(() => {
+    for (const item of baseMenuItems) {
+      if (!('type' in item) || item.type !== 'group') continue
+      const group = item as MenuGroup
+      if (isGroupExpanded(group, pathname)) {
+        setGroupOpen((prev) =>
+          prev[group.id] === false ? prev : { ...prev, [group.id]: true }
+        )
+      } else {
+        setGroupOpen((prev) => {
+          if (prev[group.id] === false) {
+            const next = { ...prev }
+            delete next[group.id]
+            return next
+          }
+          return prev
+        })
+      }
+    }
+  }, [pathname])
+
+  const isGroupOpen = (group: MenuGroup): boolean => {
+    if (groupOpen[group.id] === false) return false
+    if (groupOpen[group.id] === true) return true
+    return isGroupExpanded(group, pathname)
+  }
+
+  const toggleGroup = (group: MenuGroup) => {
+    setGroupOpen((prev) => ({
+      ...prev,
+      [group.id]: !isGroupOpen(group),
+    }))
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <AdminHeader onMenuClick={() => setSidebarOpen((v) => !v)} />
 
-      {/* Overlay em mobile quando sidebar aberta */}
       {sidebarOpen && (
         <button
           type="button"
@@ -261,7 +400,6 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         />
       )}
 
-      {/* Botão seta laranja piscando para abrir sidebar quando fechado */}
       {!sidebarOpen && (
         <button
           type="button"
@@ -295,102 +433,106 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               </button>
             </div>
             <nav className="flex-1 p-4 space-y-2">
-            {!meLoaded ? (
-              <div className="px-4 py-3 text-sm text-gray-500 animate-pulse">
-                Carregando menu...
-              </div>
-            ) : (
-              menuItems.map((item) => {
-                if ('type' in item && item.type === 'group') {
-                  const group = item as MenuGroup
-                  const Icon = group.icon
-                  const firstAccessibleHref =
-                    group.children.find((c) => {
-                      const pk = PAGE_KEY_BY_HREF[c.href]
-                      return pk && (isSuperAdmin || hasFinanceiroAccess(adminPages, pk))
-                    })?.href ?? group.children[0].href
-                  return (
-                    <div key={group.labelKey} className="space-y-0.5">
-                      <Link
-                        href={firstAccessibleHref}
-                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                          isFinanceiroExpanded
-                            ? 'bg-brand-orange/10 text-brand-orange font-semibold'
-                            : 'text-gray-700 hover:bg-gray-100'
-                        }`}
-                      >
-                        <Icon className="w-5 h-5 shrink-0" />
-                        <span>{t(group.labelKey)}</span>
-                        {isFinanceiroExpanded ? (
-                          <ChevronDown className="w-4 h-4 ml-auto" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 ml-auto" />
+              {!meLoaded ? (
+                <div className="px-4 py-3 text-sm text-gray-500 animate-pulse">
+                  Carregando menu...
+                </div>
+              ) : (
+                menuItems.map((item) => {
+                  if ('type' in item && item.type === 'group') {
+                    const group = item as MenuGroup
+                    const Icon = group.icon
+                    const open = isGroupOpen(group)
+                    const onGroupRoute = isGroupExpanded(group, pathname)
+                    return (
+                      <div key={group.labelKey} className="space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(group)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
+                            open || onGroupRoute
+                              ? 'bg-brand-orange/10 text-brand-orange font-semibold'
+                              : 'text-gray-700 hover:bg-gray-100'
+                          }`}
+                          aria-expanded={open}
+                        >
+                          <Icon className="w-5 h-5 shrink-0" />
+                          <span>{t(group.labelKey)}</span>
+                          {open ? (
+                            <ChevronDown className="w-4 h-4 ml-auto" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 ml-auto" />
+                          )}
+                        </button>
+                        {open && (
+                          <div className="pl-4 space-y-0.5 border-l-2 border-gray-200 ml-4">
+                            {group.children.map((child) => {
+                              const pageKey = PAGE_KEY_BY_HREF[child.href]
+                              const canAccess = canAccessGroupChild(
+                                group.id,
+                                pageKey,
+                                adminPages,
+                                isSuperAdmin
+                              )
+                              if (!canAccess) return null
+                              const isActive = isChildActive(child.href, pathname)
+                              return (
+                                <Link
+                                  key={child.href}
+                                  href={child.href}
+                                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                    isActive
+                                      ? 'bg-brand-orange text-white font-medium'
+                                      : 'text-gray-600 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  <span>{t(child.labelKey)}</span>
+                                </Link>
+                              )
+                            })}
+                          </div>
                         )}
-                      </Link>
-                      {isFinanceiroExpanded && (
-                        <div className="pl-4 space-y-0.5 border-l-2 border-gray-200 ml-4">
-                          {group.children.map((child) => {
-                            const pageKey = PAGE_KEY_BY_HREF[child.href]
-                            const canAccess = isSuperAdmin || (pageKey && hasFinanceiroAccess(adminPages, pageKey))
-                            if (!canAccess) return null
-                            const isActive = pathname === child.href
-                            return (
-                              <Link
-                                key={child.href}
-                                href={child.href}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                                  isActive
-                                    ? 'bg-brand-orange text-white font-medium'
-                                    : 'text-gray-600 hover:bg-gray-100'
-                                }`}
-                              >
-                                <span>{t(child.labelKey)}</span>
-                              </Link>
-                            )
-                          })}
-                        </div>
+                      </div>
+                    )
+                  }
+                  const menuItem = item as MenuItem
+                  const Icon = menuItem.icon
+                  const isActive =
+                    pathname === menuItem.href ||
+                    (menuItem.href === '/admin/alunos' && (pathname?.startsWith('/admin/alunos/') ?? false))
+                  const isChat = menuItem.href === '/admin/chat'
+                  const showChatDot = isChat && unreadChatCount > 0
+                  return (
+                    <Link
+                      key={menuItem.href}
+                      href={menuItem.href}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                        isActive
+                          ? 'bg-brand-orange text-white font-semibold'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 shrink-0" />
+                      <span>{t(menuItem.labelKey)}</span>
+                      {showChatDot && (
+                        <span
+                          className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
+                          title={`${unreadChatCount} mensagem(ns) não lida(s)`}
+                          aria-label={`${unreadChatCount} não lidas`}
+                        />
                       )}
-                    </div>
+                    </Link>
                   )
-                }
-                const menuItem = item as MenuItem
-                const Icon = menuItem.icon
-                const isActive =
-                  pathname === menuItem.href ||
-                  (menuItem.href === '/admin/alunos' && (pathname?.startsWith('/admin/alunos/') ?? false))
-                const isChat = menuItem.href === '/admin/chat'
-                const showChatDot = isChat && unreadChatCount > 0
-                return (
-                  <Link
-                    key={menuItem.href}
-                    href={menuItem.href}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      isActive
-                        ? 'bg-brand-orange text-white font-semibold'
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5 shrink-0" />
-                    <span>{t(menuItem.labelKey)}</span>
-                    {showChatDot && (
-                      <span
-                        className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
-                        title={`${unreadChatCount} mensagem(ns) não lida(s)`}
-                        aria-label={`${unreadChatCount} não lidas`}
-                      />
-                    )}
-                  </Link>
-                )
-              })
-            )}
+                })
+              )}
             </nav>
           </div>
         </aside>
 
-        <main className={`min-w-0 flex-1 p-3 sm:p-4 md:p-6 overflow-x-hidden transition-[margin] duration-200 ${sidebarOpen ? 'lg:ml-64' : ''}`}>
-          <div className="mx-auto w-full max-w-[1600px] min-w-0">
-            {children}
-          </div>
+        <main
+          className={`min-w-0 flex-1 p-3 sm:p-4 md:p-6 overflow-x-hidden transition-[margin] duration-200 ${sidebarOpen ? 'lg:ml-64' : ''}`}
+        >
+          <div className="mx-auto w-full max-w-[1600px] min-w-0">{children}</div>
         </main>
       </div>
     </div>

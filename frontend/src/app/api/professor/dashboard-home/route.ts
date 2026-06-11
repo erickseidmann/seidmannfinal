@@ -12,15 +12,8 @@ import {
 } from '@/lib/professor-home-feed'
 import { findTeacherAlertsForProfessorWidgets } from '@/lib/prisma-teacher-alert-enrollment-column'
 import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert'
+import { PROFESSOR_SYSTEM_ALERT_TYPES } from '@/lib/teacher-alert-kinds'
 import { requireTeacher } from '@/lib/auth'
-
-const TIPOS_NOTIFICACAO = [
-  'PAYMENT_DONE',
-  'NEW_ANNOUNCEMENT',
-  'NEW_STUDENT',
-  'PROOF_RESEND_NEEDED',
-  'STUDENT_INACTIVE',
-] as const
 
 function studentLabel(
   enr: { nome: string; tipoAula: string | null; nomeGrupo: string | null }
@@ -50,11 +43,13 @@ export async function GET(request: NextRequest) {
     const now = new Date()
     const horizon = new Date(now)
     horizon.setDate(horizon.getDate() + 14)
+    const lookback = new Date(now)
+    lookback.setHours(lookback.getHours() - 3)
 
     const lessons = await prisma.lesson.findMany({
       where: {
         teacherId: teacher.id,
-        startAt: { gte: now, lte: horizon },
+        startAt: { gte: lookback, lte: horizon },
         status: { in: ['CONFIRMED', 'REPOSICAO'] },
       },
       include: {
@@ -99,7 +94,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const upcomingLessons = lessons.map((l) => {
+    const upcomingLessons = lessons
+      .filter((l) => l.startAt >= now)
+      .map((l) => {
       const enr = l.enrollment
       const prog = lastProgress.get(l.enrollmentId)
       return {
@@ -112,6 +109,22 @@ export async function GET(request: NextRequest) {
         lastPage: prog?.lastPage ?? null,
       }
     })
+
+    const joinableRow = lessons.find((l) => {
+      if (l.status !== 'CONFIRMED') return false
+      const lessonStart = l.startAt.getTime()
+      const lessonEnd = lessonStart + (l.durationMinutes ?? 60) * 60 * 1000
+      const ts = now.getTime()
+      return ts >= lessonStart - 15 * 60 * 1000 && ts <= lessonEnd + 15 * 60 * 1000
+    })
+    const joinableLesson = joinableRow
+      ? {
+          id: joinableRow.id,
+          startAt: joinableRow.startAt.toISOString(),
+          durationMinutes: joinableRow.durationMinutes,
+          studentLabel: studentLabel(joinableRow.enrollment),
+        }
+      : null
 
     let alerts: {
       id: string
@@ -129,7 +142,7 @@ export async function GET(request: NextRequest) {
         {
           teacherId: teacher.id,
           isActive: true,
-          type: { in: [...TIPOS_NOTIFICACAO] },
+          type: { in: [...PROFESSOR_SYSTEM_ALERT_TYPES] },
           criadoEm: { gte: feedCutoff },
           OR: [{ readAt: null }, { readAt: { gte: readStillVisibleSince } }],
         },
@@ -173,7 +186,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      data: { upcomingLessons, alerts, announcements },
+      data: { upcomingLessons, joinableLesson, alerts, announcements },
     })
   } catch (error) {
     console.error('[api/professor/dashboard-home GET]', error)

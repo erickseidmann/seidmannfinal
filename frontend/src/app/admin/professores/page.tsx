@@ -8,17 +8,24 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table from '@/components/admin/Table'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Upload, FileSpreadsheet, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus } from 'lucide-react'
+import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus, UserX, ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import StatCard from '@/components/admin/StatCard'
 import { validateMeetingLink } from '@/lib/meeting-link'
+import {
+  TEACHER_CEFR_LEVEL_OPTIONS,
+  formatTeacherNiveisLabel,
+} from '@/lib/teacher-teaching-levels'
 
 const IDIOMAS_OPCOES = [
   { value: 'INGLES', label: 'Inglês' },
@@ -48,9 +55,12 @@ interface Teacher {
   alerts?: { id: string; message: string; level: string | null }[]
   idiomasFala?: string[] | null
   idiomasEnsina?: string[] | null
+  niveisEnsina?: string[] | null
   linkSala?: string | null
   criadoEm: string
   atualizadoEm: string
+  createdByName?: string | null
+  updatedByName?: string | null
   horariosPreenchido?: {
     disponivelMinutos: number
     comAulasMinutos: number
@@ -59,6 +69,36 @@ interface Teacher {
 }
 
 const TEACHER_COLUMNS_STORAGE_KEY = 'seidmann_admin_teacher_columns'
+
+function LinkSalaCell({
+  link,
+  onCopy,
+}: {
+  link: string | null | undefined
+  onCopy: () => void
+}) {
+  if (!link?.trim()) return <span className="text-gray-400">—</span>
+  const url = link.trim()
+  return (
+    <span className="inline-flex items-center gap-1 max-w-[200px]">
+      <span className="truncate text-sm text-gray-700" title={url}>
+        {url}
+      </span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          navigator.clipboard.writeText(url).then(() => onCopy())
+        }}
+        className="p-0.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 flex-shrink-0"
+        title="Copiar link"
+        aria-label="Copiar link"
+      >
+        <Copy className="w-4 h-4" />
+      </button>
+    </span>
+  )
+}
 
 function AvailabilityLegendSwatch({ variant }: { variant: 'available' | 'unavailable' | 'mixed' }) {
   return (
@@ -124,6 +164,7 @@ export default function AdminProfessoresPage() {
     senha: '',
     idiomasFala: [] as string[],
     idiomasEnsina: [] as string[],
+    niveisEnsina: [] as string[],
   })
   const [criarAcessoTeacher, setCriarAcessoTeacher] = useState<Teacher | null>(null)
   const [criarAcessoSenha, setCriarAcessoSenha] = useState('')
@@ -132,14 +173,6 @@ export default function AdminProfessoresPage() {
   const [alterarSenhaNova, setAlterarSenhaNova] = useState('')
   const [alterarSenhaConfirmar, setAlterarSenhaConfirmar] = useState('')
   const [alterarSenhaLoading, setAlterarSenhaLoading] = useState(false)
-  const [importModalOpen, setImportModalOpen] = useState(false)
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importLoading, setImportLoading] = useState(false)
-  const [importResult, setImportResult] = useState<{
-    created: number
-    teachers: { id: string; nome: string; email: string }[]
-    errors: { row: number; message: string }[]
-  } | null>(null)
   const [availabilityModalTeacher, setAvailabilityModalTeacher] = useState<Teacher | null>(null)
   const [availabilitySlots, setAvailabilitySlots] = useState<{ id: string; dayOfWeek: number; startMinutes: number; endMinutes: number }[]>([])
   const [availabilityLoading, setAvailabilityLoading] = useState(false)
@@ -173,10 +206,18 @@ export default function AdminProfessoresPage() {
     return today.toISOString().split('T')[0]
   })
   const [transferring, setTransferring] = useState(false)
-  const [searchName, setSearchName] = useState('')
-  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(false)
+  const [filterStatus, setFilterStatus] = useState<string>('ACTIVE')
   const [filterNota, setFilterNota] = useState<string>('')
-  const [stats, setStats] = useState<{ nota1: number; nota2: number; nota45: number; teacherRequests: number } | null>(null)
+  const [stats, setStats] = useState<{
+    nota1: number
+    nota2: number
+    nota45: number
+    inativos: number
+    teacherRequests: number
+  } | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [listModal, setListModal] = useState<{ type: 'nota1' | 'nota2' | 'nota45'; title: string } | null>(null)
   const [listTeachers, setListTeachers] = useState<Teacher[]>([])
@@ -277,11 +318,11 @@ export default function AdminProfessoresPage() {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      // Se useCurrentFilters for true ou não especificado, usar filtros atuais
-      const search = opts?.useCurrentFilters === false ? opts?.search : (opts?.search ?? searchName)
+      const search =
+        opts?.useCurrentFilters === false ? opts?.search : (opts?.search ?? searchQuery)
       const nota = opts?.useCurrentFilters === false ? opts?.nota : (opts?.nota ?? filterNota)
       const status = opts?.useCurrentFilters === false ? opts?.status : (opts?.status ?? filterStatus)
-      
+
       if (search?.trim()) params.set('search', search.trim())
       if (nota) params.set('nota', nota)
       if (status) params.set('status', status)
@@ -314,7 +355,7 @@ export default function AdminProfessoresPage() {
   useEffect(() => {
     fetchTeachers({ useCurrentFilters: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsPerPage, filterStatus, filterNota])
+  }, [itemsPerPage, filterStatus, filterNota, searchQuery])
 
   const fetchStats = async () => {
     setStatsLoading(true)
@@ -362,6 +403,7 @@ export default function AdminProfessoresPage() {
       senha: '',
       idiomasFala: [],
       idiomasEnsina: [],
+      niveisEnsina: [],
     })
     setIsModalOpen(true)
   }
@@ -419,6 +461,7 @@ export default function AdminProfessoresPage() {
       senha: '',
       idiomasFala: Array.isArray(teacher.idiomasFala) ? [...teacher.idiomasFala] : [],
       idiomasEnsina: Array.isArray(teacher.idiomasEnsina) ? [...teacher.idiomasEnsina] : [],
+      niveisEnsina: Array.isArray(teacher.niveisEnsina) ? [...teacher.niveisEnsina] : [],
     })
     setIsModalOpen(true)
   }
@@ -534,7 +577,10 @@ export default function AdminProfessoresPage() {
   const handleToggle = (teacher: Teacher) => {
     setConfirmModal({
       title: teacher.status === 'ACTIVE' ? 'Desativar professor' : 'Ativar professor',
-      message: `Deseja ${teacher.status === 'ACTIVE' ? 'desativar' : 'ativar'} o professor ${teacher.nome}?`,
+      message:
+        teacher.status === 'ACTIVE'
+          ? `Deseja desativar o professor ${teacher.nome}? Ele sairá de todas as listas operacionais, perderá acesso à plataforma e não receberá pagamentos a partir do mês seguinte à inativação.`
+          : `Deseja ativar o professor ${teacher.nome}?`,
       onConfirm: async () => {
         try {
           const response = await fetch(`/api/admin/teachers/${teacher.id}/toggle`, {
@@ -544,6 +590,7 @@ export default function AdminProfessoresPage() {
           const json = await response.json()
           if (!response.ok || !json.ok) throw new Error(json.message || 'Erro ao alterar status')
           fetchTeachers({ useCurrentFilters: true })
+          fetchStats()
           setToast({ message: 'Status alterado com sucesso!', type: 'success' })
         } catch (err) {
           setToast({ message: err instanceof Error ? err.message : 'Erro ao alterar status', type: 'error' })
@@ -665,72 +712,6 @@ export default function AdminProfessoresPage() {
     if (hasError) return 'text-red-500 hover:text-red-600'
     if (hasWarn) return 'text-amber-500 hover:text-amber-600'
     return 'text-blue-500 hover:text-blue-600'
-  }
-
-  const handleDownloadTemplate = async () => {
-    try {
-      const res = await fetch('/api/admin/teachers/template', { credentials: 'include' })
-      if (!res.ok) {
-        setToast({ message: 'Erro ao baixar modelo', type: 'error' })
-        return
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'professores-modelo.csv'
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      setToast({ message: 'Erro ao baixar modelo', type: 'error' })
-    }
-  }
-
-  const handleImportSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!importFile) {
-      setToast({ message: 'Selecione um arquivo CSV', type: 'error' })
-      return
-    }
-    setImportLoading(true)
-    setImportResult(null)
-    try {
-      const form = new FormData()
-      form.append('file', importFile)
-      const res = await fetch('/api/admin/teachers/import', {
-        method: 'POST',
-        credentials: 'include',
-        body: form,
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setToast({ message: json.message || 'Erro ao importar', type: 'error' })
-        return
-      }
-      if (json.ok && json.data) {
-        setImportResult(json.data)
-        if (json.data.created > 0) {
-          fetchTeachers({ useCurrentFilters: true })
-          setToast({
-            message: `${json.data.created} professor(es) adicionado(s) com sucesso!`,
-            type: 'success',
-          })
-        }
-      }
-    } catch (err) {
-      setToast({
-        message: err instanceof Error ? err.message : 'Erro ao importar',
-        type: 'error',
-      })
-    } finally {
-      setImportLoading(false)
-    }
-  }
-
-  const closeImportModal = () => {
-    setImportModalOpen(false)
-    setImportFile(null)
-    setImportResult(null)
   }
 
   const DIAS_SEMANA_AVAIL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -1043,19 +1024,28 @@ export default function AdminProfessoresPage() {
     {
       key: 'nome',
       label: 'Nome',
+      minWidthClass: 'min-w-[11rem] sm:min-w-[13rem]',
       render: (t: Teacher) => (
-        <div className="flex items-center gap-2">
-          {t.alerts && t.alerts.length > 0 && (
-            <button
-              onClick={() => setAlertsModalTeacher(t)}
-              className={`shrink-0 ${getAlertSymbolColor(t.alerts)}`}
-              title="Ver notificações"
-              type="button"
-            >
-              <AlertCircle className="w-4 h-4 fill-current" />
-            </button>
-          )}
-          <span>{t.nome}</span>
+        <div className="min-w-max">
+          <div className="flex items-center gap-2">
+            {t.alerts && t.alerts.length > 0 && (
+              <button
+                onClick={() => setAlertsModalTeacher(t)}
+                className={`shrink-0 ${getAlertSymbolColor(t.alerts)}`}
+                title="Ver alertas da gestão"
+                type="button"
+              >
+                <AlertCircle className="w-4 h-4 fill-current" />
+              </button>
+            )}
+            <span>{t.nome}</span>
+          </div>
+          <RecordAuditLabel
+            criadoEm={t.criadoEm}
+            atualizadoEm={t.atualizadoEm}
+            createdByName={t.createdByName}
+            updatedByName={t.updatedByName}
+          />
         </div>
       ),
     },
@@ -1069,6 +1059,17 @@ export default function AdminProfessoresPage() {
       },
     },
     {
+      key: 'nivel',
+      label: 'Nível',
+      render: (t: Teacher) => {
+        const label = formatTeacherNiveisLabel(t.niveisEnsina)
+        if (label === '—') {
+          return <span className="text-gray-400">não definido</span>
+        }
+        return <span className="text-sm text-gray-800">{label}</span>
+      },
+    },
+    {
       key: 'email',
       label: 'Email',
     },
@@ -1076,6 +1077,16 @@ export default function AdminProfessoresPage() {
       key: 'whatsapp',
       label: 'WhatsApp',
       render: (t: Teacher) => t.whatsapp || '-',
+    },
+    {
+      key: 'linkSala',
+      label: 'Link da sala',
+      render: (t: Teacher) => (
+        <LinkSalaCell
+          link={t.linkSala}
+          onCopy={() => setToast({ message: 'Link copiado!', type: 'success' })}
+        />
+      ),
     },
     {
       key: 'nota',
@@ -1222,58 +1233,9 @@ export default function AdminProfessoresPage() {
   return (
     <AdminLayout>
       <div>
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Professores</h1>
-            <p className="text-sm text-gray-600">Gerencie professores do instituto</p>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button
-              onClick={handleSendAccessToAll}
-              variant="outline"
-              size="md"
-              className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
-              title="Enviar e-mail de acesso (login e senha padrão) para professores sem conta"
-              disabled={sendAccessLoading}
-            >
-              {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-              Liberar acesso para todos professores
-            </Button>
-            <Button
-              variant="outline"
-              size="md"
-              className="flex items-center gap-2"
-              onClick={() => setFreeSlotsModalOpen(true)}
-            >
-              <Clock className="w-4 h-4" />
-              Pesquisar horários livres
-            </Button>
-            <Button
-              variant="outline"
-              size="md"
-              className="flex items-center gap-2"
-              onClick={() => {
-                setRequestTeacherForm({ horarios: '', idiomas: [] })
-                setRequestTeacherModalOpen(true)
-              }}
-            >
-              <Users className="w-4 h-4" />
-              Solicitar novo teacher
-            </Button>
-            <Button
-              onClick={() => setImportModalOpen(true)}
-              variant="outline"
-              size="md"
-              className="flex items-center gap-2"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              Adicionar por lista
-            </Button>
-            <Button onClick={handleCreate} variant="primary" size="md" className="flex items-center gap-2">
-              <Plus className="w-4 h-4" />
-              Novo Professor
-            </Button>
-          </div>
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Professores</h1>
+          <p className="text-sm text-gray-600">Gerencie professores do instituto</p>
         </div>
 
         {/* Cubos de métricas (estilo financeiro) */}
@@ -1345,30 +1307,68 @@ export default function AdminProfessoresPage() {
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
-          <div className="sm:col-span-2 lg:col-span-1">
-            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Pesquisar por nome</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={searchName}
-                onChange={(e) => setSearchName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && fetchTeachers({ useCurrentFilters: true })}
-                placeholder="Nome do professor"
-                className="input flex-1 text-sm"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="md"
-                onClick={() => fetchTeachers({ useCurrentFilters: true })}
-                className="flex items-center gap-1 shrink-0"
-              >
-                <Search className="w-4 h-4" />
-                <span className="hidden sm:inline">Pesquisar</span>
-              </Button>
-            </div>
-          </div>
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowBuscarFiltros((v) => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+          >
+            <Search className="w-5 h-5 text-brand-orange shrink-0" />
+            <span>Buscar e filtros</span>
+            {showBuscarFiltros ? (
+              <ChevronDown className="w-5 h-5 ml-auto" />
+            ) : (
+              <ChevronRight className="w-5 h-5 ml-auto" />
+            )}
+          </button>
+          {showBuscarFiltros && (
+            <div className="px-5 pb-5 pt-0 border-t border-gray-200">
+              <div className="pt-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Buscar por nome, e-mail ou WhatsApp
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        setSearchQuery(searchInput.trim())
+                      }
+                    }}
+                    className="input flex-1"
+                    placeholder="Nome, e-mail ou WhatsApp (deixe vazio para ver todos)"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    onClick={() => setSearchQuery(searchInput.trim())}
+                    className="flex items-center gap-2 shrink-0"
+                  >
+                    <Search className="w-4 h-4" />
+                    <span className="hidden sm:inline">Buscar</span>
+                  </Button>
+                  {searchQuery && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="md"
+                      onClick={() => {
+                        setSearchInput('')
+                        setSearchQuery('')
+                      }}
+                      className="shrink-0"
+                      title="Limpar busca"
+                    >
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4">
           <div>
             <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Status</label>
             <select
@@ -1376,11 +1376,10 @@ export default function AdminProfessoresPage() {
               onChange={(e) => setFilterStatus(e.target.value)}
               className="input w-full text-sm"
             >
-              <option value="">Todos</option>
               <option value="ACTIVE">Ativo</option>
-              <option value="INACTIVE">Inativo</option>
               <option value="PENDING">Pendente</option>
               <option value="BLOCKED">Bloqueado</option>
+              <option value="ALL">Todos (exc. inativos)</option>
             </select>
           </div>
           <div>
@@ -1408,6 +1407,65 @@ export default function AdminProfessoresPage() {
               <option value={500}>500</option>
             </select>
           </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="mb-4 flex gap-2 flex-wrap">
+          <Button
+            onClick={handleSendAccessToAll}
+            variant="outline"
+            size="md"
+            className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
+            title="Enviar e-mail de acesso (login e senha padrão) para professores sem conta"
+            disabled={sendAccessLoading}
+          >
+            {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+            (liberar acessos)
+          </Button>
+          <Link
+            href="/admin/professores/inativos"
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border-2 font-medium text-sm transition-colors shrink-0 ${
+              (stats?.inativos ?? 0) > 0
+                ? 'border-slate-500 bg-slate-100 text-slate-900 hover:bg-slate-200 shadow-sm'
+                : 'border-brand-orange/40 bg-white text-gray-800 hover:bg-orange-50'
+            }`}
+            title="Ver professores inativos (não aparecem nesta lista)"
+          >
+            <UserX className="w-4 h-4 shrink-0" />
+            <span className="whitespace-nowrap">Professores inativos</span>
+            {(stats?.inativos ?? 0) > 0 && (
+              <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs font-bold text-white">
+                {stats.inativos}
+              </span>
+            )}
+          </Link>
+          <Button
+            variant="outline"
+            size="md"
+            className="flex items-center gap-2"
+            onClick={() => setFreeSlotsModalOpen(true)}
+          >
+            <Clock className="w-4 h-4" />
+            Pesquisar horários livres
+          </Button>
+          <Button
+            variant="outline"
+            size="md"
+            className="flex items-center gap-2"
+            onClick={() => {
+              setRequestTeacherForm({ horarios: '', idiomas: [] })
+              setRequestTeacherModalOpen(true)
+            }}
+          >
+            <Users className="w-4 h-4" />
+            Solicitar novo teacher
+          </Button>
+          <Button onClick={handleCreate} variant="primary" size="md" className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Novo Professor
+          </Button>
         </div>
 
         {error && (
@@ -1484,7 +1542,7 @@ export default function AdminProfessoresPage() {
         <Modal
           isOpen={!!alertsModalTeacher}
           onClose={() => setAlertsModalTeacher(null)}
-          title={`Notificações – ${alertsModalTeacher?.nome ?? ''}`}
+          title={`Alertas da gestão – ${alertsModalTeacher?.nome ?? ''}`}
           size="md"
           footer={
             <>
@@ -1524,7 +1582,7 @@ export default function AdminProfessoresPage() {
                   </div>
                 ))
               ) : (
-                <p className="text-gray-500 text-sm">Nenhuma notificação.</p>
+                <p className="text-gray-500 text-sm">Nenhum alerta criado pela gestão.</p>
               )}
             </div>
           )}
@@ -1893,92 +1951,6 @@ export default function AdminProfessoresPage() {
           )}
         </Modal>
 
-        {/* Modal Importar por lista */}
-        <Modal
-          isOpen={importModalOpen}
-          onClose={closeImportModal}
-          title="Adicionar professores por lista"
-          size="md"
-          footer={
-            <>
-              <Button variant="outline" onClick={closeImportModal}>
-                Fechar
-              </Button>
-              {importFile && (
-                <Button
-                  variant="primary"
-                  onClick={() => void handleImportSubmit({ preventDefault: () => {} } as React.FormEvent)}
-                  disabled={importLoading}
-                  className="flex items-center gap-2"
-                >
-                  {importLoading ? (
-                    'Importando...'
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Importar
-                    </>
-                  )}
-                </Button>
-              )}
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Baixe o modelo CSV com as colunas necessárias, preencha com os dados dos professores e faça o upload.
-            </p>
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadTemplate}
-                className="flex items-center gap-2"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Baixar planilha modelo
-              </Button>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Arquivo CSV
-              </label>
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  setImportFile(f || null)
-                  setImportResult(null)
-                }}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
-              />
-            </div>
-            {importResult && (
-              <div className="space-y-2 pt-2 border-t">
-                <p className="text-sm font-medium text-green-700">
-                  {importResult.created} professor(es) adicionado(s).
-                </p>
-                {importResult.errors.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-amber-700 mb-1">
-                      {importResult.errors.length} linha(s) com erro:
-                    </p>
-                    <ul className="text-xs text-gray-600 max-h-32 overflow-y-auto space-y-0.5">
-                      {importResult.errors.map((err, i) => (
-                        <li key={i}>
-                          Linha {err.row}: {err.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Modal>
-
         {/* Toast */}
         {toast && (
           <Toast
@@ -2201,6 +2173,32 @@ export default function AdminProfessoresPage() {
                 ))}
               </div>
               <p className="text-xs text-gray-500 mt-1">Idiomas em que o professor dá aula (inglês, espanhol, etc.).</p>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Níveis que o professor ensina
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {TEACHER_CEFR_LEVEL_OPTIONS.map((opt) => (
+                  <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.niveisEnsina.includes(opt.value)}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...formData.niveisEnsina, opt.value]
+                          : formData.niveisEnsina.filter((x) => x !== opt.value)
+                        setFormData({ ...formData, niveisEnsina: next })
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                O professor só poderá dar aula a alunos nesses níveis (conforme o livro do aluno).
+              </p>
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -2475,7 +2473,7 @@ export default function AdminProfessoresPage() {
                   Carregando...
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-4 sm:-mx-2 rounded-xl border border-gray-200 bg-white">
+                <TableScrollArea className="-mx-4 sm:-mx-2 rounded-xl border border-gray-200 bg-white">
                   <div className="inline-block min-w-full">
                     <table className="w-full border-collapse text-xs sm:text-sm min-w-[800px] sm:min-w-[1000px] lg:min-w-[1400px]">
                       <thead>
@@ -2548,7 +2546,7 @@ export default function AdminProfessoresPage() {
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </TableScrollArea>
               )}
             </div>
           )}
@@ -2689,7 +2687,7 @@ export default function AdminProfessoresPage() {
                   Carregando...
                 </div>
               ) : alunosData?.alunos?.length ? (
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -2750,7 +2748,7 @@ export default function AdminProfessoresPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               ) : (
                 <p className="text-gray-500 text-sm">Nenhum aluno com aulas agendadas para este professor.</p>
               )}

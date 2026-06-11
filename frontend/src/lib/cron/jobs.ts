@@ -742,3 +742,12 @@ export async function runSyncSantanderExtrato(): Promise<SyncStatementPaymentsRe
     end,
   })
 }
+
+export async function runPurgeLessonAttendance(): Promise<{
+  ok: boolean
+  deletedSessions: number
+  affectedLessons: number
+}> {
+  const { purgeExpiredLessonAttendance } = await import('@/lib/lesson-attendance-retention')
+  return purgeExpiredLessonAttendance()
+}

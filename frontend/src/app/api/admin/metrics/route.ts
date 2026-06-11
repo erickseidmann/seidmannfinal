@@ -11,6 +11,7 @@ import { requireAdmin } from '@/lib/auth'
 import { findLessonsPendingRecord } from '@/lib/lesson-pending-record'
 import { ymdInTZ } from '@/lib/datetime'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { syncTeacherAttendanceAbsenceReports } from '@/lib/teacher-attendance-absence-alerts'
 
 export async function GET(request: NextRequest) {
   try {
@@ -281,6 +282,16 @@ export async function GET(request: NextRequest) {
       console.warn('[api/admin/metrics] Erro ao contar tarefas do To do list:', err)
     }
 
+    let teacherAbsenceAlertCount = 0
+    try {
+      await syncTeacherAttendanceAbsenceReports()
+      teacherAbsenceAlertCount = await prisma.teacherAbsenceReport.count({
+        where: { status: { in: ['OPEN', 'VERIFYING'] } },
+      })
+    } catch (err) {
+      console.warn('[api/admin/metrics] Erro ao contar alertas de professor ausente:', err)
+    }
+
     // Calcular faltas (últimos 7 dias e 30 dias)
     // Verificar se o model existe antes de usar
     let studentsAbsencesWeek = 0
@@ -361,6 +372,7 @@ export async function GET(request: NextRequest) {
         studentsWith3ConsecutiveAbsences,
         todoOpenCount,
         todoUrgentOpenCount,
+        teacherAbsenceAlertCount,
         absences: {
           studentsWeek: studentsAbsencesWeek,
           studentsMonth: studentsAbsencesMonth,

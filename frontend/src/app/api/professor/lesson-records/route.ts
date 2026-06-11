@@ -10,6 +10,15 @@ import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
 import { toDateKeyInTZ } from '@/lib/datetime'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import { assertTeacherCanCreateLessonRecord } from '@/lib/teacher-lesson-record-deadline'
+import { assertLessonRecordBookProgression } from '@/lib/lesson-record-book-progression'
+import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
+import { assertTeacherAttendedLessonForRecord } from '@/lib/lesson-attendance-summary'
+import {
+  assertLessonRecordDiffersFromPrevious,
+  lessonRecordCompareFromApiBody,
+} from '@/lib/lesson-record-diff-from-previous'
+import { getPreviousLessonRecordCompareInput } from '@/lib/lesson-record-previous'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -88,7 +97,7 @@ export async function POST(request: NextRequest) {
 
     const teacher = await prisma.teacher.findFirst({
       where: { userId: auth.session.userId },
-      select: { id: true },
+      select: { id: true, nome: true, niveisEnsina: true },
     })
     if (!teacher) {
       return NextResponse.json(
@@ -127,6 +136,7 @@ export async function POST(request: NextRequest) {
       gradeSpeaking,
       gradeListening,
       gradeUnderstanding,
+      confirmBookAdvance,
     } = body
 
     if (!lessonId) {
@@ -175,6 +185,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const attendanceCheck = await assertTeacherAttendedLessonForRecord(
+      lesson.id,
+      lesson.startAt,
+      lesson.durationMinutes ?? 60
+    )
+    if (!attendanceCheck.ok) {
+      return NextResponse.json({ ok: false, message: attendanceCheck.message }, { status: 400 })
+    }
+
     // Período já pago: bloquear só se a aula cair DENTRO de um período marcado como pago,
     // e o período for definido explicitamente por datas (periodoInicio/periodoTermino).
     // Não usamos mais o fallback de "mês inteiro" — o fechamento é sempre por dias.
@@ -196,49 +215,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Só permitir registro no dia atual (São Paulo) e a partir do horário de início da aula
-    const BRAZIL_TZ = 'America/Sao_Paulo'
-    const getPartsInTZ = (date: Date) => {
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: BRAZIL_TZ,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-      })
-      const parts = formatter.formatToParts(date)
-      const get = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10)
-      return {
-        year: get('year'),
-        month: get('month'),
-        day: get('day'),
-        hour: get('hour'),
-        minute: get('minute'),
-        second: get('second'),
-      }
-    }
-    const now = new Date()
-    const nowParts = getPartsInTZ(now)
-    const lessonParts = getPartsInTZ(lessonStart)
-    const lessonDateKey = `${lessonParts.year}-${String(lessonParts.month).padStart(2, '0')}-${String(lessonParts.day).padStart(2, '0')}`
-    const nowDateKey = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`
-    const lessonMinutes = lessonParts.hour * 60 + lessonParts.minute
-    const nowMinutes = nowParts.hour * 60 + nowParts.minute
-    if (lessonDateKey > nowDateKey) {
-      return NextResponse.json(
-        { ok: false, message: 'Não é possível realizar o registro de aulas futuras.' },
-        { status: 400 }
-      )
-    }
-    // No mesmo dia: só permitir a partir de 1 minuto após o horário de início (ex.: aula 17:00 → registrar a partir de 17:01)
-    if (lessonDateKey === nowDateKey && nowMinutes <= lessonMinutes) {
-      return NextResponse.json(
-        { ok: false, message: 'Não é possível realizar o registro de aulas futuras.' },
-        { status: 400 }
-      )
+    const approvedUnlock = await prisma.lessonRecordUnlockRequest.findFirst({
+      where: { lessonId: lesson.id, teacherId: teacher.id, status: 'APPROVED' },
+      orderBy: { criadoEm: 'desc' },
+      select: { id: true },
+    })
+
+    const timingCheck = assertTeacherCanCreateLessonRecord(lessonStart, new Date(), {
+      unlockApproved: Boolean(approvedUnlock),
+    })
+    if (!timingCheck.ok) {
+      return NextResponse.json({ ok: false, message: timingCheck.message }, { status: 400 })
     }
 
     // Verificar se a aula está em feriado definido no calendário — não permitir registro
@@ -296,6 +283,46 @@ export async function POST(request: NextRequest) {
     const validCurso = curso != null && ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL'].includes(curso) ? curso : (lesson.enrollment as { curso?: string })?.curso ?? null
     // Professor não pode alterar tempo de aula: sempre usar o cadastrado na aula
     const tempo = (lesson as { durationMinutes?: number }).durationMinutes ?? null
+
+    const nivelCheck = await assertTeacherTeachesEnrollmentLevel(prisma, lesson.enrollmentId, teacher)
+    if (!nivelCheck.ok) {
+      return NextResponse.json({ ok: false, message: nivelCheck.message }, { status: 400 })
+    }
+
+    if (book?.trim()) {
+      const bookCheck = await assertLessonRecordBookProgression(prisma, lesson.enrollmentId, book, {
+        confirmBookAdvance: confirmBookAdvance === true,
+      })
+      if (!bookCheck.ok) {
+        return NextResponse.json(
+          { ok: false, message: bookCheck.message, code: bookCheck.code },
+          { status: bookCheck.code === 'ADVANCE_NEEDS_CONFIRM' ? 409 : 400 }
+        )
+      }
+    }
+
+    const previousCompare = await getPreviousLessonRecordCompareInput(lesson.enrollmentId, lessonId)
+    const incomingCompare = lessonRecordCompareFromApiBody({
+      presence,
+      lessonType,
+      book,
+      lastPage,
+      assignedHomework,
+      homeworkDone,
+      conversationDescription,
+      notes,
+      notesForStudent,
+      notesForParents,
+      gradeGrammar,
+      gradeSpeaking,
+      gradeListening,
+      gradeUnderstanding,
+      studentsPresence: Array.isArray(studentsPresence) ? studentsPresence : null,
+    })
+    const diffCheck = assertLessonRecordDiffersFromPrevious(incomingCompare, previousCompare)
+    if (!diffCheck.ok) {
+      return NextResponse.json({ ok: false, message: diffCheck.message }, { status: 400 })
+    }
 
     const record = await (prisma as any).lessonRecord.create({
       data: {

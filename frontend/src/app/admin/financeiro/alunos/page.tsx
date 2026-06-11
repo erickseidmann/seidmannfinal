@@ -10,11 +10,13 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
-import RecebimentosConciliacao from '@/components/admin/financeiro/RecebimentosConciliacao'
+import RecebimentosConciliarNavButton from '@/components/admin/financeiro/RecebimentosConciliarNavButton'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
-import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, Info, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, RefreshCw, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail } from 'lucide-react'
+import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail, Paperclip } from 'lucide-react'
+import { enrollmentEligibleForBoleto } from '@/lib/boleto-eligibility'
 
 interface AlunoFinanceiro {
   id: string
@@ -35,6 +37,7 @@ interface AlunoFinanceiro {
   valorHora: number | null
   dataPagamento: string | null
   status: string | null
+  receiptUrl?: string | null
   enrollmentStatus?: string | null
   inactiveAt?: string | null
   metodoPagamento: string | null
@@ -128,6 +131,15 @@ function quemPagaExplicitoResponsavel(quemPaga: string | null): boolean {
     q.includes('genitor') ||
     q.includes('tutor')
   )
+}
+
+function alunoElegivelParaBoleto(a: AlunoFinanceiro): boolean {
+  return enrollmentEligibleForBoleto({
+    bolsista: a.bolsista,
+    faturamentoTipo: a.faturamentoTipo,
+    metodoPagamento: a.metodoPagamento,
+    paymentInfo: { metodo: a.metodoPagamento },
+  })
 }
 
 function getQuemPagaLabel(a: AlunoFinanceiro): string {
@@ -307,10 +319,6 @@ export default function FinanceiroAlunosPage() {
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [confirmUnpay, setConfirmUnpay] = useState<AlunoFinanceiro | null>(null)
-  const [confirmMarkPaid, setConfirmMarkPaid] = useState<AlunoFinanceiro | null>(null)
-  const [confirmBulkUnpay, setConfirmBulkUnpay] = useState(false)
-  const [bulkReasons, setBulkReasons] = useState<Record<string, string>>({})
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [fullTableView, setFullTableView] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -394,7 +402,6 @@ export default function FinanceiroAlunosPage() {
   const mesAtual = new Date().getMonth() + 1
   const [selectedAno, setSelectedAno] = useState<number>(anoAtual)
   const [selectedMes, setSelectedMes] = useState<number>(mesAtual)
-  const selectAllCheckboxRef = useRef<HTMLInputElement>(null)
 
   const fetchAlunos = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -404,7 +411,10 @@ export default function FinanceiroAlunosPage() {
       const json = await res.json()
       if (!res.ok || !json.ok) {
         if (res.status === 401 || res.status === 403) router.push('/login?tab=admin')
-        else setToast({ message: json.message || 'Erro ao carregar', type: 'error' })
+        else setToast({
+          message: json.detail ? `${json.message}: ${json.detail}` : json.message || 'Erro ao carregar',
+          type: 'error',
+        })
         return
       }
       setAlunos(json.data.alunos || [])
@@ -687,15 +697,17 @@ export default function FinanceiroAlunosPage() {
     [alunos, selectedAno, selectedMes, wasActiveInMonth]
   )
 
-  const { totalAtrasado, totalPago, totalAReceber, totalAlunos, nfEmAberto, nfEmitida, alunosAtrasado, alunosPago, alunosAReceber, alunosNFEmAberto, alunosNFEmitida } = useMemo(() => {
+  const { totalAtrasado, totalPago, totalAReceber, totalEstimado, totalAlunos, nfEmAberto, nfEmitida, alunosAtrasado, alunosPago, alunosAReceber, alunosEstimado, alunosNFEmAberto, alunosNFEmitida } = useMemo(() => {
     let atrasado = 0
     let pago = 0
     let aReceber = 0
+    let estimado = 0
     let emAberto = 0
     let emitida = 0
     const atrasadoList: AlunoFinanceiro[] = []
     const pagoList: AlunoFinanceiro[] = []
     const aReceberList: AlunoFinanceiro[] = []
+    const estimadoList: AlunoFinanceiro[] = []
     const nfEmAbertoList: AlunoFinanceiro[] = []
     const nfEmitidaList: AlunoFinanceiro[] = []
     const today = new Date()
@@ -703,6 +715,10 @@ export default function FinanceiroAlunosPage() {
       const status = getEffectiveStatus(a, today, selectedAno, selectedMes)
       const valor = a.valorMensal ?? 0
       const vencimentoNoMes = isVencimentoNoMes(a, selectedAno, selectedMes)
+      if (!a.bolsista && valor > 0) {
+        estimado += valor
+        estimadoList.push(a)
+      }
       if (status === 'ATRASADO') {
         atrasado += valor
         if (vencimentoNoMes) {
@@ -731,18 +747,20 @@ export default function FinanceiroAlunosPage() {
       totalAtrasado: atrasado,
       totalPago: pago,
       totalAReceber: aReceber,
+      totalEstimado: estimado,
       totalAlunos: alunosNoMes.length,
       nfEmAberto: emAberto,
       nfEmitida: emitida,
       alunosAtrasado: atrasadoList,
       alunosPago: pagoList,
       alunosAReceber: aReceberList,
+      alunosEstimado: estimadoList,
       alunosNFEmAberto: nfEmAbertoList,
       alunosNFEmitida: nfEmitidaList,
     }
   }, [alunosNoMes, selectedAno, selectedMes, isVencimentoNoMes])
 
-  const [cubeModal, setCubeModal] = useState<'atrasado' | 'atrasadoCancelar' | 'pago' | 'aReceber' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | 'removidos' | null>(null)
+  const [cubeModal, setCubeModal] = useState<'atrasado' | 'atrasadoCancelar' | 'pago' | 'aReceber' | 'estimado' | 'alunos' | 'nfEmAberto' | 'nfEmitida' | 'removidos' | null>(null)
   const [filterBusca, setFilterBusca] = useState('')
   const [filterPeriodo, setFilterPeriodo] = useState<string>('')
   const [filterNfEmitida, setFilterNfEmitida] = useState<string>('')
@@ -751,12 +769,10 @@ export default function FinanceiroAlunosPage() {
   const [filterInfoPagamento, setFilterInfoPagamento] = useState<string>('')
   const [filterEscola, setFilterEscola] = useState<string>('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(7)
-  const [showDicas, setShowDicas] = useState(false)
-  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(false)
   const [showPeriodo, setShowPeriodo] = useState(false)
 
   const [cobrancasMap, setCobrancasMap] = useState<Map<string, CobrancaCora>>(new Map())
-  const [refreshCobrancasLoading, setRefreshCobrancasLoading] = useState(false)
   const [cobrancaPopoverOpen, setCobrancaPopoverOpen] = useState<string | null>(null)
   const cobrancaPopoverRef = useRef<HTMLDivElement>(null)
 
@@ -790,6 +806,9 @@ export default function FinanceiroAlunosPage() {
   const [columnsDropdownStyle, setColumnsDropdownStyle] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
   const columnsTriggerRef = useRef<HTMLButtonElement>(null)
   const columnsDropdownRef = useRef<HTMLDivElement>(null)
+  const receiptFileInputRef = useRef<HTMLInputElement>(null)
+  const pendingReceiptAlunoRef = useRef<AlunoFinanceiro | null>(null)
+  const [uploadingReceiptId, setUploadingReceiptId] = useState<string | null>(null)
   const updateColumnsDropdownPosition = useCallback(() => {
     if (!columnsTriggerRef.current || !columnsDropdownOpen) return
     const rect = columnsTriggerRef.current.getBoundingClientRect()
@@ -825,17 +844,6 @@ export default function FinanceiroAlunosPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const handleRefreshCobrancas = useCallback(async () => {
-    setRefreshCobrancasLoading(true)
-    try {
-      await fetchCobrancas(selectedAno, selectedMes)
-      await fetchAlunos(selectedAno, selectedMes)
-    } finally {
-      setRefreshCobrancasLoading(false)
-    }
-  }, [fetchCobrancas, fetchAlunos, selectedAno, selectedMes])
-
-  // Atualização agora é somente manual via botão "Atualizar Status" (sem polling automático).
   const visibleSet = new Set(visibleFinanceKeys)
   const displayColumns = FINANCE_COLUMNS.filter((c) => visibleSet.has(c.key))
   const toggleFinanceColumn = (key: string) => {
@@ -855,9 +863,7 @@ export default function FinanceiroAlunosPage() {
   const [gerarCobrancasLoading, setGerarCobrancasLoading] = useState(false)
   const [gerarCobrancaIndividualLoading, setGerarCobrancaIndividualLoading] = useState<string | null>(null)
   const [emitirNfLoading, setEmitirNfLoading] = useState<string | null>(null)
-  const [emitirNfTodosLoading, setEmitirNfTodosLoading] = useState(false)
   const [boletosLembretesLoading, setBoletosLembretesLoading] = useState(false)
-  const [processarAgendamentosLoading, setProcessarAgendamentosLoading] = useState(false)
   const [cancelarNfLoading, setCancelarNfLoading] = useState<string | null>(null)
   const [cancelarNfModal, setCancelarNfModal] = useState<AlunoFinanceiro | null>(null)
   const [cancelarNfJustificativa, setCancelarNfJustificativa] = useState('')
@@ -957,14 +963,6 @@ export default function FinanceiroAlunosPage() {
     [filteredAlunos, itemsPerPage]
   )
 
-  const allSelected = filteredAlunos.length > 0 && filteredAlunos.every((a) => selectedIds.has(a.id))
-  const someSelected = filteredAlunos.some((a) => selectedIds.has(a.id))
-
-  useEffect(() => {
-    const el = selectAllCheckboxRef.current
-    if (el) el.indeterminate = someSelected && !allSelected
-  }, [someSelected, allSelected])
-
   useEffect(() => {
     if (!fullTableView) return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -976,15 +974,6 @@ export default function FinanceiroAlunosPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [fullTableView])
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
   const handleSort = (key: 'default' | 'nome' | 'diaVenc') => {
     setSortKey((prev) => {
       if (prev === key && key !== 'default') {
@@ -994,48 +983,6 @@ export default function FinanceiroAlunosPage() {
       setSortDir('asc')
       return key
     })
-  }
-
-  const selectAll = () => {
-    if (allSelected) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredAlunos.map((a) => a.id)))
-    }
-  }
-
-  const bulkMarkPaid = async () => {
-    const ids = Array.from(selectedIds).filter((id) => !alunos.find((x) => x.id === id)?.bolsista)
-    if (ids.length === 0) {
-      setToast({
-        message: selectedIds.size > 0
-          ? 'Os selecionados são bolsistas (já tratados como pagos).'
-          : 'Selecione ao menos um aluno.',
-        type: 'error',
-      })
-      return
-    }
-    setSaving(true)
-    try {
-      const hoje = new Date().toISOString().slice(0, 10)
-      let ok = 0
-      let err = 0
-      for (const id of ids) {
-        try {
-          await patchCellBody(id, { paymentStatus: 'PAGO', dataUltimoPagamento: hoje })
-          ok++
-        } catch {
-          err++
-        }
-      }
-      setToast({
-        message: err === 0 ? `Marcado como Pago para ${ok} aluno(s).` : `${ok} atualizado(s), ${err} erro(s).`,
-        type: err === 0 ? 'success' : 'error',
-      })
-      setSelectedIds(new Set())
-    } finally {
-      setSaving(false)
-    }
   }
 
   const [removingFromMonthId, setRemovingFromMonthId] = useState<string | null>(null)
@@ -1122,66 +1069,6 @@ export default function FinanceiroAlunosPage() {
     [removeFromMonthAluno, removeFromMonthReason, selectedAno, selectedMes, fetchAlunos]
   )
 
-  const bulkMarkPending = async () => {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) {
-      setToast({ message: 'Selecione ao menos um aluno.', type: 'error' })
-      return
-    }
-    setSaving(true)
-    let lastError: string | null = null
-    try {
-      let ok = 0
-      let err = 0
-      for (const id of ids) {
-        try {
-          const res = await fetch(`/api/admin/financeiro/alunos/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              paymentStatus: 'REMOVIDO',
-              year: selectedAno,
-              month: selectedMes,
-            }),
-          })
-          const json = await res.json()
-          if (!res.ok || !json.ok) {
-            lastError = json.message || 'Erro ao atualizar'
-            err++
-            continue
-          }
-          const reason = (bulkReasons[id] ?? '').trim()
-          if (reason) {
-            await fetch('/api/admin/financeiro/observations', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ enrollmentId: id, message: reason }),
-            })
-          }
-          ok++
-        } catch (e) {
-          lastError = e instanceof Error ? e.message : 'Erro de rede'
-          err++
-        }
-      }
-      setToast({
-        message:
-          err === 0
-            ? `${ok} aluno(s) removido(s) deste mês.`
-            : `${ok} removido(s), ${err} erro(s).${lastError ? ` Detalhe: ${lastError}` : ''}`,
-        type: err === 0 ? 'success' : 'error',
-      })
-      setSelectedIds(new Set())
-      setBulkReasons({})
-      setConfirmBulkUnpay(false)
-      await fetchAlunos(selectedAno, selectedMes)
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const selected = editId ? alunos.find((a) => a.id === editId) : null
 
   useEffect(() => {
@@ -1256,7 +1143,12 @@ export default function FinanceiroAlunosPage() {
     async (id: string, field: string, value: string | number | boolean | null) => {
       const body: Record<string, unknown> = {}
       if (field === 'quemPaga') body.quemPaga = value
-      else if (field === 'paymentStatus') body.paymentStatus = value
+      else if (field === 'paymentStatus') {
+        if (value === 'PAGO') {
+          throw new Error('Use a conciliação de recebimentos ou anexe o comprovante para marcar como pago.')
+        }
+        body.paymentStatus = value
+      }
       else if (field === 'valorMensal') body.valorMensal = value != null ? Number(value) : null
       // valorHora não é editável: sempre calculado na API (valor mensal ÷ total horas do mês)
       else if (field === 'metodoPagamento') body.metodoPagamento = value
@@ -1297,19 +1189,13 @@ export default function FinanceiroAlunosPage() {
     [fetchAlunos, selectedAno, selectedMes]
   )
 
-  const applyPagoStatus = useCallback(
-    async (a: AlunoFinanceiro, checked: boolean) => {
+  const applyUnpayStatus = useCallback(
+    async (a: AlunoFinanceiro) => {
       if (a.bolsista) return
       setSaving(true)
       try {
-        if (checked) {
-          const hoje = new Date().toISOString().slice(0, 10)
-          await patchCellBody(a.id, { paymentStatus: 'PAGO', dataUltimoPagamento: hoje })
-          setToast({ message: 'Marcado como Pago. Data do último pagamento atualizada.', type: 'success' })
-        } else {
-          await patchCellBody(a.id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
-          setToast({ message: 'Status alterado para Pendente. Data do último pagamento removida.', type: 'success' })
-        }
+        await patchCellBody(a.id, { paymentStatus: 'PENDING', dataUltimoPagamento: null })
+        setToast({ message: 'Status alterado para Pendente. Data do último pagamento removida.', type: 'success' })
       } catch {
         setToast({ message: 'Erro ao atualizar status', type: 'error' })
       } finally {
@@ -1319,16 +1205,55 @@ export default function FinanceiroAlunosPage() {
     [patchCellBody]
   )
 
-  const handlePagoCheck = useCallback(
-    (a: AlunoFinanceiro, checked: boolean) => {
-      if (a.bolsista) return
-      if (!checked) {
-        setConfirmUnpay(a)
-        return
+  const triggerReceiptUpload = useCallback((a: AlunoFinanceiro) => {
+    pendingReceiptAlunoRef.current = a
+    receiptFileInputRef.current?.click()
+  }, [])
+
+  const onReceiptFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const aluno = pendingReceiptAlunoRef.current
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      pendingReceiptAlunoRef.current = null
+      if (!aluno || !file) return
+
+      setUploadingReceiptId(aluno.id)
+      try {
+        const formData = new FormData()
+        formData.set('file', file)
+        formData.set('nome', aluno.nome)
+        formData.set('year', String(selectedAno))
+        formData.set('month', String(selectedMes))
+
+        const uploadRes = await fetch('/api/admin/financeiro/alunos/upload-receipt', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        })
+        const uploadJson = await uploadRes.json()
+        if (!uploadRes.ok || !uploadJson.ok) {
+          setToast({ message: uploadJson.message || 'Erro ao enviar comprovante', type: 'error' })
+          return
+        }
+
+        const hoje = new Date().toISOString().slice(0, 10)
+        await patchCellBody(aluno.id, {
+          paymentStatus: 'PAGO',
+          dataUltimoPagamento: hoje,
+          receiptUrl: String(uploadJson.data?.url || ''),
+        })
+        setToast({
+          message: 'Comprovante anexado e pagamento confirmado. NF e e-mail serão gerados automaticamente.',
+          type: 'success',
+        })
+      } catch {
+        setToast({ message: 'Erro ao confirmar pagamento com comprovante', type: 'error' })
+      } finally {
+        setUploadingReceiptId(null)
       }
-      setConfirmMarkPaid(a)
     },
-    []
+    [patchCellBody, selectedAno, selectedMes]
   )
 
   // notaFiscalEmitida agora é calculado automaticamente da tabela nfse_invoices (read-only)
@@ -1575,6 +1500,18 @@ export default function FinanceiroAlunosPage() {
         setToast({ message: 'Bolsista: não é possível gerar boleto ou cobrança.', type: 'error' })
         return
       }
+      const cobranca = cobrancasMap.get(a.id)
+      if (cobranca?.boletoUrl) {
+        window.open(cobranca.boletoUrl, '_blank', 'noopener,noreferrer')
+        return
+      }
+      if (!alunoElegivelParaBoleto(a)) {
+        setToast({
+          message: 'Este aluno não paga por boleto (PIX, cartão, bolsista ou faturamento em empresa).',
+          type: 'error',
+        })
+        return
+      }
       setGerarCobrancaIndividualLoading(a.id)
       try {
         const res = await fetch('/api/admin/financeiro/cobranca', {
@@ -1597,7 +1534,7 @@ export default function FinanceiroAlunosPage() {
         setGerarCobrancaIndividualLoading(null)
       }
     },
-    [selectedAno, selectedMes, fetchAlunos, fetchCobrancas]
+    [selectedAno, selectedMes, fetchAlunos, fetchCobrancas, cobrancasMap]
   )
 
   const handleEmitirNf = useCallback(
@@ -1695,50 +1632,6 @@ export default function FinanceiroAlunosPage() {
 
   const handleCancelarNf = useCallback((a: AlunoFinanceiro) => openCancelarNfModal(a), [openCancelarNfModal])
 
-  const handleEmitirNfTodos = useCallback(async () => {
-    setEmitirNfTodosLoading(true)
-    try {
-      const res = await fetch('/api/admin/nfse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ year: selectedAno, month: selectedMes }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || json.error || 'Erro ao emitir notas fiscais', type: 'error' })
-        return
-      }
-      const emitidas = json.emitidas ?? 0
-      const erros = json.erros ?? 0
-      if (emitidas > 0 || erros > 0) {
-        setToast({
-          message: emitidas > 0
-            ? `${emitidas} nota(s) emitida(s).${erros > 0 ? ` ${erros} erro(s).` : ''}`
-            : `${erros} erro(s) ao emitir.`,
-          type: erros > 0 && emitidas === 0 ? 'error' : 'success',
-        })
-      } else {
-        setToast({ message: 'Nenhum aluno pago sem NF no mês selecionado.', type: 'success' })
-      }
-      fetchAlunos(selectedAno, selectedMes)
-    } catch {
-      setToast({ message: 'Erro ao emitir notas fiscais', type: 'error' })
-    } finally {
-      setEmitirNfTodosLoading(false)
-    }
-  }, [selectedAno, selectedMes, fetchAlunos])
-
-  const countPagosSemNf = useMemo(() => {
-    return alunos.filter(
-      (a) =>
-        !a.bolsista &&
-        a.status === 'PAGO' &&
-        !a.notaFiscalEmitida &&
-        a.nfseStatus !== 'processando_autorizacao'
-    ).length
-  }, [alunos])
-
   const handleBoletosELembretes = useCallback(async () => {
     setBoletosLembretesLoading(true)
     try {
@@ -1754,11 +1647,20 @@ export default function FinanceiroAlunosPage() {
         return
       }
       const boletos = json.boletosGerados ?? 0
+      const jaExistiam = json.boletosJaExistiam ?? 0
+      const ignoradosInelegiveis = json.boletosIgnoradosInelegiveis ?? 0
       const emails = json.emailsEnviados ?? 0
       const errosB = json.boletosErros ?? 0
       const errosE = json.emailsErros ?? 0
       const boletoErrors: { name: string; error: string }[] = Array.isArray(json.errors) ? json.errors : []
       const emailErrors: { name: string; error: string }[] = Array.isArray(json.emailErrors) ? json.emailErrors : []
+
+      if (json.message && boletos === 0 && errosB === 0) {
+        setToast({ message: json.message, type: 'success' })
+        fetchAlunos(selectedAno, selectedMes)
+        fetchCobrancas(selectedAno, selectedMes)
+        return
+      }
 
       if (boletoErrors.length > 0 || emailErrors.length > 0) {
         // Logar detalhes completos no console para depuração
@@ -1769,8 +1671,10 @@ export default function FinanceiroAlunosPage() {
       }
 
       const parts: string[] = []
-      if (boletos > 0) parts.push(`${boletos} boleto(s) gerado(s)`)
-      if (emails > 0) parts.push(`${emails} e-mail(s) de lembrete enviado(s)`)
+      if (boletos > 0) parts.push(`${boletos} boleto(s) novo(s) gerado(s)`)
+      if (jaExistiam > 0) parts.push(`${jaExistiam} já tinham boleto (não regerados)`)
+      if (ignoradosInelegiveis > 0) parts.push(`${ignoradosInelegiveis} ignorado(s) — não pagam por boleto`)
+      if (emails > 0) parts.push(`${emails} e-mail(s) enviado(s)`)
       if (errosB > 0) parts.push(`${errosB} erro(s) ao gerar boleto`)
       if (errosE > 0) parts.push(`${errosE} erro(s) ao enviar e-mail`)
 
@@ -1781,8 +1685,8 @@ export default function FinanceiroAlunosPage() {
       }
 
       setToast({
-        message: parts.length ? parts.join('. ') : 'Concluído (alunos com método cartão foram excluídos).',
-        type: errosB > 0 || errosE > 0 ? 'error' : 'success',
+        message: parts.length ? parts.join('. ') : 'Nenhum boleto novo gerado.',
+        type: errosB > 0 || errosE > 0 ? 'error' : boletos > 0 ? 'success' : 'success',
       })
       fetchAlunos(selectedAno, selectedMes)
       fetchCobrancas(selectedAno, selectedMes)
@@ -1790,33 +1694,6 @@ export default function FinanceiroAlunosPage() {
       setToast({ message: 'Erro ao enviar boletos e lembretes', type: 'error' })
     } finally {
       setBoletosLembretesLoading(false)
-    }
-  }, [selectedAno, selectedMes, fetchAlunos, fetchCobrancas])
-
-  const handleProcessarAgendamentosNf = useCallback(async () => {
-    setProcessarAgendamentosLoading(true)
-    try {
-      const res = await fetch('/api/cron/nfse-scheduled', { credentials: 'include' })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast({ message: json.message || 'Erro ao processar agendamentos', type: 'error' })
-        return
-      }
-      const n = json.processed ?? 0
-      const err = json.errors ?? 0
-      if (n > 0) {
-        setToast({ message: `${n} agendamento(s) processado(s): NF emitida e e-mail enviado.`, type: 'success' })
-        fetchAlunos(selectedAno, selectedMes)
-        fetchCobrancas(selectedAno, selectedMes)
-      } else if (err > 0 && json.errorDetails?.length) {
-        setToast({ message: `Nenhum processado. Erro: ${json.errorDetails[0].error}`, type: 'error' })
-      } else {
-        setToast({ message: 'Nenhum agendamento com data/hora vencida no momento.', type: 'info' })
-      }
-    } catch {
-      setToast({ message: 'Erro ao processar agendamentos de NF', type: 'error' })
-    } finally {
-      setProcessarAgendamentosLoading(false)
     }
   }, [selectedAno, selectedMes, fetchAlunos, fetchCobrancas])
 
@@ -1844,6 +1721,7 @@ export default function FinanceiroAlunosPage() {
               <FileText className="w-4 h-4" />
               Notas Fiscais
             </Link>
+            <RecebimentosConciliarNavButton />
             <Link
               href="/admin/financeiro/notificacoes"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium text-sm transition-colors"
@@ -1948,7 +1826,7 @@ export default function FinanceiroAlunosPage() {
         {!fullTableView && (
         <section>
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-9 gap-3">
             <div
               role="button"
               tabIndex={0}
@@ -1988,6 +1866,16 @@ export default function FinanceiroAlunosPage() {
             >
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">A receber</p>
               <p className="mt-1 text-xl font-bold text-amber-900">{formatMoney(totalAReceber)}</p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCubeModal('estimado')}
+              onKeyDown={(e) => e.key === 'Enter' && setCubeModal('estimado')}
+              className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4 shadow-sm cursor-pointer hover:bg-indigo-100 transition-colors"
+            >
+              <p className="text-xs font-semibold text-indigo-800 uppercase tracking-wide">Total estimado</p>
+              <p className="mt-1 text-xl font-bold text-indigo-900">{formatMoney(totalEstimado)}</p>
             </div>
             <div
               role="button"
@@ -2039,14 +1927,9 @@ export default function FinanceiroAlunosPage() {
           </div>
         ) : (
           <>
-            {/* Seções: Identificador de pagamento + Buscar e filtros (mesma largura/cartão) */}
+            {/* Buscar e filtros */}
             {!fullTableView && (
             <div className="space-y-4">
-              <RecebimentosConciliacao
-                onToast={(message, type) => setToast({ message, type })}
-                onVinculado={() => fetchAlunos(selectedAno, selectedMes)}
-              />
-
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                 <button
                   type="button"
@@ -2151,241 +2034,151 @@ export default function FinanceiroAlunosPage() {
                         </select>
                       </div>
                     </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-4 border-t border-gray-100">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleBoletosELembretes}
+                        disabled={boletosLembretesLoading}
+                        title="Gera boleto apenas para quem paga por boleto e ainda não tem cobrança neste mês. Quem já tem boleto, paga por PIX/cartão ou é bolsista/empresa é ignorado. E-mails só para boletos novos."
+                      >
+                        {boletosLembretesLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                        Enviar boletos e emails de lembrete
+                      </Button>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500">Itens por página</label>
+                        <select
+                          value={itemsPerPage}
+                          onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                          className="input min-w-[72px] text-sm py-1.5"
+                        >
+                          <option value={7}>7</option>
+                          <option value={30}>30</option>
+                          <option value={500}>500</option>
+                        </select>
+                      </div>
+                      <div className="relative">
+                        <button
+                          ref={columnsTriggerRef}
+                          type="button"
+                          onClick={() => setColumnsDropdownOpen((v) => !v)}
+                          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <Columns className="w-4 h-4" />
+                          Colunas
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        {columnsDropdownOpen && columnsDropdownStyle && typeof document !== 'undefined' && createPortal(
+                          <div
+                            ref={columnsDropdownRef}
+                            className="fixed z-[100] min-w-[200px] w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-xl overflow-hidden"
+                            style={{ top: columnsDropdownStyle.top, left: columnsDropdownStyle.left, maxHeight: columnsDropdownStyle.maxHeight }}
+                          >
+                            <div className="overflow-y-auto h-full" style={{ maxHeight: columnsDropdownStyle.maxHeight }}>
+                              <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase sticky top-0 bg-white">Exibir colunas</p>
+                              {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
+                                <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
+                                  <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
+                                  <span className="text-sm text-gray-800">{col.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>,
+                          document.body
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const headers = displayColumns.map((c) => c.label).join(';')
+                          const rows = filteredAlunos.map((a) =>
+                            displayColumns
+                              .map((col) => {
+                                if (col.key === 'aluno') return (a.nome ?? '').replace(/;/g, ',')
+                                if (col.key === 'cpf') return (a.cpf ?? '').replace(/;/g, ',')
+                                if (col.key === 'endereco') return (a.endereco ?? '').replace(/;|\n/g, ' ').replace(/"/g, '""')
+                                if (col.key === 'tipoAula') return a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? ''
+                                if (col.key === 'nomeGrupo') return (a.nomeGrupo ?? '').replace(/;/g, ',')
+                                if (col.key === 'responsavel') return (a.nomeResponsavel ?? '').replace(/;/g, ',')
+                                if (col.key === 'quemPaga') return (a.quemPaga ?? '').replace(/;/g, ',')
+                                if (col.key === 'valorMensal') return a.valorMensal != null ? String(a.valorMensal).replace('.', ',') : ''
+                                if (col.key === 'valorHora') return a.valorHora != null ? String(a.valorHora).replace('.', ',') : ''
+                                if (col.key === 'status') return a.status ?? ''
+                                if (col.key === 'metodoPagamento') return (a.metodoPagamento ?? '').replace(/;/g, ',')
+                                if (col.key === 'banco') return (a.banco ?? '').replace(/;/g, ',')
+                                if (col.key === 'periodo') return PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL'] ?? 'Men.'
+                                if (col.key === 'ultimoPag') return formatDate(a.dataPagamento)
+                                if (col.key === 'diaVenc') return a.diaPagamento != null ? String(a.diaPagamento) : ''
+                                if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
+                                if (col.key === 'nfEmitida') return a.bolsista ? 'Isento (bolsista)' : a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfseEmailEnviado ? 'E-mail enviado' : a.nfAgendada ? 'Agendada' : 'Em aberto'
+                                if (col.key === 'acoesNf') return ''
+                                if (col.key === 'acoes') return ''
+                                return ''
+                              })
+                              .map((v) => (v.includes(';') ? `"${v}"` : v))
+                              .join(';')
+                          )
+                          const csv = '\uFEFF' + [headers, ...rows].join('\r\n')
+                          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+                          const url = URL.createObjectURL(blob)
+                          const link = document.createElement('a')
+                          link.href = url
+                          link.download = `financeiro-alunos-${selectedAno}-${String(selectedMes).padStart(2, '0')}.csv`
+                          link.click()
+                          URL.revokeObjectURL(url)
+                          setToast({ message: 'Planilha exportada. Abra o arquivo no Excel.', type: 'success' })
+                        }}
+                        disabled={filteredAlunos.length === 0}
+                      >
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Exportar Excel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFullTableView(true)}
+                        title="Visualizar tabela em tela cheia"
+                      >
+                        <Maximize2 className="w-4 h-4 mr-2" />
+                        Visualizar em janela cheia
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
             )}
 
-            {/* Dicas (recolhível) */}
-            <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowDicas((v) => !v)}
-                className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-gray-100"
-              >
-                <Info className="w-4 h-4 text-brand-orange shrink-0" />
-                <span>Como usar esta página</span>
-                {showDicas ? <ChevronDown className="w-4 h-4 ml-auto" /> : <ChevronRight className="w-4 h-4 ml-auto" />}
-              </button>
-              {showDicas && (
-                <div className="px-4 pb-4 pt-0 text-xs text-gray-600 border-t border-gray-200">
-                  <p className="pt-3">
-                    As informações de pagamento (Status, NF emitida?) são <strong>independentes por mês</strong>; a única que acompanha o aluno é <strong>Data Pag.</strong> Os números e a tabela refletem {MESES_LABELS[selectedMes]}/{selectedAno}. Alunos ativos aparecem em todos os meses; inativos somem a partir do mês em que foram marcados como inativos.
-                  </p>
-                  <p className="mt-2">
-                    <strong>Edição rápida:</strong> clique duas vezes em uma célula para editar (Quem paga, Valor mensal, Status, Método pag., Banco, Período, datas, NF).
-                  </p>
-                </div>
-              )}
-            </div>
-
             {/* Seção: Lista de alunos */}
             <section className={`bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden ${fullTableView ? 'mt-2 h-[calc(100vh-220px)] flex flex-col' : ''}`}>
               <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
-                <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
-                <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      ref={selectAllCheckboxRef}
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={selectAll}
-                      className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
-                    />
-                    <span className="text-xs font-medium text-gray-700">Selecionar todos</span>
-                  </label>
-                  <span className="text-xs text-gray-500 whitespace-nowrap">
-                    {selectedIds.size} selecionado(s)
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={bulkMarkPaid}
-                      disabled={selectedIds.size === 0 || saving}
-                      className="rounded-lg bg-green-50 border border-green-200 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
-                    >
-                      Marcar selecionados como pagos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmBulkUnpay(true)}
-                      disabled={selectedIds.size === 0 || saving}
-                      className="rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
-                    >
-                      Remover alunos deste mês de pagamento
-                    </button>
-                  </div>
-                </div>
-                <div className="h-6 w-px bg-gray-200 shrink-0" aria-hidden />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleBoletosELembretes}
-                    disabled={boletosLembretesLoading}
-                    title="Gerar boleto/PIX na Cora para todos os alunos do mês (exceto método cartão) e enviar e-mail de lembrete. Quem já pagou deve desconsiderar o e-mail."
-                  >
-                    {boletosLembretesLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-                    Enviar boletos e emails de lembrete
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleEmitirNfTodos}
-                    disabled={emitirNfTodosLoading || countPagosSemNf === 0}
-                    title="Emitir notas fiscais para todos os alunos pagos neste mês que ainda não têm NF"
-                  >
-                    {emitirNfTodosLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FilePlus className="w-4 h-4 mr-2" />}
-                    Emitir NF para todos pagos sem NF
-                  </Button>
+                <h2 className="text-base font-semibold text-gray-800">Lista de alunos</h2>
+                {fullTableView && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleProcessarAgendamentosNf}
-                    disabled={processarAgendamentosLoading}
-                    title="Executar agora os agendamentos de NF cuja data/hora já passou (emitir NF e enviar e-mail)"
+                    onClick={() => setFullTableView(false)}
+                    title="Sair da visualização em tela cheia"
                   >
-                    {processarAgendamentosLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
-                    Processar agendamentos de NF
+                    <Minimize2 className="w-4 h-4 mr-2" />
+                    Sair da janela cheia
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleRefreshCobrancas}
-                    disabled={refreshCobrancasLoading}
-                    title="Atualizar status das cobranças Cora"
-                  >
-                    {refreshCobrancasLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                    Atualizar Status
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 ml-auto">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500">Itens por página</label>
-                    <select
-                      value={itemsPerPage}
-                      onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                      className="input min-w-[72px] text-sm py-1.5"
-                    >
-                      <option value={7}>7</option>
-                      <option value={30}>30</option>
-                      <option value={500}>500</option>
-                    </select>
-                  </div>
-                  <div className="relative">
-                  <button
-                    ref={columnsTriggerRef}
-                    type="button"
-                    onClick={() => setColumnsDropdownOpen((v) => !v)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    <Columns className="w-4 h-4" />
-                    Colunas
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                  {columnsDropdownOpen && columnsDropdownStyle && typeof document !== 'undefined' && createPortal(
-                    <div
-                      ref={columnsDropdownRef}
-                      className="fixed z-[100] min-w-[200px] w-[200px] rounded-lg border border-gray-200 bg-white py-2 shadow-xl overflow-hidden"
-                      style={{ top: columnsDropdownStyle.top, left: columnsDropdownStyle.left, maxHeight: columnsDropdownStyle.maxHeight }}
-                    >
-                      <div className="overflow-y-auto h-full" style={{ maxHeight: columnsDropdownStyle.maxHeight }}>
-                        <p className="px-3 py-1 text-xs font-semibold text-gray-500 uppercase sticky top-0 bg-white">Exibir colunas</p>
-                        {FINANCE_COLUMNS.filter((c) => !c.fixed).map((col) => (
-                          <label key={col.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50">
-                            <input type="checkbox" checked={visibleSet.has(col.key)} onChange={() => toggleFinanceColumn(col.key)} className="rounded border-gray-300" />
-                            <span className="text-sm text-gray-800">{col.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>,
-                    document.body
-                  )}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const headers = displayColumns.map((c) => c.label).join(';')
-                    const rows = filteredAlunos.map((a) =>
-                      displayColumns
-                      .map((col) => {
-                        if (col.key === 'aluno') return (a.nome ?? '').replace(/;/g, ',')
-                        if (col.key === 'cpf') return (a.cpf ?? '').replace(/;/g, ',')
-                        if (col.key === 'endereco') return (a.endereco ?? '').replace(/;|\n/g, ' ').replace(/"/g, '""')
-                        if (col.key === 'tipoAula') return a.tipoAula === 'GRUPO' ? 'Grupo' : a.tipoAula === 'PARTICULAR' ? 'Particular' : a.tipoAula ?? ''
-                        if (col.key === 'nomeGrupo') return (a.nomeGrupo ?? '').replace(/;/g, ',')
-                        if (col.key === 'responsavel') return (a.nomeResponsavel ?? '').replace(/;/g, ',')
-                        if (col.key === 'quemPaga') return (a.quemPaga ?? '').replace(/;/g, ',')
-                        if (col.key === 'valorMensal') return a.valorMensal != null ? String(a.valorMensal).replace('.', ',') : ''
-                        if (col.key === 'valorHora') return a.valorHora != null ? String(a.valorHora).replace('.', ',') : ''
-                        if (col.key === 'status') return a.status ?? ''
-                        if (col.key === 'metodoPagamento') return (a.metodoPagamento ?? '').replace(/;/g, ',')
-                        if (col.key === 'banco') return (a.banco ?? '').replace(/;/g, ',')
-                        if (col.key === 'periodo') return PERIODO_SHORT[(a.periodoPagamento && ['MENSAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL'].includes(a.periodoPagamento)) ? a.periodoPagamento : 'MENSAL'] ?? 'Men.'
-                        if (col.key === 'ultimoPag') return formatDate(a.dataPagamento)
-                        if (col.key === 'diaVenc') return a.diaPagamento != null ? String(a.diaPagamento) : ''
-                        if (col.key === 'ultimaCobranca') return formatDate(a.dataUltimaCobranca)
-                        if (col.key === 'nfEmitida') return a.bolsista ? 'Isento (bolsista)' : a.nfseStatus === 'processando_autorizacao' ? 'Em processamento' : a.nfseStatus === 'erro_autorizacao' ? 'Erro' : a.nfseStatus === 'cancelado' ? 'Cancelado' : a.notaFiscalEmitida === true ? 'Emitida' : a.nfseEmailEnviado ? 'E-mail enviado' : a.nfAgendada ? 'Agendada' : 'Em aberto'
-                        if (col.key === 'acoesNf') return ''
-                        if (col.key === 'acoes') return ''
-                        return ''
-                      })
-                      .map((v) => (v.includes(';') ? `"${v}"` : v))
-                      .join(';')
-                  )
-                  const csv = '\uFEFF' + [headers, ...rows].join('\r\n')
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = `financeiro-alunos-${selectedAno}-${String(selectedMes).padStart(2, '0')}.csv`
-                  a.click()
-                  URL.revokeObjectURL(url)
-                  setToast({ message: 'Planilha exportada. Abra o arquivo no Excel.', type: 'success' })
-                }}
-                disabled={filteredAlunos.length === 0}
-              >
-                <FileDown className="w-4 h-4 mr-2" />
-                Exportar Excel
-              </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setFullTableView((v) => !v)}
-                    title={fullTableView ? 'Sair da visualização em tela cheia' : 'Visualizar tabela em tela cheia'}
-                  >
-                    {fullTableView ? (
-                      <>
-                        <Minimize2 className="w-4 h-4 mr-2" />
-                        Sair da janela cheia
-                      </>
-                    ) : (
-                      <>
-                        <Maximize2 className="w-4 h-4 mr-2" />
-                        Visualizar em janela cheia
-                      </>
-                    )}
-                  </Button>
+                )}
                 {filteredAlunos.length > itemsPerPage && (
                   <span className="text-sm text-gray-500 ml-auto">
                     Mostrando {displayedAlunos.length} de {filteredAlunos.length} alunos
                   </span>
                 )}
-                </div>
               </div>
-              <div
-                className={`overflow-x-auto px-5 pb-5 [scrollbar-width:thin] ${
-                  fullTableView ? 'flex-1 min-h-0 overflow-y-auto' : 'max-h-[calc(7*6.25rem)] overflow-y-auto'
+              <TableScrollArea
+                scrollClassName={`overflow-x-auto overflow-y-auto px-5 pb-5 ${
+                  fullTableView ? 'flex-1 min-h-0' : 'max-h-[calc(7*6.25rem)]'
                 }`}
               >
             <table className="w-full min-w-[1400px]">
               <thead className="sticky top-0 z-20 bg-gray-50 shadow-[inset_0_-1px_0_0_rgb(229_231_235)]">
                 <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
-                    {/* coluna de seleção */}
-                  </th>
                   {displayColumns.map((col) => {
                     const baseClass =
                       col.key === 'valorMensal' || col.key === 'valorHora'
@@ -2463,14 +2256,6 @@ export default function FinanceiroAlunosPage() {
                   const baseTd = `px-3 py-1 text-sm ${baseTextClass}`
                   return (
                     <tr key={a.id} className={rowClass}>
-                      <td className={baseTd}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(a.id)}
-                          onChange={() => toggleSelect(a.id)}
-                          className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
-                        />
-                      </td>
                       {displayColumns.some((c) => c.key === 'diaVenc') && EdCell('diaPagamento', a.diaPagamento != null ? String(a.diaPagamento) : '—', (
                         <input
                           type="number"
@@ -2541,7 +2326,7 @@ export default function FinanceiroAlunosPage() {
                                   type="button"
                                   onClick={() => hasCobrancaDetails && setCobrancaPopoverOpen(isPopoverOpen ? null : a.id)}
                                   className={`${badgeClasses} ${hasCobrancaDetails ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
-                                  title={hasCobrancaDetails ? 'Clique para ver detalhes da cobrança' : isAtrasado ? 'Atrasado automaticamente (vencimento passou). Marque Pago para registrar.' : undefined}
+                                  title={hasCobrancaDetails ? 'Clique para ver detalhes da cobrança' : isAtrasado ? 'Atrasado automaticamente (vencimento passou). Confirme via conciliação ou comprovante.' : undefined}
                                 >
                                   {label}
                                   {hasCobrancaDetails && <CircleChevronDown className="w-3.5 h-3.5 opacity-70" />}
@@ -2587,23 +2372,43 @@ export default function FinanceiroAlunosPage() {
                               </div>
                             )
                           })()}
-                          <label
-                            className={`flex items-center gap-1.5 whitespace-nowrap ${a.bolsista ? 'cursor-default opacity-90' : 'cursor-pointer'}`}
-                            title={
-                              a.bolsista
-                                ? 'Bolsista: considerado pago automaticamente (sem cobrança).'
-                                : 'Marque quando o pagamento for realizado'
-                            }
-                          >
-                            <input
-                              type="checkbox"
-                              checked={a.status === 'PAGO' || !!a.bolsista}
-                              disabled={saving || !!a.bolsista}
-                              onChange={(e) => handlePagoCheck(a, e.target.checked)}
-                              className="rounded border-gray-300 text-green-600"
-                            />
-                            <span className="text-xs font-medium">Pago</span>
-                          </label>
+                          {!a.bolsista && a.status !== 'PAGO' && (
+                            <button
+                              type="button"
+                              onClick={() => triggerReceiptUpload(a)}
+                              disabled={saving || uploadingReceiptId === a.id}
+                              className="inline-flex items-center gap-1 rounded-lg border border-orange-200 bg-white px-2 py-1 text-xs font-medium text-brand-orange hover:bg-orange-50 disabled:opacity-50"
+                              title="Anexe o comprovante para confirmar o pagamento deste mês"
+                            >
+                              {uploadingReceiptId === a.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Paperclip className="w-3.5 h-3.5" />
+                              )}
+                              Anexar recibo
+                            </button>
+                          )}
+                          {!a.bolsista && a.status === 'PAGO' && a.receiptUrl && (
+                            <a
+                              href={a.receiptUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 rounded-lg border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100"
+                            >
+                              <Paperclip className="w-3.5 h-3.5" />
+                              Ver recibo
+                            </a>
+                          )}
+                          {!a.bolsista && a.status === 'PAGO' && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmUnpay(a)}
+                              disabled={saving}
+                              className="text-xs text-gray-500 hover:text-red-600 underline-offset-2 hover:underline"
+                            >
+                              Desmarcar
+                            </button>
+                          )}
                         </div>
                       </td>
                       )}
@@ -2808,12 +2613,13 @@ export default function FinanceiroAlunosPage() {
                         {(() => {
                           const cobranca = cobrancasMap.get(a.id) ?? null
                           const hasBoleto = !!cobranca?.boletoUrl
+                          const elegivelBoleto = alunoElegivelParaBoleto(a)
                           const isLoading = gerarCobrancaIndividualLoading === a.id && !hasBoleto
                           const handleClick = () => {
                             if (a.bolsista) return
                             if (hasBoleto && cobranca?.boletoUrl) {
                               window.open(cobranca.boletoUrl, '_blank', 'noopener,noreferrer')
-                            } else {
+                            } else if (elegivelBoleto) {
                               void handleGerarCobrancaIndividual(a)
                             }
                           }
@@ -2821,14 +2627,16 @@ export default function FinanceiroAlunosPage() {
                             <button
                               type="button"
                               onClick={handleClick}
-                              disabled={isLoading || !!a.bolsista}
+                              disabled={isLoading || !!a.bolsista || (!hasBoleto && !elegivelBoleto)}
                               className="ml-1 text-gray-500 hover:text-brand-orange p-1 disabled:opacity-50"
                               title={
                                 a.bolsista
                                   ? 'Bolsista: sem cobrança/boleto'
                                   : hasBoleto
                                     ? 'Abrir boleto já gerado'
-                                    : 'Gerar boleto/PIX na Cora'
+                                    : !elegivelBoleto
+                                      ? 'Não paga por boleto (PIX/cartão/empresa)'
+                                      : 'Gerar boleto/PIX na Cora'
                               }
                             >
                               {isLoading ? (
@@ -2871,53 +2679,18 @@ export default function FinanceiroAlunosPage() {
                 {alunos.length === 0 ? 'Nenhum aluno encontrado.' : 'Nenhum aluno corresponde aos filtros.'}
               </div>
             )}
-              </div>
+              </TableScrollArea>
             </section>
           </>
         )}
 
-        {/* Modal: confirmar marcar como pago (gera NF e envia e-mail ao aluno) */}
-        <Modal
-          isOpen={!!confirmMarkPaid}
-          onClose={() => !saving && setConfirmMarkPaid(null)}
-          title="Confirmar pagamento"
-          size="sm"
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setConfirmMarkPaid(null)} disabled={!!saving}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={async () => {
-                  if (confirmMarkPaid) {
-                    await applyPagoStatus(confirmMarkPaid, true)
-                    setConfirmMarkPaid(null)
-                  }
-                }}
-                disabled={!!saving}
-              >
-                {saving ? 'Salvando...' : 'Sim, confirmar pagamento'}
-              </Button>
-            </>
-          }
-        >
-          {confirmMarkPaid && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-700">
-                Ao marcar como pago, <strong>será gerada a Nota Fiscal (NF)</strong> e enviada ao aluno a{' '}
-                <strong>confirmação de pagamento e a NF</strong> por e-mail.
-              </p>
-              <p className="text-sm text-gray-700">
-                Tem certeza que deseja confirmar o pagamento de{' '}
-                <span className="font-semibold text-gray-900">{confirmMarkPaid.nome}</span>?
-              </p>
-              <p className="text-xs text-gray-500">
-                O boleto em aberto na Cora (se existir) será cancelado automaticamente.
-              </p>
-            </div>
-          )}
-        </Modal>
+        <input
+          ref={receiptFileInputRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.doc,.docx,application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => void onReceiptFileChange(e)}
+        />
 
         <Modal
           isOpen={!!confirmUnpay}
@@ -2933,7 +2706,7 @@ export default function FinanceiroAlunosPage() {
                 variant="primary"
                 onClick={async () => {
                   if (confirmUnpay) {
-                    await applyPagoStatus(confirmUnpay, false)
+                    await applyUnpayStatus(confirmUnpay)
                     setConfirmUnpay(null)
                   }
                 }}
@@ -2955,56 +2728,6 @@ export default function FinanceiroAlunosPage() {
               </p>
             </div>
           )}
-        </Modal>
-
-        <Modal
-          isOpen={confirmBulkUnpay}
-          onClose={() => setConfirmBulkUnpay(false)}
-          title="Remover alunos deste mês de pagamento"
-          size="md"
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setConfirmBulkUnpay(false)}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void bulkMarkPending()}
-                disabled={saving || selectedIds.size === 0}
-              >
-                {saving ? 'Salvando...' : 'Sim, remover deste mês'}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-gray-700">
-              Tem certeza que deseja <span className="font-semibold text-red-600">remover deste mês</span> os{' '}
-              <span className="font-semibold">{selectedIds.size}</span> aluno(s) selecionado(s)? Eles não aparecerão mais neste mês do financeiro de alunos.
-            </p>
-            <p className="text-xs text-gray-500">
-              Opcionalmente, informe um motivo para cada aluno (será salvo como observação financeira). Pode deixar em branco.
-            </p>
-            <div className="max-h-64 overflow-y-auto space-y-2 border-t border-gray-200 pt-3">
-              {alunos.filter((a) => selectedIds.has(a.id)).map((a) => (
-                <div key={a.id} className="space-y-1">
-                  <div className="text-sm font-medium text-gray-800">{a.nome}</div>
-                  <input
-                    type="text"
-                    value={bulkReasons[a.id] ?? ''}
-                    onChange={(e) =>
-                      setBulkReasons((prev) => ({
-                        ...prev,
-                        [a.id]: e.target.value,
-                      }))
-                    }
-                    className="input w-full text-sm"
-                    placeholder="Motivo (opcional)…"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
         </Modal>
 
         <Modal
@@ -3585,7 +3308,9 @@ export default function FinanceiroAlunosPage() {
                 ? 'Alunos com pagamento em dia'
                 : cubeModal === 'aReceber'
                   ? 'Alunos a receber'
-                  : cubeModal === 'alunos'
+                  : cubeModal === 'estimado'
+                    ? 'Total estimado — alunos no mês'
+                    : cubeModal === 'alunos'
                     ? 'Todos os alunos'
                     : cubeModal === 'nfEmAberto'
                       ? 'NF em aberto'
@@ -3605,7 +3330,9 @@ export default function FinanceiroAlunosPage() {
                     ? alunosPago
                     : cubeModal === 'aReceber'
                       ? alunosAReceber
-                      : cubeModal === 'alunos'
+                      : cubeModal === 'estimado'
+                        ? alunosEstimado
+                        : cubeModal === 'alunos'
                         ? alunosNoMes
                         : cubeModal === 'nfEmAberto'
                           ? alunosNFEmAberto
@@ -3617,12 +3344,15 @@ export default function FinanceiroAlunosPage() {
               if (!Array.isArray(list) || list.length === 0) return null
               const showVencimento = cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar' || cubeModal === 'aReceber'
               const showUltimoPag = cubeModal === 'pago'
+              const showValorMensal = cubeModal === 'estimado'
               const copyText =
                 (showVencimento
                   ? 'Aluno\tDia venc.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${a.diaPagamento ?? '—'}`).join('\n')
                   : showUltimoPag
                     ? 'Aluno\tData Pag.\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatDate(a.dataPagamento)}`).join('\n')
-                    : cubeModal === 'removidos'
+                    : showValorMensal
+                      ? 'Aluno\tMensalidade\n' + (list as AlunoFinanceiro[]).map((a) => `${a.nome}\t${formatMoney(a.valorMensal ?? 0)}`).join('\n')
+                      : cubeModal === 'removidos'
                       ? 'Aluno\tMotivo\n' + (list as AlunoRemovidoMes[]).map((a) => `${a.nome}\t${a.motivo ?? ''}`).join('\n')
                       : 'Aluno\n' + list.map((a: any) => a.nome).join('\n'))
               return (
@@ -3666,7 +3396,9 @@ export default function FinanceiroAlunosPage() {
                   ? alunosPago
                   : cubeModal === 'aReceber'
                     ? alunosAReceber
-                    : cubeModal === 'alunos'
+                    : cubeModal === 'estimado'
+                      ? alunosEstimado
+                      : cubeModal === 'alunos'
                       ? alunosNoMes
                       : cubeModal === 'nfEmAberto'
                         ? alunosNFEmAberto
@@ -3680,6 +3412,7 @@ export default function FinanceiroAlunosPage() {
             }
             const showVencimento = cubeModal === 'atrasado' || cubeModal === 'atrasadoCancelar' || cubeModal === 'aReceber'
             const showUltimoPag = cubeModal === 'pago'
+            const showValorMensal = cubeModal === 'estimado'
             return (
               <>
                 <ul className="space-y-2 max-h-80 overflow-y-auto">
@@ -3724,13 +3457,16 @@ export default function FinanceiroAlunosPage() {
                             )}
                           </button>
                         )}
-                        {(showVencimento || showUltimoPag) && (
+                        {(showVencimento || showUltimoPag || showValorMensal) && (
                           <span className="text-sm text-gray-600">
                             {showVencimento && (
                               <>Dia venc.: {(a as AlunoFinanceiro).diaPagamento ?? '—'}</>
                             )}
                             {showUltimoPag && !showVencimento && (
                               <>Data pag.: {formatDate((a as AlunoFinanceiro).dataPagamento)}</>
+                            )}
+                            {showValorMensal && (
+                              <>Mensalidade: {formatMoney((a as AlunoFinanceiro).valorMensal ?? 0)}</>
                             )}
                           </span>
                         )}

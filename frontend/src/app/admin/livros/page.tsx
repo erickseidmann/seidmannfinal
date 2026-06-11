@@ -9,12 +9,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
-import Table from '@/components/admin/Table'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import Button from '@/components/ui/Button'
-import { Plus, Search, BookOpen, Upload, X, Headphones, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Search, BookOpen, Upload, X, Headphones, Trash2, Loader2, Check } from 'lucide-react'
 
 const MAX_BATCH_AUDIOS = 10
 const ALLOWED_AUDIO_EXT = ['.mp3', '.m4a', '.wav', '.ogg', '.webm'] as const
@@ -107,31 +106,22 @@ export default function AdminLivrosPage() {
   const router = useRouter()
   const [tab, setTab] = useState<'catalogo' | 'liberacoes'>('catalogo')
   const [books, setBooks] = useState<Book[]>([])
-  const [releases, setReleases] = useState<BookRelease[]>([])
-  const [usersForRelease, setUsersForRelease] = useState<UserForRelease[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [releaseSearch, setReleaseSearch] = useState('')
-  const [releaseFilterBookId, setReleaseFilterBookId] = useState('')
   const [releaseFilterRole, setReleaseFilterRole] = useState<'all' | 'STUDENT' | 'TEACHER'>('all')
-  const [isBulkReleaseModalOpen, setIsBulkReleaseModalOpen] = useState(false)
-  const [bulkReleaseForm, setBulkReleaseForm] = useState({
-    selectedUserIds: [] as string[],
-    selectedBookIds: [] as string[],
-  })
-  const [bulkUserSearch, setBulkUserSearch] = useState('')
-  const [bulkReleaseLoading, setBulkReleaseLoading] = useState(false)
-  const [bulkReleaseUsers, setBulkReleaseUsers] = useState<UserForRelease[]>([])
-  const [studentSearch, setStudentSearch] = useState('')
-  const [isReleaseModalOpen, setIsReleaseModalOpen] = useState(false)
+  const [releaseLanguageTab, setReleaseLanguageTab] = useState<BookLanguage>('ENGLISH')
+  const [releaseUsers, setReleaseUsers] = useState<UserForRelease[]>([])
+  const [releaseUsersLoading, setReleaseUsersLoading] = useState(false)
+  const [selectedReleaseUser, setSelectedReleaseUser] = useState<UserForRelease | null>(null)
+  const [userReleasesByBookId, setUserReleasesByBookId] = useState<Record<string, BookRelease>>({})
+  const [userReleasesLoading, setUserReleasesLoading] = useState(false)
+  const [togglingBookId, setTogglingBookId] = useState<string | null>(null)
   const [isCreateBookModalOpen, setIsCreateBookModalOpen] = useState(false)
   const [createBookLoading, setCreateBookLoading] = useState(false)
   const [editingBook, setEditingBook] = useState<Book | null>(null)
   const [editBookLoading, setEditBookLoading] = useState(false)
   const [deletingBookLoading, setDeletingBookLoading] = useState(false)
-  const [releaseLoading, setReleaseLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const [revokingId, setRevokingId] = useState<string | null>(null)
 
   const [createBookForm, setCreateBookForm] = useState({
     nome: '',
@@ -146,7 +136,7 @@ export default function AdminLivrosPage() {
   const [editBookForm, setEditBookForm] = useState({
     nome: '',
     level: 'A1',
-    language: 'ENGLISH' as BookLanguage,
+    language: '' as BookLanguage | '',
     totalPaginas: 1,
     imprimivel: true,
     pdf: null as File | null,
@@ -164,11 +154,6 @@ export default function AdminLivrosPage() {
   const [deletingAudioId, setDeletingAudioId] = useState<string | null>(null)
   const [pendingBatchAudios, setPendingBatchAudios] = useState<PendingBatchAudioRow[]>([])
   const batchFileInputRef = useRef<HTMLInputElement>(null)
-
-  const [releaseForm, setReleaseForm] = useState({
-    selectedUserIds: [] as string[],
-    bookId: '',
-  })
 
   const fetchBooks = useCallback(async () => {
     try {
@@ -188,14 +173,13 @@ export default function AdminLivrosPage() {
     }
   }, [router])
 
-  const fetchReleases = useCallback(async () => {
-    setLoading(true)
+  const fetchReleaseUsers = useCallback(async () => {
+    setReleaseUsersLoading(true)
     try {
       const params = new URLSearchParams()
-      if (releaseSearch.trim()) params.append('search', releaseSearch.trim())
-      if (releaseFilterBookId) params.append('bookId', releaseFilterBookId)
-      if (releaseFilterRole !== 'all') params.append('role', releaseFilterRole)
-      const res = await fetch(`/api/admin/books/releases?${params.toString()}`, {
+      if (releaseSearch.trim()) params.set('search', releaseSearch.trim())
+      params.set('includeTeachers', 'true')
+      const res = await fetch(`/api/admin/books/students?${params.toString()}`, {
         credentials: 'include',
       })
       const json = await res.json()
@@ -204,51 +188,47 @@ export default function AdminLivrosPage() {
           router.push('/login?tab=admin')
           return
         }
-        throw new Error(json.message || 'Erro ao carregar liberações')
+        throw new Error(json.message || 'Erro ao buscar usuários')
       }
-      if (json.ok) setReleases(json.data?.releases || [])
+      setReleaseUsers(json.ok ? json.data || [] : [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro')
+      setError(err instanceof Error ? err.message : 'Erro ao buscar usuários')
+      setReleaseUsers([])
     } finally {
-      setLoading(false)
+      setReleaseUsersLoading(false)
     }
-  }, [releaseSearch, releaseFilterBookId, releaseFilterRole, router])
+  }, [releaseSearch, router])
 
-  const fetchUsersForRelease = useCallback(
-    async (q?: string, excludeBookId?: string) => {
+  const fetchUserReleases = useCallback(
+    async (userId: string) => {
+      setUserReleasesLoading(true)
       try {
-        const params = new URLSearchParams()
-        if (q?.trim()) params.set('search', q.trim())
-        if (excludeBookId) params.set('excludeBookId', excludeBookId)
-        params.set('includeTeachers', 'true')
-        const res = await fetch(`/api/admin/books/students?${params.toString()}`, {
-          credentials: 'include',
-        })
+        const res = await fetch(
+          `/api/admin/books/releases?userId=${encodeURIComponent(userId)}`,
+          { credentials: 'include' }
+        )
         const json = await res.json()
-        if (json.ok) setUsersForRelease(json.data || [])
-        else setUsersForRelease([])
-      } catch {
-        setUsersForRelease([])
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message || 'Erro ao carregar liberações do usuário')
+        }
+        const map: Record<string, BookRelease> = {}
+        for (const r of (json.data?.releases || []) as BookRelease[]) {
+          const key = r.bookId || r.bookCode
+          if (key) map[key] = r
+        }
+        setUserReleasesByBookId(map)
+      } catch (err) {
+        setToast({
+          message: err instanceof Error ? err.message : 'Erro ao carregar liberações',
+          type: 'error',
+        })
+        setUserReleasesByBookId({})
+      } finally {
+        setUserReleasesLoading(false)
       }
     },
     []
   )
-
-  const fetchBulkReleaseUsers = useCallback(async (q?: string) => {
-    try {
-      const params = new URLSearchParams()
-      if (q?.trim()) params.set('search', q.trim())
-      params.set('includeTeachers', 'true')
-      const res = await fetch(`/api/admin/books/students?${params.toString()}`, {
-        credentials: 'include',
-      })
-      const json = await res.json()
-      if (json.ok) setBulkReleaseUsers(json.data || [])
-      else setBulkReleaseUsers([])
-    } catch {
-      setBulkReleaseUsers([])
-    }
-  }, [])
 
   useEffect(() => {
     if (tab === 'catalogo') fetchBooks()
@@ -280,20 +260,17 @@ export default function AdminLivrosPage() {
   }, [editingBook?.id])
 
   useEffect(() => {
-    if (tab === 'liberacoes') fetchReleases()
-  }, [tab, releaseFilterBookId, releaseFilterRole, fetchReleases])
+    if (tab !== 'liberacoes') return
+    void Promise.all([fetchBooks(), fetchReleaseUsers()])
+  }, [tab, fetchBooks, fetchReleaseUsers])
 
   useEffect(() => {
-    if (isReleaseModalOpen) {
-      fetchUsersForRelease(studentSearch, releaseForm.bookId)
+    if (!selectedReleaseUser) {
+      setUserReleasesByBookId({})
+      return
     }
-  }, [isReleaseModalOpen, studentSearch, releaseForm.bookId, fetchUsersForRelease])
-
-  useEffect(() => {
-    if (isBulkReleaseModalOpen) {
-      fetchBulkReleaseUsers(bulkUserSearch)
-    }
-  }, [isBulkReleaseModalOpen, bulkUserSearch, fetchBulkReleaseUsers])
+    fetchUserReleases(selectedReleaseUser.id)
+  }, [selectedReleaseUser, fetchUserReleases])
 
   const handleCreateBook = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -348,7 +325,7 @@ export default function AdminLivrosPage() {
     setEditBookForm({
       nome: book.nome,
       level: book.level,
-      language: (book.language ?? 'ENGLISH') as BookLanguage,
+      language: book.language ?? '',
       totalPaginas: book.totalPaginas,
       imprimivel: book.imprimivel,
       pdf: null,
@@ -567,13 +544,15 @@ export default function AdminLivrosPage() {
       setToast({ message: 'Nome é obrigatório.', type: 'error' })
       return
     }
+    if (!editBookForm.language) {
+      setToast({
+        message: 'Selecione o idioma do livro (Inglês ou Espanhol) e clique em Salvar.',
+        type: 'error',
+      })
+      return
+    }
     setEditBookLoading(true)
     try {
-      const batchOk = await submitPendingBatchAudios({ showSuccessToast: false })
-      if (!batchOk) return
-      const audioOk = await trySubmitPendingAudio({ showSuccessToast: false })
-      if (!audioOk) return
-
       const fd = new FormData()
       fd.append('nome', editBookForm.nome.trim())
       fd.append('level', editBookForm.level)
@@ -592,12 +571,25 @@ export default function AdminLivrosPage() {
       if (!res.ok || !json.ok) {
         throw new Error(json.message || 'Erro ao atualizar livro')
       }
+
+      await fetchBooks()
+      if (json.data?.language) {
+        setEditingBook((prev) =>
+          prev ? { ...prev, language: json.data.language as BookLanguage } : prev
+        )
+      }
+
+      const batchOk = await submitPendingBatchAudios({ showSuccessToast: false })
+      const audioOk = batchOk ? await trySubmitPendingAudio({ showSuccessToast: false }) : false
+
       setToast({
         message: json.message || 'Livro atualizado com sucesso!',
         type: 'success',
       })
-      setEditingBook(null)
-      fetchBooks()
+
+      if (batchOk && audioOk) {
+        setEditingBook(null)
+      }
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao atualizar', type: 'error' })
     } finally {
@@ -635,7 +627,7 @@ export default function AdminLivrosPage() {
       })
       setEditingBook(null)
       fetchBooks()
-      fetchReleases()
+      if (selectedReleaseUser) fetchUserReleases(selectedReleaseUser.id)
     } catch (err) {
       setToast({
         message: err instanceof Error ? err.message : 'Erro ao excluir livro',
@@ -646,190 +638,119 @@ export default function AdminLivrosPage() {
     }
   }
 
-  const handleRelease = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (releaseForm.selectedUserIds.length === 0 || !releaseForm.bookId) {
-      setToast({ message: 'Selecione o livro e pelo menos um aluno.', type: 'error' })
-      return
-    }
-    setReleaseLoading(true)
+  const handleToggleBookForUser = async (book: Book) => {
+    if (!selectedReleaseUser || togglingBookId) return
+
+    const existing = userReleasesByBookId[book.id]
+    setTogglingBookId(book.id)
+
     try {
-      const res = await fetch('/api/admin/books/release-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          bookId: releaseForm.bookId,
-          userIds: releaseForm.selectedUserIds,
-        }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        throw new Error(json.message || 'Erro ao liberar livro')
-      }
-      setToast({ message: json.message || 'Livro liberado!', type: 'success' })
-      setIsReleaseModalOpen(false)
-      setReleaseForm({ selectedUserIds: [], bookId: '' })
-      setStudentSearch('')
-      fetchReleases()
-    } catch (err) {
-      setToast({ message: err instanceof Error ? err.message : 'Erro ao liberar', type: 'error' })
-    } finally {
-      setReleaseLoading(false)
-    }
-  }
-
-  const toggleUser = (userId: string) => {
-    setReleaseForm((p) =>
-      p.selectedUserIds.includes(userId)
-        ? { ...p, selectedUserIds: p.selectedUserIds.filter((id) => id !== userId) }
-        : { ...p, selectedUserIds: [...p.selectedUserIds, userId] }
-    )
-  }
-
-  const selectAllUsers = () => {
-    setReleaseForm((p) => ({
-      ...p,
-      selectedUserIds: usersForRelease.map((u) => u.id),
-    }))
-  }
-
-  const deselectAllUsers = () => {
-    setReleaseForm((p) => ({ ...p, selectedUserIds: [] }))
-  }
-
-  const toggleBulkUser = (userId: string) => {
-    setBulkReleaseForm((p) =>
-      p.selectedUserIds.includes(userId)
-        ? { ...p, selectedUserIds: p.selectedUserIds.filter((id) => id !== userId) }
-        : { ...p, selectedUserIds: [...p.selectedUserIds, userId] }
-    )
-  }
-
-  const toggleBulkBook = (bookId: string) => {
-    setBulkReleaseForm((p) =>
-      p.selectedBookIds.includes(bookId)
-        ? { ...p, selectedBookIds: p.selectedBookIds.filter((id) => id !== bookId) }
-        : { ...p, selectedBookIds: [...p.selectedBookIds, bookId] }
-    )
-  }
-
-  const selectAllBulkUsers = () => {
-    setBulkReleaseForm((p) => ({
-      ...p,
-      selectedUserIds: bulkReleaseUsers.map((u) => u.id),
-    }))
-  }
-
-  const selectAllBulkBooks = () => {
-    setBulkReleaseForm((p) => ({
-      ...p,
-      selectedBookIds: books.map((b) => b.id),
-    }))
-  }
-
-  const handleBulkRelease = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (bulkReleaseForm.selectedUserIds.length === 0 || bulkReleaseForm.selectedBookIds.length === 0) {
-      setToast({
-        message: 'Selecione pelo menos um usuário e um livro.',
-        type: 'error',
-      })
-      return
-    }
-    setBulkReleaseLoading(true)
-    try {
-      const res = await fetch('/api/admin/books/release-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          bookIds: bulkReleaseForm.selectedBookIds,
-          userIds: bulkReleaseForm.selectedUserIds,
-        }),
-      })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        throw new Error(json.message || 'Erro ao liberar')
-      }
-      setToast({ message: json.message || 'Liberado!', type: 'success' })
-      setIsBulkReleaseModalOpen(false)
-      setBulkReleaseForm({ selectedUserIds: [], selectedBookIds: [] })
-      setBulkUserSearch('')
-      fetchReleases()
-    } catch (err) {
-      setToast({
-        message: err instanceof Error ? err.message : 'Erro ao liberar',
-        type: 'error',
-      })
-    } finally {
-      setBulkReleaseLoading(false)
-    }
-  }
-
-  const handleRevokeAccess = async (releaseId: string) => {
-    setRevokingId(releaseId)
-    try {
-      const res = await fetch(`/api/admin/books/releases/${releaseId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      })
-      const json = await res.json()
-      if (res.ok && json.ok) {
-        setToast({ message: 'Acesso revogado', type: 'success' })
-        fetchReleases()
+      if (existing) {
+        const res = await fetch(`/api/admin/books/releases/${existing.id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message || 'Erro ao revogar acesso')
+        }
+        setUserReleasesByBookId((prev) => {
+          const next = { ...prev }
+          delete next[book.id]
+          return next
+        })
+        setToast({ message: `Acesso a "${book.nome}" revogado.`, type: 'success' })
       } else {
-        setToast({ message: json.message || 'Erro ao revogar', type: 'error' })
+        const res = await fetch('/api/admin/books/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            userId: selectedReleaseUser.id,
+            bookId: book.id,
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          throw new Error(json.message || 'Erro ao liberar livro')
+        }
+        const release = json.data?.release as BookRelease | undefined
+        if (release) {
+          setUserReleasesByBookId((prev) => ({ ...prev, [book.id]: release }))
+        }
+        setToast({
+          message: json.data?.message || `Livro "${book.nome}" liberado!`,
+          type: 'success',
+        })
       }
-    } catch {
-      setToast({ message: 'Erro ao revogar acesso', type: 'error' })
+    } catch (err) {
+      setToast({
+        message: err instanceof Error ? err.message : 'Erro ao atualizar liberação',
+        type: 'error',
+      })
     } finally {
-      setRevokingId(null)
+      setTogglingBookId(null)
     }
   }
 
-  const releaseColumns = [
-    {
-      key: 'user',
-      label: 'Usuário',
-      render: (r: BookRelease) => (
-        <span className="flex items-center gap-2">
-          {r.user.nome}
-          <span className="text-xs text-gray-500">
-            ({r.user.role === 'TEACHER' ? 'Prof' : 'Aluno'})
-          </span>
-        </span>
-      ),
-    },
-    { key: 'user.email', label: 'Email', render: (r: BookRelease) => r.user.email },
-    {
-      key: 'book',
-      label: 'Livro',
-      render: (r: BookRelease) => (
-        <span className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleRevokeAccess(r.id)
-            }}
-            disabled={revokingId === r.id}
-            className="p-1 rounded text-red-600 hover:bg-red-50 disabled:opacity-50 shrink-0"
-            title="Revogar acesso a este livro"
+  const filteredReleaseUsers = releaseUsers.filter(
+    (u) => releaseFilterRole === 'all' || u.role === releaseFilterRole
+  )
+
+  const booksForReleaseLanguage = books.filter((b) => b.language === releaseLanguageTab)
+  const booksWithoutLanguage = books.filter((b) => !b.language)
+  const hasReleaseBooksToShow =
+    booksForReleaseLanguage.length > 0 || booksWithoutLanguage.length > 0
+
+  const renderReleaseBookChip = (book: Book, options?: { missingLanguage?: boolean }) => {
+    const release = userReleasesByBookId[book.id]
+    const isReleased = Boolean(release)
+    const isToggling = togglingBookId === book.id
+
+    return (
+      <button
+        key={book.id}
+        type="button"
+        onClick={() => handleToggleBookForUser(book)}
+        disabled={isToggling}
+        className={`min-w-[140px] max-w-[220px] flex-1 rounded-xl border-2 px-4 py-3 text-left transition-all disabled:opacity-60 ${
+          isReleased
+            ? 'border-green-500 bg-green-50 hover:bg-green-100/80'
+            : options?.missingLanguage
+              ? 'border-amber-300 bg-amber-50/50 hover:border-amber-400'
+              : 'border-gray-200 bg-white hover:border-brand-orange hover:shadow-sm'
+        }`}
+      >
+        <div className="flex items-start gap-2.5">
+          <div
+            className={`mt-0.5 shrink-0 w-5 h-5 rounded flex items-center justify-center ${
+              isReleased
+                ? 'bg-green-500 text-white'
+                : 'border-2 border-gray-300 bg-white'
+            }`}
           >
-            <X className="w-4 h-4" />
-          </button>
-          {r.book ? r.book.nome : r.bookCode}
-        </span>
-      ),
-    },
-    { key: 'releasedByAdminEmail', label: 'Liberado por' },
-    {
-      key: 'criadoEm',
-      label: 'Data',
-      render: (r: BookRelease) => new Date(r.criadoEm).toLocaleDateString('pt-BR'),
-    },
-  ]
+            {isToggling ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+            ) : isReleased ? (
+              <Check className="w-3.5 h-3.5" strokeWidth={3} />
+            ) : null}
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-gray-900 truncate">{book.nome}</p>
+            <p className="text-xs text-gray-500">{book.level}</p>
+            {options?.missingLanguage && (
+              <p className="text-xs text-amber-700 mt-1">Sem idioma — defina no Catálogo</p>
+            )}
+            {isReleased && release && (
+              <p className="text-xs text-green-700 font-medium mt-1.5">
+                Liberado em {new Date(release.criadoEm).toLocaleDateString('pt-BR')}
+              </p>
+            )}
+          </div>
+        </div>
+      </button>
+    )
+  }
 
   return (
     <AdminLayout>
@@ -838,7 +759,7 @@ export default function AdminLivrosPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Livros</h1>
             <p className="text-sm text-gray-600">
-              Cadastre livros (PDF, capa, nível) e libere para alunos
+              Cadastre livros no catálogo e libere com um clique na aba Liberações
             </p>
           </div>
           <div className="flex gap-2">
@@ -866,28 +787,6 @@ export default function AdminLivrosPage() {
                 <Plus className="w-4 h-4" />
                 Cadastrar Livro
               </Button>
-            )}
-            {tab === 'liberacoes' && (
-              <>
-                <Button
-                  variant="primary"
-                  size="md"
-                  className="flex items-center gap-2"
-                  onClick={() => setIsReleaseModalOpen(true)}
-                >
-                  <Plus className="w-4 h-4" />
-                  Liberar Livro
-                </Button>
-                <Button
-                  variant="outline"
-                  size="md"
-                  className="flex items-center gap-2"
-                  onClick={() => setIsBulkReleaseModalOpen(true)}
-                >
-                  <BookOpen className="w-4 h-4" />
-                  Liberar para usuário(s)
-                </Button>
-              </>
             )}
           </div>
         </div>
@@ -962,12 +861,17 @@ export default function AdminLivrosPage() {
 
         {tab === 'liberacoes' && (
           <>
-            <div className="mb-6 space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Buscar por nome ou email
-                </label>
-                <div className="flex gap-2">
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
+                {error}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,320px)_1fr] gap-6">
+              {/* Lista de usuários */}
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm h-fit lg:sticky lg:top-4">
+                <h2 className="text-sm font-semibold text-gray-900 mb-3">Usuário</h2>
+                <div className="flex gap-2 mb-3">
                   <input
                     type="text"
                     value={releaseSearch}
@@ -975,88 +879,176 @@ export default function AdminLivrosPage() {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        fetchReleases()
+                        fetchReleaseUsers()
                       }
                     }}
-                    className="input flex-1"
-                    placeholder="Nome do aluno ou professor, ou email (deixe vazio para ver todos)"
+                    className="input flex-1 text-sm"
+                    placeholder="Buscar por nome ou email"
                   />
-                  <Button variant="outline" size="md" onClick={fetchReleases}>
+                  <Button variant="outline" size="md" onClick={fetchReleaseUsers}>
                     <Search className="w-4 h-4" />
                   </Button>
                 </div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {(
+                    [
+                      ['all', 'Todos'],
+                      ['STUDENT', 'Alunos'],
+                      ['TEACHER', 'Professores'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setReleaseFilterRole(value)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-medium ${
+                        releaseFilterRole === value
+                          ? 'bg-brand-orange text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="border border-gray-200 rounded-lg max-h-[min(60vh,520px)] overflow-y-auto">
+                  {releaseUsersLoading ? (
+                    <div className="flex items-center justify-center gap-2 p-6 text-gray-500 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Carregando...
+                    </div>
+                  ) : filteredReleaseUsers.length === 0 ? (
+                    <p className="p-4 text-gray-500 text-sm text-center">
+                      Nenhum usuário encontrado.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100">
+                      {filteredReleaseUsers.map((u) => {
+                        const isSelected = selectedReleaseUser?.id === u.id
+                        return (
+                          <li key={u.id}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedReleaseUser(u)}
+                              className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
+                                isSelected
+                                  ? 'bg-brand-orange/10 border-l-4 border-brand-orange'
+                                  : 'hover:bg-gray-50 border-l-4 border-transparent'
+                              }`}
+                            >
+                              <span className="font-medium text-gray-900">{u.nome}</span>
+                              <span className="block text-xs text-gray-500 truncate">{u.email}</span>
+                              <span className="inline-block mt-1 text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
+                                {u.role === 'TEACHER' ? 'Professor' : 'Aluno'}
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-4 items-end">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Filtrar por livro
-                  </label>
-                  <select
-                    value={releaseFilterBookId}
-                    onChange={(e) => setReleaseFilterBookId(e.target.value)}
-                    className="input py-2"
-                  >
-                    <option value="">Todos os livros</option>
-                    {books.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.nome} ({b.level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Tipo
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setReleaseFilterRole('all')}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium ${
-                        releaseFilterRole === 'all'
-                          ? 'bg-brand-orange text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReleaseFilterRole('STUDENT')}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium ${
-                        releaseFilterRole === 'STUDENT'
-                          ? 'bg-brand-orange text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      Somente alunos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReleaseFilterRole('TEACHER')}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium ${
-                        releaseFilterRole === 'TEACHER'
-                          ? 'bg-brand-orange text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      Somente professores
-                    </button>
+
+              {/* Livros por idioma */}
+              <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
+                {!selectedReleaseUser ? (
+                  <div className="text-center py-16 text-gray-500">
+                    <BookOpen className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                    <p className="font-medium text-gray-700">Selecione um usuário</p>
+                    <p className="text-sm mt-1">
+                      Escolha um aluno ou professor à esquerda para liberar livros com um clique.
+                    </p>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="mb-5">
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                        Liberando para
+                      </p>
+                      <p className="text-lg font-semibold text-gray-900">{selectedReleaseUser.nome}</p>
+                      <p className="text-sm text-gray-500">{selectedReleaseUser.email}</p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 mb-5">
+                      <button
+                        type="button"
+                        onClick={() => setReleaseLanguageTab('ENGLISH')}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                          releaseLanguageTab === 'ENGLISH'
+                            ? 'bg-brand-orange text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        Livros em inglês
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReleaseLanguageTab('SPANISH')}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                          releaseLanguageTab === 'SPANISH'
+                            ? 'bg-brand-orange text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        Livros em espanhol
+                      </button>
+                    </div>
+
+                    {userReleasesLoading ? (
+                      <div className="flex items-center justify-center gap-2 py-16 text-gray-500">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Carregando liberações...
+                      </div>
+                    ) : !hasReleaseBooksToShow ? (
+                      <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                        <p className="text-gray-600">
+                          Nenhum livro de{' '}
+                          {releaseLanguageTab === 'ENGLISH' ? 'inglês' : 'espanhol'} no catálogo.
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          Cadastre livros na aba Catálogo e defina o idioma de cada um ao editar.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        {booksForReleaseLanguage.length > 0 && (
+                          <div className="flex flex-wrap gap-3">
+                            {booksForReleaseLanguage.map((book) => renderReleaseBookChip(book))}
+                          </div>
+                        )}
+                        {booksWithoutLanguage.length > 0 && (
+                          <div>
+                            {booksForReleaseLanguage.length > 0 && (
+                              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                                Sem idioma definido
+                              </p>
+                            )}
+                            {booksForReleaseLanguage.length === 0 && (
+                              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                                Seus livros ainda não têm idioma cadastrado. Eles aparecem abaixo
+                                para liberação; edite cada um no Catálogo e defina Inglês ou
+                                Espanhol para filtrar corretamente.
+                              </p>
+                            )}
+                            <div className="flex flex-wrap gap-3">
+                              {booksWithoutLanguage.map((book) =>
+                                renderReleaseBookChip(book, { missingLanguage: true })
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <p className="text-xs text-gray-500 mt-5">
+                      Clique no livro para liberar ou revogar o acesso. Livros com check já estão
+                      liberados para este usuário.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
-            {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
-                {error}
-              </div>
-            )}
-            <Table
-              columns={releaseColumns}
-              data={releases}
-              loading={loading}
-              emptyMessage="Nenhuma liberação encontrada"
-            />
           </>
         )}
 
@@ -1279,16 +1271,24 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
                 <label className="block text-sm font-semibold text-gray-700 mb-1">
                   Idioma <span className="text-red-500">*</span>
                 </label>
+                {!editingBook.language && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                    Este livro ainda não tem idioma salvo. Selecione abaixo e clique em{' '}
+                    <strong>Salvar</strong> para aparecer corretamente em Liberações.
+                  </p>
+                )}
                 <select
                   value={editBookForm.language}
                   onChange={(e) =>
                     setEditBookForm((p) => ({
                       ...p,
-                      language: e.target.value as BookLanguage,
+                      language: e.target.value as BookLanguage | '',
                     }))
                   }
                   className="input w-full"
+                  required
                 >
+                  <option value="">— Selecione o idioma —</option>
                   {BOOK_LANGUAGES.map((l) => (
                     <option key={l.value} value={l.value}>
                       {l.label}
@@ -1662,287 +1662,6 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
               </div>
             </form>
           )}
-        </Modal>
-
-        {/* Modal Liberar Livro */}
-        <Modal
-          isOpen={isReleaseModalOpen}
-          onClose={() => {
-            setIsReleaseModalOpen(false)
-            setReleaseForm({ selectedUserIds: [], bookId: '' })
-            setStudentSearch('')
-          }}
-          title="Liberar Livro"
-          size="xl"
-          footer={
-            <>
-              <Button variant="outline" onClick={() => setIsReleaseModalOpen(false)}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void handleRelease({ preventDefault: () => {} } as React.FormEvent)}
-                disabled={
-                  releaseLoading ||
-                  releaseForm.selectedUserIds.length === 0 ||
-                  !releaseForm.bookId
-                }
-              >
-                {releaseLoading
-                  ? 'Liberando...'
-                  : `Liberar para ${releaseForm.selectedUserIds.length} selecionado(s)`}
-              </Button>
-            </>
-          }
-        >
-          <form onSubmit={handleRelease} className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Livro <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={releaseForm.bookId}
-                onChange={(e) => {
-                  const bookId = e.target.value
-                  setReleaseForm((p) => ({ ...p, bookId, selectedUserIds: [] }))
-                  fetchUsersForRelease(studentSearch, bookId || undefined)
-                }}
-                className="input w-full"
-                required
-              >
-                <option value="">Selecione o livro</option>
-                {books.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.nome} ({b.level})
-                  </option>
-                ))}
-              </select>
-              {books.length === 0 && (
-                <p className="text-sm text-amber-600 mt-1">
-                  Cadastre livros no Catálogo antes de liberar.
-                </p>
-              )}
-            </div>
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <label className="block text-sm font-semibold text-gray-700">
-                  Alunos e professores que terão acesso <span className="text-red-500">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={selectAllUsers}
-                    className="text-sm text-brand-orange hover:underline font-medium"
-                  >
-                    Selecionar todos
-                  </button>
-                  <span className="text-gray-400">|</span>
-                  <button
-                    type="button"
-                    onClick={deselectAllUsers}
-                    className="text-sm text-gray-600 hover:underline"
-                  >
-                    Desmarcar todos
-                  </button>
-                </div>
-              </div>
-              <input
-                type="text"
-                value={studentSearch}
-                onChange={(e) => setStudentSearch(e.target.value)}
-                placeholder="Buscar por nome ou email..."
-                className="input w-full mb-3"
-              />
-              <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
-                {usersForRelease.length === 0 ? (
-                  <p className="p-4 text-gray-500 text-sm text-center">
-                    Nenhuma pessoa encontrada. Digite para buscar.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-gray-100">
-                    {usersForRelease.map((u) => (
-                      <li
-                        key={u.id}
-                        className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
-                        onClick={() => toggleUser(u.id)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={releaseForm.selectedUserIds.includes(u.id)}
-                          onChange={() => toggleUser(u.id)}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="flex-1 text-sm">
-                          {u.nome}
-                          <span className="text-gray-500 ml-1">({u.email})</span>
-                          <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
-                            {u.role === 'TEACHER' ? 'Prof' : 'Aluno'}
-                          </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {releaseForm.selectedUserIds.length > 0 && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {releaseForm.selectedUserIds.length} selecionado(s)
-                </p>
-              )}
-            </div>
-          </form>
-        </Modal>
-
-        {/* Modal Liberar para usuário(s) */}
-        <Modal
-          isOpen={isBulkReleaseModalOpen}
-          onClose={() => {
-            setIsBulkReleaseModalOpen(false)
-            setBulkReleaseForm({ selectedUserIds: [], selectedBookIds: [] })
-            setBulkUserSearch('')
-          }}
-          title="Liberar livros para usuário(s)"
-          size="xl"
-          footer={
-            <>
-              <Button variant="outline" onClick={() => setIsBulkReleaseModalOpen(false)}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void handleBulkRelease({ preventDefault: () => {} } as React.FormEvent)}
-                disabled={
-                  bulkReleaseLoading ||
-                  bulkReleaseForm.selectedUserIds.length === 0 ||
-                  bulkReleaseForm.selectedBookIds.length === 0
-                }
-              >
-                {bulkReleaseLoading
-                  ? 'Liberando...'
-                  : `Liberar ${bulkReleaseForm.selectedBookIds.length} livro(s) para ${bulkReleaseForm.selectedUserIds.length} usuário(s)`}
-              </Button>
-            </>
-          }
-        >
-          <form onSubmit={handleBulkRelease} className="space-y-6">
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <label className="block text-sm font-semibold text-gray-700">
-                  Usuários <span className="text-red-500">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={selectAllBulkUsers}
-                    className="text-sm text-brand-orange hover:underline font-medium"
-                  >
-                    Selecionar todos
-                  </button>
-                  <span className="text-gray-400">|</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setBulkReleaseForm((p) => ({ ...p, selectedUserIds: [] }))
-                    }
-                    className="text-sm text-gray-600 hover:underline"
-                  >
-                    Desmarcar
-                  </button>
-                </div>
-              </div>
-              <input
-                type="text"
-                value={bulkUserSearch}
-                onChange={(e) => setBulkUserSearch(e.target.value)}
-                placeholder="Buscar por nome ou email..."
-                className="input w-full mb-3"
-              />
-              <div className="border border-gray-200 rounded-lg max-h-48 overflow-y-auto">
-                {bulkReleaseUsers.length === 0 ? (
-                  <p className="p-4 text-gray-500 text-sm text-center">
-                    Digite para buscar usuários.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-gray-100">
-                    {bulkReleaseUsers.map((u) => (
-                      <li
-                        key={u.id}
-                        className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
-                        onClick={() => toggleBulkUser(u.id)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={bulkReleaseForm.selectedUserIds.includes(u.id)}
-                          onChange={() => toggleBulkUser(u.id)}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="flex-1 text-sm">
-                          {u.nome}
-                          <span className="text-gray-500 ml-1">({u.email})</span>
-                          <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
-                            {u.role === 'TEACHER' ? 'Prof' : 'Aluno'}
-                          </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <label className="block text-sm font-semibold text-gray-700">
-                  Livros a liberar <span className="text-red-500">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={selectAllBulkBooks}
-                    className="text-sm text-brand-orange hover:underline font-medium"
-                  >
-                    Selecionar todos
-                  </button>
-                  <span className="text-gray-400">|</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setBulkReleaseForm((p) => ({ ...p, selectedBookIds: [] }))
-                    }
-                    className="text-sm text-gray-600 hover:underline"
-                  >
-                    Desmarcar
-                  </button>
-                </div>
-              </div>
-              <div className="border border-gray-200 rounded-lg max-h-48 overflow-y-auto">
-                {books.length === 0 ? (
-                  <p className="p-4 text-gray-500 text-sm text-center">
-                    Nenhum livro cadastrado.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-gray-100">
-                    {books.map((b) => (
-                      <li
-                        key={b.id}
-                        className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
-                        onClick={() => toggleBulkBook(b.id)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={bulkReleaseForm.selectedBookIds.includes(b.id)}
-                          onChange={() => toggleBulkBook(b.id)}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-sm">
-                          {b.nome} ({b.level})
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </form>
         </Modal>
 
         {/* Toast */}

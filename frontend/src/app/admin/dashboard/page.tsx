@@ -12,17 +12,14 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { toDateKeyInTZ } from '@/lib/datetime'
 import {
-  Users,
   UserCheck,
-  UserX,
-  GraduationCap,
   CalendarX,
   AlertTriangle,
   UserPlus,
-  History,
   FileClock,
   Link2,
   ArrowRightLeft,
@@ -31,6 +28,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ListTodo,
+  UserX,
 } from 'lucide-react'
 
 function LinkItem({ label, path }: { label: string; path: string }) {
@@ -56,16 +54,6 @@ function LinkItem({ label, path }: { label: string; path: string }) {
   )
 }
 
-/** Segunda-feira 00:00 da semana que contém d */
-function getMonday(d: Date): Date {
-  const date = new Date(d)
-  const day = date.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  date.setDate(date.getDate() + diff)
-  date.setHours(0, 0, 0, 0)
-  return date
-}
-
 function formatTime(iso: string): string {
   const d = new Date(iso)
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
@@ -81,34 +69,13 @@ function formatDateTime(iso: string): string {
   return `${day}/${month} ${h}:${min}`
 }
 
-/** Estatísticas da semana (seg–sáb) para o cubo Alunos sem aula designada (freq. incorreta) */
-interface CalendarStats {
-  wrongFrequencyCount: number
-  wrongFrequencyList: {
-    enrollmentId: string
-    studentName: string
-    expected: number
-    actual: number
-    expectedMinutes?: number
-    actualMinutes?: number
-    lessonTimesThisWeek?: string[]
-    lastBook?: string | null
-  }[]
-}
-
-/** Entrada para a lista detalhada de frequência da semana (inclui alunos corretos e incorretos) */
-interface WeeklyFrequencyEntry {
-  enrollmentId: string
-  studentName: string
-  /** true = frequência da semana bate com o cadastro; false = incorreta (mesma lógica do cubo) */
-  isCorrect: boolean
-  /** Aulas da semana (seg–sáb) com professor, horário e status */
-  lessons: {
-    id: string
-    startAt: string
-    status: string
-    teacherName: string
-  }[]
+/** Ação registrada na API de auditoria */
+interface AuditActivityItem {
+  id: string
+  actorName: string
+  action: string
+  detail: string
+  createdAt: string
 }
 
 interface Metrics {
@@ -137,6 +104,8 @@ interface Metrics {
   /** To do list: tarefas abertas até hoje; urgentOpen = marcadas com fogo */
   todoOpenCount: number
   todoUrgentOpenCount: number
+  /** Reportes de alunos sobre professor ausente/atrasado (abertos ou em verificação) */
+  teacherAbsenceAlertCount: number
   absences: {
     studentsWeek: number
     studentsMonth: number
@@ -156,6 +125,7 @@ type ListType =
   | 'teachersWithProblems'
   | 'teachersWithLateLessonRecords'
   | 'studentsWith3ConsecutiveAbsences'
+  | 'teacherAbsenceReports'
 
 interface ListItemBase {
   id: string
@@ -216,6 +186,21 @@ interface LateRecordLessonDetail {
   durationMinutes: number | null
   janelaDias?: number
 }
+/** Reporte de aluno: professor ausente ou atrasado */
+interface ListItemTeacherAbsenceReport extends ListItemBase {
+  lessonId?: string
+  studentName?: string
+  teacherName?: string
+  reportType?: 'ABSENT' | 'LATE'
+  reportTypeLabel?: string
+  entitlesReplacement?: boolean
+  status?: 'OPEN' | 'VERIFYING' | 'RESOLVED'
+  lessonStartAt?: string
+  verifyingByName?: string | null
+  resolvedByName?: string | null
+  message?: string
+  replacementRule?: string
+}
 
 const LIST_TITLES: Record<ListType, string> = {
   activeStudents: 'Alunos Ativos',
@@ -228,6 +213,7 @@ const LIST_TITLES: Record<ListType, string> = {
   teachersWithProblems: 'Professores com problemas',
   teachersWithLateLessonRecords: 'Professores com registros atrasados',
   studentsWith3ConsecutiveAbsences: 'Alunos com 3 ausências consecutivas',
+  teacherAbsenceReports: 'Alerta de professor ausente',
 }
 
 export default function AdminDashboardPage() {
@@ -245,27 +231,21 @@ export default function AdminDashboardPage() {
       | ListItemInactiveStudent
       | ListItemAusenciasMes
       | ListItemTeachersLateRecords
+      | ListItemTeacherAbsenceReport
     )[]
   >([])
   const [listLoading, setListLoading] = useState(false)
+  const [updatingAbsenceReportId, setUpdatingAbsenceReportId] = useState<string | null>(null)
   const [lateRecordsTeacherDetail, setLateRecordsTeacherDetail] = useState<{ id: string; nome: string } | null>(null)
   const [lateRecordsLessonRows, setLateRecordsLessonRows] = useState<LateRecordLessonDetail[]>([])
   const [lateRecordsDetailLoading, setLateRecordsDetailLoading] = useState(false)
-  const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null)
-  const [calendarStatsLoading, setCalendarStatsLoading] = useState(true)
-  const [weeklyFrequencyEntries, setWeeklyFrequencyEntries] = useState<WeeklyFrequencyEntry[]>([])
-  const [showAlunosSemAulaModal, setShowAlunosSemAulaModal] = useState(false)
+  const [adminActivities, setAdminActivities] = useState<AuditActivityItem[]>([])
+  const [adminActivitiesLoading, setAdminActivitiesLoading] = useState(true)
+  const [expandedActivityDays, setExpandedActivityDays] = useState<Set<string>>(new Set())
   const [marcandoAulasId, setMarcandoAulasId] = useState<string | null>(null)
   const [marcandoLinkPagId, setMarcandoLinkPagId] = useState<string | null>(null)
   const [linksImportantesAberto, setLinksImportantesAberto] = useState(false)
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null)
-  const [showAuditModal, setShowAuditModal] = useState(false)
-  const [auditActivities, setAuditActivities] = useState<Array<{ id: string; actorName: string; action: string; detail: string; createdAt: string }>>([])
-  const [auditHours, setAuditHours] = useState(48)
-  const [auditLoading, setAuditLoading] = useState(false)
-  const [auditCount48h, setAuditCount48h] = useState<number | null>(null)
-  const [auditSearch, setAuditSearch] = useState('')
-  const [auditDate, setAuditDate] = useState('')
   const [designarAulaEnrollment, setDesignarAulaEnrollment] = useState<ListItemNovosMatriculados | ListItemAlunosParaRedirecionar | ListItemWithoutLesson | null>(null)
   const [designarAulaFromModalType, setDesignarAulaFromModalType] = useState<ListType | null>(null)
 
@@ -273,158 +253,58 @@ export default function AdminDashboardPage() {
     fetchMetrics()
   }, [])
 
-  const fetchAuditCount = useCallback(async () => {
+  const fetchAdminActivities = useCallback(async () => {
+    setAdminActivitiesLoading(true)
     try {
-      const res = await fetch('/api/admin/audit-activity?hours=48&countOnly=true', { credentials: 'include' })
+      const res = await fetch('/api/admin/audit-activity?days=20', { credentials: 'include' })
       const json = await res.json()
-      if (json.ok && typeof json.data?.count === 'number') {
-        setAuditCount48h(json.data.count)
+      if (json.ok && Array.isArray(json.data?.activities)) {
+        setAdminActivities(json.data.activities)
+      } else {
+        setAdminActivities([])
       }
     } catch {
-      // ignora
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchAuditCount()
-  }, [fetchAuditCount])
-
-  const fetchCalendarStats = useCallback(async () => {
-    setCalendarStatsLoading(true)
-    try {
-      const monday = getMonday(new Date())
-      const saturdayEnd = (() => {
-        const d = new Date(monday)
-        d.setDate(d.getDate() + 5)
-        d.setHours(23, 59, 59, 999)
-        return d
-      })()
-
-      const [statsRes, fullWeekRes, lessonsRes] = await Promise.all([
-        fetch(`/api/admin/lessons/stats?weekStart=${monday.toISOString()}`, {
-          credentials: 'include',
-        }),
-        fetch(
-          `/api/admin/lessons/enrollments-with-full-week?weekStart=${monday.toISOString()}`,
-          { credentials: 'include' }
-        ),
-        fetch(
-          `/api/admin/lessons?start=${monday.toISOString()}&end=${saturdayEnd.toISOString()}`,
-          { credentials: 'include' }
-        ),
-      ])
-
-      if (statsRes.ok) {
-        const json = await statsRes.json()
-        if (json.ok && json.data) {
-          setCalendarStats({
-            wrongFrequencyCount: json.data.wrongFrequencyCount ?? 0,
-            wrongFrequencyList: json.data.wrongFrequencyList ?? [],
-          })
-
-          // Montar lista detalhada de frequência da semana (inclui corretos e incorretos)
-          const wrongList: CalendarStats['wrongFrequencyList'] =
-            json.data.wrongFrequencyList ?? []
-          const wrongMap = new Map(
-            wrongList.map((item: any) => [item.enrollmentId, item])
-          )
-
-          const fullWeekIds: string[] =
-            fullWeekRes.ok ? (await fullWeekRes.json()).data?.enrollmentIds ?? [] : []
-
-          const lessonsJson = lessonsRes.ok ? await lessonsRes.json() : null
-          const lessons: {
-            id: string
-            enrollmentId: string
-            status: string
-            startAt: string
-            teacher?: { nome?: string }
-            enrollment?: { nome?: string }
-          }[] = lessonsJson?.data?.lessons ?? []
-
-          const lessonsByEnrollment = new Map<
-            string,
-            {
-              id: string
-              startAt: string
-              status: string
-              teacherName: string
-              studentName: string
-            }[]
-          >()
-          for (const l of lessons) {
-            const arr =
-              lessonsByEnrollment.get(l.enrollmentId) ??
-              []
-            const teacherName = l.teacher?.nome ?? 'N/A'
-            const studentName = l.enrollment?.nome ?? 'Aluno'
-            arr.push({
-              id: l.id,
-              startAt: l.startAt,
-              status: l.status,
-              teacherName,
-              studentName,
-            })
-            lessonsByEnrollment.set(l.enrollmentId, arr)
-          }
-
-          const entries: WeeklyFrequencyEntry[] = []
-
-          // Primeiro: alunos com frequência incorreta (já estavam na lista antiga)
-          for (const item of wrongList as any[]) {
-            const lessonsForEnrollment = lessonsByEnrollment.get(item.enrollmentId) ?? []
-            const studentNameFromLessons =
-              lessonsForEnrollment[0]?.studentName ?? item.studentName
-            entries.push({
-              enrollmentId: item.enrollmentId,
-              studentName: studentNameFromLessons,
-              isCorrect: false,
-              lessons: lessonsForEnrollment.map((l) => ({
-                id: l.id,
-                startAt: l.startAt,
-                status: l.status,
-                teacherName: l.teacherName,
-              })),
-            })
-          }
-
-          // Depois: alunos com frequência correta (full week) que não estão na lista de erros
-          const wrongIds = new Set(wrongList.map((w) => w.enrollmentId))
-          for (const eid of fullWeekIds) {
-            if (wrongIds.has(eid)) continue
-            const lessonsForEnrollment = lessonsByEnrollment.get(eid) ?? []
-            if (lessonsForEnrollment.length === 0) continue
-            const studentNameFromLessons = lessonsForEnrollment[0].studentName
-            entries.push({
-              enrollmentId: eid,
-              studentName: studentNameFromLessons,
-              isCorrect: true,
-              lessons: lessonsForEnrollment.map((l) => ({
-                id: l.id,
-                startAt: l.startAt,
-                status: l.status,
-                teacherName: l.teacherName,
-              })),
-            })
-          }
-
-          // Ordenar por nome do aluno
-          entries.sort((a, b) =>
-            a.studentName.localeCompare(b.studentName, 'pt-BR')
-          )
-          setWeeklyFrequencyEntries(entries)
-        }
-      }
-    } catch (e) {
-      console.error(e)
+      setAdminActivities([])
     } finally {
-      setCalendarStatsLoading(false)
+      setAdminActivitiesLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchCalendarStats()
-  }, [fetchCalendarStats])
+    fetchAdminActivities()
+  }, [fetchAdminActivities])
+
+  const adminActivitiesByDay = useMemo(() => {
+    const map = new Map<string, AuditActivityItem[]>()
+    for (const item of adminActivities) {
+      const key = toDateKeyInTZ(new Date(item.createdAt))
+      const list = map.get(key) ?? []
+      list.push(item)
+      map.set(key, list)
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([dateKey, items]) => {
+        const [y, m, d] = dateKey.split('-').map(Number)
+        const label = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).toLocaleDateString('pt-BR', {
+          weekday: 'long',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          timeZone: 'America/Sao_Paulo',
+        })
+        return { dateKey, label, items }
+      })
+  }, [adminActivities])
+
+  const toggleActivityDay = (dateKey: string) => {
+    setExpandedActivityDays((prev) => {
+      const next = new Set(prev)
+      if (next.has(dateKey)) next.delete(dateKey)
+      else next.add(dateKey)
+      return next
+    })
+  }
 
   const openListModal = useCallback(
     async (type: ListType) => {
@@ -485,56 +365,56 @@ export default function AdminDashboardPage() {
     setLateRecordsLessonRows([])
   }, [])
 
-  const openAuditModal = useCallback(async () => {
-    setShowAuditModal(true)
-    setAuditLoading(true)
-    try {
-      const res = await fetch(`/api/admin/audit-activity?hours=${auditHours}`, { credentials: 'include' })
-      const json = await res.json()
-      if (json.ok && Array.isArray(json.data?.activities)) {
-        setAuditActivities(json.data.activities)
-      } else {
-        setAuditActivities([])
-      }
-    } catch {
-      setAuditActivities([])
-    } finally {
-      setAuditLoading(false)
-    }
-  }, [auditHours])
-
-  const refetchAuditWithHours = useCallback((hours: number) => {
-    setAuditHours(hours)
-    setAuditLoading(true)
-    fetch(`/api/admin/audit-activity?hours=${hours}`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.ok && Array.isArray(json.data?.activities)) {
-          setAuditActivities(json.data.activities)
-        } else {
-          setAuditActivities([])
+  const updateTeacherAbsenceReport = useCallback(
+    async (reportId: string, action: 'VERIFYING' | 'RESOLVED' | 'CONFIRM_ABSENCE', lessonId?: string) => {
+      setUpdatingAbsenceReportId(reportId)
+      try {
+        const res = await fetch(`/api/admin/teacher-absence-reports/${reportId}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action }),
+        })
+        const json = await res.json()
+        if (json.ok) {
+          if (action === 'CONFIRM_ABSENCE') {
+            setListData((prev) => prev.filter((item) => item.id !== reportId))
+            fetchMetrics()
+            closeModal()
+            const targetLessonId = json.data?.lessonId ?? lessonId
+            if (targetLessonId) {
+              router.push(`/admin/calendario?reagendar=${encodeURIComponent(targetLessonId)}`)
+            } else {
+              router.push('/admin/calendario')
+            }
+            return
+          }
+          if (action === 'RESOLVED') {
+            setListData((prev) => prev.filter((item) => item.id !== reportId))
+          } else if (json.data?.report) {
+            const updated = json.data.report as ListItemTeacherAbsenceReport
+            setListData((prev) =>
+              prev.map((item) =>
+                item.id === reportId
+                  ? {
+                      ...item,
+                      status: updated.status,
+                      verifyingByName: updated.verifyingByName,
+                    }
+                  : item
+              )
+            )
+          }
+          fetchMetrics()
         }
-      })
-      .catch(() => setAuditActivities([]))
-      .finally(() => setAuditLoading(false))
-  }, [])
-
-  const filteredAuditActivities = useMemo(() => {
-    const search = auditSearch.trim().toLowerCase()
-    return auditActivities.filter((item) => {
-      if (auditDate) {
-        const d = new Date(item.createdAt)
-        const dateStr = d.toISOString().slice(0, 10)
-        if (dateStr !== auditDate) return false
+      } catch {
+        /* ignore */
+      } finally {
+        setUpdatingAbsenceReportId(null)
       }
-      if (!search) return true
-      return (
-        item.actorName.toLowerCase().includes(search) ||
-        item.action.toLowerCase().includes(search) ||
-        item.detail.toLowerCase().includes(search)
-      )
-    })
-  }, [auditActivities, auditSearch, auditDate])
+    },
+    [router, closeModal]
+  )
 
   const marcarAulasAdicionadas = useCallback(
     async (enrollmentId: string) => {
@@ -643,27 +523,6 @@ export default function AdminDashboardPage() {
   }
 
 
-  // Preparar dados para o gráfico (Sem aula = freq. incorreta na semana)
-  const chartData = metrics
-    ? [
-        {
-          name: 'Ativos',
-          Alunos: metrics.enrollments?.ACTIVE ?? metrics.users.ACTIVE,
-          Professores: metrics.teachers.ACTIVE,
-        },
-        {
-          name: 'Sem aula',
-          Alunos: calendarStats?.wrongFrequencyCount ?? 0,
-          Professores: 0,
-        },
-        {
-          name: 'Inativos',
-          Alunos: metrics.enrollments?.INACTIVE ?? metrics.users.INACTIVE,
-          Professores: metrics.teachers.INACTIVE,
-        },
-      ]
-    : []
-
   if (loading) {
     return (
       <AdminLayout>
@@ -745,7 +604,7 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Cubos de métricas (estilo financeiro, um único grid alinhado) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8 items-stretch">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3 mb-8 items-stretch">
           <div
             role="button"
             tabIndex={0}
@@ -776,38 +635,6 @@ export default function AdminDashboardPage() {
               icon={<UserPlus className="w-5 h-5" />}
               color="blue"
               subtitle="Clique para ver, marcar «enviei link pag» e «tudo feito»"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setShowAlunosSemAulaModal(true)}
-            onKeyDown={(e) => e.key === 'Enter' && setShowAlunosSemAulaModal(true)}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Alunos sem aula designada"
-              value={calendarStatsLoading ? '...' : (calendarStats?.wrongFrequencyCount ?? 0)}
-              icon={<Users className="w-5 h-5" />}
-              color="orange"
-              subtitle="Freq. incorreta na semana"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => openListModal('inactiveStudents')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('inactiveStudents')}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Alunos Inativos"
-              value={metrics?.enrollments?.INACTIVE ?? metrics?.users.INACTIVE ?? 0}
-              icon={<UserX className="w-5 h-5" />}
-              color="red"
-              subtitle="Matrículas inativas (mesmo critério da página Alunos)"
             />
           </div>
           <div
@@ -861,17 +688,17 @@ export default function AdminDashboardPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={openAuditModal}
-            onKeyDown={(e) => e.key === 'Enter' && openAuditModal()}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+            onClick={() => openListModal('teacherAbsenceReports')}
+            onKeyDown={(e) => e.key === 'Enter' && openListModal('teacherAbsenceReports')}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${(metrics?.teacherAbsenceAlertCount ?? 0) > 0 ? 'animate-blink-alert' : ''}`}
           >
             <StatCard
               variant="finance"
-              title="Quem fez o quê"
-              value={auditCount48h ?? '...'}
-              icon={<History className="w-5 h-5" />}
-              color="purple"
-              subtitle="Clique para ver ações dos admins (últimas 48h)"
+              title="Alerta de professor ausente"
+              value={metrics?.teacherAbsenceAlertCount ?? 0}
+              icon={<UserX className="w-5 h-5" />}
+              color="red"
+              subtitle="Reportes de alunos (ausente ou atraso) — clique para verificar"
             />
           </div>
           <div
@@ -896,28 +723,69 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Gráfico */}
+        {/* Ações dos admins — últimos 20 dias */}
         <div className="rounded-2xl border border-slate-200/80 bg-white p-6 md:p-8 shadow-lg mb-8">
           <h2 className="text-xl font-semibold text-slate-800 mb-1 pb-3 border-b border-slate-100">
-            Distribuição por Status
+            Ações da administração
           </h2>
           <p className="text-xs text-slate-500 mb-6">
-            Coluna <strong>Alunos</strong>: matrículas (Enrollment), como no resumo da página Alunos. Coluna <strong>Professores</strong>: cadastro de professores.
+            Agendamentos, cancelamentos, alterações de aulas, registros, alertas e solicitações dos últimos{' '}
+            <strong>20 dias</strong>. Clique em um dia para ver todas as ações.
           </p>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 12 }} axisLine={{ stroke: '#e2e8f0' }} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 12 }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                labelStyle={{ fontWeight: 600, color: '#334155' }}
-              />
-              <Legend wrapperStyle={{ paddingTop: 16 }} iconType="circle" iconSize={8} />
-              <Bar dataKey="Alunos" fill="#f97316" radius={[4, 4, 0, 0]} name="Alunos" />
-              <Bar dataKey="Professores" fill="#ea580c" radius={[4, 4, 0, 0]} name="Professores" />
-            </BarChart>
-          </ResponsiveContainer>
+          {adminActivitiesLoading ? (
+            <p className="text-gray-500 py-8 text-center">Carregando ações...</p>
+          ) : adminActivitiesByDay.length === 0 ? (
+            <p className="text-gray-500 py-8 text-center">Nenhuma ação registrada nos últimos 20 dias.</p>
+          ) : (
+            <div className="space-y-2">
+              {adminActivitiesByDay.map(({ dateKey, label, items }) => {
+                const expanded = expandedActivityDays.has(dateKey)
+                return (
+                  <div key={dateKey} className="rounded-xl border border-slate-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleActivityDay(dateKey)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left bg-slate-50 hover:bg-slate-100 transition-colors"
+                    >
+                      <ChevronDown
+                        className={`w-5 h-5 text-slate-500 shrink-0 transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`}
+                      />
+                      <span className="font-semibold text-slate-800 capitalize flex-1">{label}</span>
+                      <span className="text-sm text-slate-500">
+                        {items.length} {items.length === 1 ? 'ação' : 'ações'}
+                      </span>
+                    </button>
+                    {expanded && (
+                      <TableScrollArea scrollClassName="overflow-x-auto max-h-[420px] overflow-y-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="sticky top-0 bg-white border-b border-gray-200">
+                            <tr>
+                              <th className="py-2 px-4 font-semibold text-gray-700 text-sm">Hora</th>
+                              <th className="py-2 px-4 font-semibold text-gray-700 text-sm">Quem</th>
+                              <th className="py-2 px-4 font-semibold text-gray-700 text-sm">Ação</th>
+                              <th className="py-2 px-4 font-semibold text-gray-700 text-sm">Detalhe</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((item) => (
+                              <tr key={item.id} className="border-b border-gray-100 hover:bg-slate-50/80">
+                                <td className="py-2 px-4 text-sm text-gray-600 whitespace-nowrap">
+                                  {formatDateTime(item.createdAt)}
+                                </td>
+                                <td className="py-2 px-4 text-sm font-medium text-gray-900">{item.actorName}</td>
+                                <td className="py-2 px-4 text-sm text-gray-800">{item.action}</td>
+                                <td className="py-2 px-4 text-sm text-gray-600">{item.detail}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </TableScrollArea>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Modal de lista ao clicar no cubo */}
@@ -943,7 +811,7 @@ export default function AdminDashboardPage() {
                 Alunos que se matricularam pelo formulário e ainda não foram marcados como «tudo feito». Use «Enviei link pag» para registrar o envio do link de pagamento; «Selecionar aulas» para agendar as aulas. «Tudo feito» remove o aluno desta lista{' '}
                 <strong>mesmo sem pagamento confirmado</strong> (quem começa e paga depois).
               </p>
-              <div className="overflow-x-auto">
+              <TableScrollArea>
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-gray-200">
@@ -1080,10 +948,10 @@ export default function AdminDashboardPage() {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             </div>
           ) : modalType === 'studentsWithoutLesson' ? (
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
@@ -1125,14 +993,14 @@ export default function AdminDashboardPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           ) : modalType === 'studentsWith3ConsecutiveAbsences' ? (
             <div className="space-y-3">
               <p className="text-sm text-gray-600">
                 Alunos que tiveram 3 ou mais registros de &quot;Não compareceu&quot; no mesmo mês. A coluna{' '}
                 <strong>Faltas</strong> refere-se ao mês em que o aluno mais faltou (entre os meses com 3+ faltas).
               </p>
-              <div className="overflow-x-auto">
+              <TableScrollArea>
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-gray-200">
@@ -1167,7 +1035,7 @@ export default function AdminDashboardPage() {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             </div>
           ) : modalType === 'teachersWithLateLessonRecords' ? (
             lateRecordsTeacherDetail ? (
@@ -1189,7 +1057,10 @@ export default function AdminDashboardPage() {
                 ) : lateRecordsLessonRows.length === 0 ? (
                   <p className="text-gray-500">Nenhuma aula pendente para este professor.</p>
                 ) : (
-                  <div className="overflow-x-auto max-h-[min(60vh,480px)] overflow-y-auto border border-gray-100 rounded-lg">
+                  <TableScrollArea
+                    className="border border-gray-100 rounded-lg"
+                    scrollClassName="overflow-x-auto max-h-[min(60vh,480px)] overflow-y-auto"
+                  >
                     <table className="w-full text-left border-collapse">
                       <thead className="sticky top-0 bg-white border-b border-gray-200 z-10">
                         <tr>
@@ -1210,7 +1081,7 @@ export default function AdminDashboardPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </TableScrollArea>
                 )}
               </div>
             ) : (
@@ -1225,7 +1096,7 @@ export default function AdminDashboardPage() {
                   <strong>PAGO</strong> não contam). <strong>Clique no nome do professor</strong> para ver cada aula
                   pendente.
                 </p>
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -1259,11 +1130,11 @@ export default function AdminDashboardPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               </div>
             )
           ) : modalType === 'inactiveStudents' ? (
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
@@ -1296,6 +1167,96 @@ export default function AdminDashboardPage() {
                   })}
                 </tbody>
               </table>
+            </TableScrollArea>
+          ) : modalType === 'teacherAbsenceReports' ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">
+                <strong>Regra:</strong> professor ausente confirmado → a aula é cancelada pelo professor
+                e a gestão agenda uma <strong>reposição</strong> no calendário. Ausência na videochamada
+                é detectada automaticamente após 5 min sem entrada do professor.
+              </p>
+              <TableScrollArea>
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Reporte</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Aula</th>
+                      <th className="py-2 pr-4 font-semibold text-gray-700">Status</th>
+                      <th className="py-2 font-semibold text-gray-700">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listData.map((item) => {
+                      const row = item as ListItemTeacherAbsenceReport
+                      const aulaData = row.lessonStartAt
+                        ? formatDateTime(row.lessonStartAt)
+                        : '—'
+                      const isUpdating = updatingAbsenceReportId === row.id
+                      return (
+                        <tr key={row.id} className="border-b border-gray-100 align-top">
+                          <td className="py-2 pr-4">
+                            <p className="font-medium text-gray-900">{row.message ?? row.nome}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {row.reportTypeLabel ?? '—'} · Professor: {row.teacherName ?? '—'}
+                            </p>
+                          </td>
+                          <td className="py-2 pr-4 text-sm text-gray-600">{aulaData}</td>
+                          <td className="py-2 pr-4 text-sm">
+                            {row.status === 'VERIFYING' ? (
+                              <span className="text-amber-700">
+                                Verificando
+                                {row.verifyingByName ? ` — ${row.verifyingByName}` : ''}
+                              </span>
+                            ) : (
+                              <span className="text-gray-600">Aguardando</span>
+                            )}
+                          </td>
+                          <td className="py-2">
+                            <div className="flex flex-wrap gap-2">
+                              {row.status !== 'VERIFYING' && row.status !== 'RESOLVED' ? (
+                                <button
+                                  type="button"
+                                  disabled={isUpdating}
+                                  onClick={() => updateTeacherAbsenceReport(row.id, 'VERIFYING')}
+                                  className="px-3 py-1.5 text-sm rounded-lg border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                                >
+                                  Verificando
+                                </button>
+                              ) : null}
+                              {row.entitlesReplacement && row.status !== 'RESOLVED' ? (
+                                <button
+                                  type="button"
+                                  disabled={isUpdating}
+                                  onClick={() =>
+                                    updateTeacherAbsenceReport(
+                                      row.id,
+                                      'CONFIRM_ABSENCE',
+                                      row.lessonId
+                                    )
+                                  }
+                                  className="px-3 py-1.5 text-sm rounded-lg border border-sky-300 text-sky-800 hover:bg-sky-50 disabled:opacity-50"
+                                >
+                                  Confirmar ausência e reagendar
+                                </button>
+                              ) : null}
+                              {!row.entitlesReplacement && row.status !== 'RESOLVED' ? (
+                                <button
+                                  type="button"
+                                  disabled={isUpdating}
+                                  onClick={() => updateTeacherAbsenceReport(row.id, 'RESOLVED')}
+                                  className="px-3 py-1.5 text-sm rounded-lg border border-emerald-300 text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                                >
+                                  Resolvido
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </TableScrollArea>
             </div>
           ) : modalType === 'totalUsers' ? (
             <ul className="space-y-1 max-h-96 overflow-y-auto">
@@ -1326,84 +1287,6 @@ export default function AdminDashboardPage() {
           )}
         </Modal>
 
-        {/* Modal Quem fez o quê */}
-        <Modal
-          isOpen={showAuditModal}
-          onClose={() => {
-            setShowAuditModal(false)
-            fetchAuditCount()
-          }}
-          title="Quem fez o quê"
-          size="xl"
-        >
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700">Período:</label>
-                <select
-                  value={auditHours}
-                  onChange={(e) => refetchAuditWithHours(Number(e.target.value))}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-orange focus:border-brand-orange"
-                >
-                  <option value={48}>Últimas 48 horas</option>
-                  <option value={72}>Últimas 72 horas</option>
-                  <option value={168}>Últimos 7 dias</option>
-                  <option value={336}>Últimos 14 dias</option>
-                  <option value={720}>Últimos 30 dias</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-700">Data:</label>
-                <input
-                  type="date"
-                  value={auditDate}
-                  onChange={(e) => setAuditDate(e.target.value)}
-                  className="input h-9 text-sm py-1 px-2"
-                />
-              </div>
-              <div className="flex-1 min-w-[160px]">
-                <input
-                  type="text"
-                  value={auditSearch}
-                  onChange={(e) => setAuditSearch(e.target.value)}
-                  placeholder="Filtrar por nome, ação ou detalhe"
-                  className="input w-full h-9 text-sm"
-                />
-              </div>
-            </div>
-            {auditLoading ? (
-              <p className="text-gray-500">Carregando...</p>
-            ) : filteredAuditActivities.length === 0 ? (
-              <p className="text-gray-500">Nenhuma ação registrada neste período.</p>
-            ) : (
-              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-white border-b border-gray-200">
-                    <tr>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Quando</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Quem</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Ação</th>
-                      <th className="py-2 font-semibold text-gray-700">Detalhe</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredAuditActivities.map((item) => (
-                      <tr key={item.id} className="border-b border-gray-100">
-                        <td className="py-2 pr-4 text-sm text-gray-600 whitespace-nowrap">
-                          {formatDateTime(item.createdAt)}
-                        </td>
-                        <td className="py-2 pr-4 font-medium">{item.actorName}</td>
-                        <td className="py-2 pr-4">{item.action}</td>
-                        <td className="py-2 text-gray-600">{item.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </Modal>
-
         {/* Modal Designar aula (novos matriculados ou alunos para redirecionar) */}
         <DesignarAulaModal
           isOpen={!!designarAulaEnrollment}
@@ -1420,108 +1303,9 @@ export default function AdminDashboardPage() {
             }
             setDesignarAulaFromModalType(null)
             fetchMetrics()
+            fetchAdminActivities()
           }}
         />
-
-        {/* Modal Alunos sem aula designada (freq. incorreta): nome, horários de aula, último livro */}
-        <Modal
-          isOpen={showAlunosSemAulaModal}
-          onClose={() => setShowAlunosSemAulaModal(false)}
-          title="Alunos sem aula designada"
-          size="xl"
-        >
-          <p className="text-xs text-gray-500 mb-4">
-            Visão geral da frequência semanal (seg–sáb). Mostra alunos com frequência incorreta e também alunos cuja
-            frequência está correta, com os horários e status das aulas desta semana.
-          </p>
-          {!calendarStats ? (
-            <p className="text-gray-500">Carregando...</p>
-          ) : (
-            <>
-              {weeklyFrequencyEntries.length === 0 ? (
-                <p className="text-gray-500">
-                  Nenhum aluno com frequência cadastrada encontrado para esta semana.
-                </p>
-              ) : (
-                <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-                  {weeklyFrequencyEntries.map((entry) => {
-                    const wrongItem = calendarStats.wrongFrequencyList.find(
-                      (w) => w.enrollmentId === entry.enrollmentId
-                    )
-                    const descricaoFrequencia = (() => {
-                      if (!wrongItem) {
-                        return 'Frequência correta nesta semana.'
-                      }
-                      if (
-                        wrongItem.expectedMinutes != null &&
-                        wrongItem.actualMinutes != null
-                      ) {
-                        return `Frequência incorreta: cadastro ${wrongItem.expectedMinutes} min/sem (ex.: ${wrongItem.expected}x${Math.round(
-                          wrongItem.expectedMinutes / wrongItem.expected
-                        )}min), nesta semana ${wrongItem.actualMinutes} min.`
-                      }
-                      return `Frequência incorreta: cadastro ${wrongItem.expected} aula(s)/sem, nesta semana ${wrongItem.actual} aula(s).`
-                    })()
-                    return (
-                      <div
-                        key={entry.enrollmentId}
-                        className={`p-3 rounded-lg border text-sm ${
-                          entry.isCorrect
-                            ? 'border-emerald-200 bg-emerald-50'
-                            : 'border-orange-200 bg-orange-50'
-                        }`}
-                      >
-                        <div className="flex flex-col gap-1">
-                          <span className="font-semibold text-gray-900">
-                            {entry.studentName}
-                          </span>
-                          <span
-                            className={`text-xs font-medium ${
-                              entry.isCorrect ? 'text-emerald-700' : 'text-orange-700'
-                            }`}
-                          >
-                            {descricaoFrequencia}
-                          </span>
-                          {entry.lessons.length > 0 ? (
-                            <ul className="mt-1 space-y-0.5 text-xs text-gray-700">
-                              {entry.lessons.map((lesson) => {
-                                const d = new Date(lesson.startAt)
-                                const dia = d.toLocaleDateString('pt-BR', {
-                                  weekday: 'short',
-                                  day: '2-digit',
-                                  month: '2-digit',
-                                })
-                                const hora = d.toLocaleTimeString('pt-BR', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })
-                                const statusLabel =
-                                  lesson.status === 'CONFIRMED'
-                                    ? 'Confirmada'
-                                    : lesson.status === 'CANCELLED'
-                                      ? 'Cancelada'
-                                      : 'Reposição'
-                                return (
-                                  <li key={lesson.id}>
-                                    {dia} às {hora} – {lesson.teacherName} ({statusLabel})
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          ) : (
-                            <p className="text-xs text-gray-500">
-                              Nenhuma aula nesta semana.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </>
-          )}
-        </Modal>
       </div>
     </AdminLayout>
   )

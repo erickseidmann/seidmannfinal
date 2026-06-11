@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { getEnrollmentNivelLivro } from '@/lib/enrollment-nivel-livro'
+import { teacherCanTeachStudentLevel, normalizeTeacherNiveisEnsina } from '@/lib/teacher-teaching-levels'
 
 export async function GET(
   _request: NextRequest,
@@ -71,6 +73,10 @@ export async function GET(
       requiredSlots.add(`${dayOfWeek}-${startMinutes}-${endMinutes}`)
     }
 
+    const studentNivel = enrollmentIdParam
+      ? await getEnrollmentNivelLivro(prisma, enrollmentIdParam)
+      : null
+
     // Buscar todos os professores ativos (exceto o origem)
     const allTeachers = await prisma.teacher.findMany({
       where: {
@@ -80,6 +86,7 @@ export async function GET(
       select: {
         id: true,
         nome: true,
+        niveisEnsina: true,
       },
     })
 
@@ -87,6 +94,13 @@ export async function GET(
     const availableTeachers: Array<{ id: string; nome: string }> = []
 
     for (const teacher of allTeachers) {
+      if (
+        studentNivel &&
+        !teacherCanTeachStudentLevel(normalizeTeacherNiveisEnsina(teacher.niveisEnsina), studentNivel)
+      ) {
+        continue
+      }
+
       // Buscar slots de disponibilidade do professor
       const slots = await prisma.teacherAvailabilitySlot.findMany({
         where: { teacherId: teacher.id },

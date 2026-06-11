@@ -6,6 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import {
+  canAdminEditLessonOnDate,
+  LESSON_PAST_EDIT_DENIED_MESSAGE,
+} from '@/lib/lesson-past-edit'
 import { enrollmentAllowsSchedulingLessons } from '@/lib/enrollment-scheduling'
 import { lessonIntervalsOverlap } from '@/lib/lesson-overlap'
 import {
@@ -13,6 +17,13 @@ import {
   isLessonScheduledStatus,
   LESSON_STATUSES_SCHEDULED,
 } from '@/lib/lesson-status'
+import {
+  computeRescheduledSeriesStartAt,
+  lessonSeriesRefFromStartAt,
+  matchesLessonSeries,
+} from '@/lib/lesson-series'
+import { createNoShowLessonRecordIfMissing } from '@/lib/lesson-no-show-record'
+import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
 import {
   sendEmail,
   mensagemAulaCancelada,
@@ -180,6 +191,26 @@ export async function PATCH(
       return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
     }
 
+    if (
+      !canAdminEditLessonOnDate(lessonBefore.startAt, auth.session?.email, {
+        canApproveLateLessonEdits: (
+          await prisma.user.findUnique({
+            where: { id: auth.session!.sub },
+            select: { canApproveLateLessonEdits: true },
+          })
+        )?.canApproveLateLessonEdits,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: LESSON_PAST_EDIT_DENIED_MESSAGE,
+          code: 'PAST_EDIT_NEEDS_APPROVAL',
+        },
+        { status: 403 }
+      )
+    }
+
     // Reposição: só a partir de cancelamento que permite reposição, ou já é reposição.
     if (status === 'REPOSICAO') {
       const before = lessonBefore.status
@@ -261,7 +292,7 @@ export async function PATCH(
         }),
         prisma.teacher.findUnique({
           where: { id: effectiveTeacherId },
-          select: { idiomasEnsina: true },
+          select: { idiomasEnsina: true, niveisEnsina: true, nome: true },
         }),
       ])
       if (enrollment && teacher) {
@@ -288,6 +319,15 @@ export async function PATCH(
             { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
             { status: 400 }
           )
+        }
+
+        const nivelCheck = await assertTeacherTeachesEnrollmentLevel(
+          prisma,
+          effectiveEnrollmentId,
+          teacher
+        )
+        if (!nivelCheck.ok) {
+          return NextResponse.json({ ok: false, message: nivelCheck.message }, { status: 400 })
         }
       }
     }
@@ -407,32 +447,81 @@ export async function PATCH(
       },
     })
 
-    // Se applyToFuture === true: nas aulas futuras aplicamos só professor e horário (hora/minuto),
-    // mantendo o DIA de cada aula para não concentrar tudo no mesmo dia.
+    if (statusChanged && newStatus === 'CANCELLED_NO_REPLACEMENT') {
+      try {
+        await createNoShowLessonRecordIfMissing(id)
+      } catch (recordErr) {
+        console.error('[api/admin/lessons/[id] PATCH] Erro ao criar registro de falta:', recordErr)
+      }
+    }
+
+    // applyToFuture: mesma série (mesmo aluno, professor, dia da semana e horário da aula editada)
     if (applyToFuture === true && effectiveEnrollmentId) {
+      const seriesRef = lessonSeriesRefFromStartAt(
+        lessonBefore.enrollmentId,
+        lessonBefore.teacherId,
+        lessonBefore.startAt
+      )
+      const refStart = new Date(lessonBefore.startAt)
+
       const futureLessons = await prisma.lesson.findMany({
         where: {
-          enrollmentId: effectiveEnrollmentId,
-          startAt: { gt: effectiveStartAt },
+          enrollmentId: lessonBefore.enrollmentId,
+          startAt: { gt: lessonBefore.startAt },
         },
-        select: { id: true, startAt: true },
+        select: { id: true, startAt: true, teacherId: true, notes: true },
       })
 
-      const editedHour = effectiveStartAt.getHours()
-      const editedMinute = effectiveStartAt.getMinutes()
+      let nomeAdmin = 'admin'
+      if (auth.session?.sub) {
+        try {
+          const adminUser = await prisma.user.findUnique({
+            where: { id: auth.session.sub },
+            select: { nome: true },
+          })
+          if (adminUser?.nome) nomeAdmin = adminUser.nome
+        } catch {
+          // ignora
+        }
+      }
 
       for (const fl of futureLessons) {
-        const existingStart = new Date(fl.startAt)
-        const newStartAt = new Date(existingStart)
-        newStartAt.setHours(editedHour, editedMinute, 0, 0)
+        const occurrenceStart = new Date(fl.startAt)
+        if (!matchesLessonSeries(occurrenceStart, fl.teacherId, seriesRef)) continue
+
+        const newStartAt = computeRescheduledSeriesStartAt(
+          refStart,
+          occurrenceStart,
+          effectiveStartAt
+        )
+
+        const futurePatch: {
+          teacherId?: string | null
+          durationMinutes?: number
+          startAt: Date
+          status?: typeof updateData.status
+          notes?: string | null
+        } = {
+          teacherId: effectiveTeacherId,
+          startAt: newStartAt,
+        }
+
+        if (updateData.durationMinutes != null) {
+          futurePatch.durationMinutes = updateData.durationMinutes
+        }
+
+        if (statusChanged && updateData.status) {
+          futurePatch.status = updateData.status
+          if (isLessonCancelledFamily(updateData.status)) {
+            futurePatch.notes = adicionarObservacaoCancelamento(fl.notes, nomeAdmin, new Date())
+          } else if (updateData.status === 'REPOSICAO') {
+            futurePatch.notes = adicionarObservacaoReagendamento(fl.notes, nomeAdmin, new Date())
+          }
+        }
 
         await prisma.lesson.update({
           where: { id: fl.id },
-          data: {
-            teacherId: effectiveTeacherId,
-            durationMinutes: updateData.durationMinutes ?? undefined,
-            startAt: newStartAt,
-          },
+          data: futurePatch,
         })
       }
     }
@@ -628,6 +717,22 @@ export async function DELETE(
       return NextResponse.json(
         { ok: false, message: 'Aula não encontrada' },
         { status: 404 }
+      )
+    }
+
+    const editorPerms = await prisma.user.findUnique({
+      where: { id: auth.session!.sub },
+      select: { canApproveLateLessonEdits: true },
+    })
+
+    if (
+      !canAdminEditLessonOnDate(lesson.startAt, auth.session?.email, {
+        canApproveLateLessonEdits: editorPerms?.canApproveLateLessonEdits,
+      })
+    ) {
+      return NextResponse.json(
+        { ok: false, message: LESSON_PAST_EDIT_DENIED_MESSAGE, code: 'PAST_EDIT_NEEDS_APPROVAL' },
+        { status: 403 }
       )
     }
 

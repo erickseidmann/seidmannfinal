@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { isLessonStartInTeacherPaidPeriod } from '@/lib/teacher-paid-period'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import { assertLessonRecordBookProgression } from '@/lib/lesson-record-book-progression'
 
 export async function GET(
   request: NextRequest,
@@ -108,7 +109,11 @@ export async function PATCH(
     const { id } = await params
     const existing = await (prisma as any).lessonRecord.findUnique({
       where: { id },
-      include: { lesson: { select: { teacherId: true, startAt: true, status: true } } },
+      select: {
+        id: true,
+        book: true,
+        lesson: { select: { teacherId: true, startAt: true, status: true, enrollmentId: true } },
+      },
     })
     if (!existing) {
       return NextResponse.json(
@@ -168,7 +173,27 @@ export async function PATCH(
       gradeSpeaking,
       gradeListening,
       gradeUnderstanding,
+      confirmBookAdvance,
     } = body
+
+    if (book !== undefined && book?.trim()) {
+      const bookCheck = await assertLessonRecordBookProgression(
+        prisma,
+        existing.lesson.enrollmentId,
+        book,
+        {
+          excludeRecordId: id,
+          existingBookOnRecord: existing.book,
+          confirmBookAdvance: confirmBookAdvance === true,
+        }
+      )
+      if (!bookCheck.ok) {
+        return NextResponse.json(
+          { ok: false, message: bookCheck.message, code: bookCheck.code },
+          { status: bookCheck.code === 'ADVANCE_NEEDS_CONFIRM' ? 409 : 400 }
+        )
+      }
+    }
 
     const updateData: Record<string, unknown> = {}
     if (presence != null && ['PRESENTE', 'NAO_COMPARECEU', 'ATRASADO'].includes(presence)) updateData.presence = presence

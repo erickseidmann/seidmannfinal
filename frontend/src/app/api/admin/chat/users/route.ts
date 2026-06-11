@@ -32,8 +32,22 @@ export async function GET(request: NextRequest) {
       ]
     }
 
+    const inactiveTeacherUserIds = new Set(
+      (
+        await prisma.teacher.findMany({
+          where: { status: 'INACTIVE', userId: { not: null } },
+          select: { userId: true },
+        })
+      )
+        .map((t) => t.userId)
+        .filter((id): id is string => id != null)
+    )
+
     const users = await prisma.user.findMany({
-      where,
+      where: {
+        ...where,
+        status: 'ACTIVE',
+      },
       select: {
         id: true,
         nome: true,
@@ -44,6 +58,10 @@ export async function GET(request: NextRequest) {
       take: 100,
     })
 
+    const filtered = users.filter(
+      (u) => !(u.role === 'TEACHER' && inactiveTeacherUserIds.has(u.id))
+    )
+
     const roleLabel: Record<string, string> = {
       ADMIN: 'Funcionário',
       TEACHER: 'Professor',
@@ -52,7 +70,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      data: users.map((u) => ({
+      data: filtered.map((u) => ({
         id: u.id,
         nome: u.nome,
         email: u.email,

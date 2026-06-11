@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
+import { teacherAbsentFlagsByLessonId } from '@/lib/lesson-attendance-summary'
 
 export async function GET(request: NextRequest) {
   try {
@@ -63,6 +64,7 @@ export async function GET(request: NextRequest) {
             tipoAula: true,
             nomeGrupo: true,
             curso: true,
+            inactiveAt: true,
           },
         },
         teacher: { select: { id: true, nome: true } },
@@ -106,17 +108,82 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const lessonIds = lessonsRaw.map((l) => l.id)
+    const unlockRows =
+      lessonIds.length > 0
+        ? await prisma.lessonRecordUnlockRequest.findMany({
+            where: { lessonId: { in: lessonIds }, teacherId: teacher.id },
+            orderBy: { criadoEm: 'desc' },
+            select: { id: true, lessonId: true, status: true, criadoEm: true, adminNotes: true },
+          })
+        : []
+    const unlockByLessonId = new Map<string, (typeof unlockRows)[number]>()
+    for (const row of unlockRows) {
+      if (!unlockByLessonId.has(row.lessonId)) unlockByLessonId.set(row.lessonId, row)
+    }
+
+    const attendanceRows =
+      lessonIds.length > 0
+        ? await prisma.lessonAttendance.findMany({
+            where: { lessonId: { in: lessonIds } },
+            select: {
+              lessonId: true,
+              role: true,
+              joinedAt: true,
+              leftAt: true,
+              lastSeen: true,
+              status: true,
+            },
+          })
+        : []
+    const teacherAbsentFlags = teacherAbsentFlagsByLessonId(
+      lessonsRaw.map((l) => ({
+        id: l.id,
+        startAt: l.startAt,
+        durationMinutes: l.durationMinutes ?? 60,
+      })),
+      attendanceRows,
+      new Date(),
+      'record-block'
+    )
+
     const lessons = lessonsRaw.map((l) => {
       const enr = l.enrollment as { id: string; nome: string; tipoAula: string | null; nomeGrupo: string | null }
       const groupMemberNames = enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()
         ? (groupMembersMap.get(enr.nomeGrupo.trim()) || [])
         : undefined
       return {
-        ...l,
+        id: l.id,
+        enrollmentId: l.enrollmentId,
+        teacherId: l.teacherId,
+        status: l.status,
+        startAt: l.startAt.toISOString(),
+        durationMinutes: l.durationMinutes ?? 60,
+        notes: l.notes,
+        createdByName: l.createdByName,
         enrollment: {
           ...enr,
+          inactiveAt: (l.enrollment as { inactiveAt?: Date | null }).inactiveAt?.toISOString() ?? null,
           groupMemberNames,
         },
+        teacher: l.teacher,
+        record: l.record ? { id: l.record.id } : null,
+        requests: (l.requests || []).map((r) => ({
+          id: r.id,
+          type: r.type,
+          status: r.status,
+        })),
+        recordUnlockRequest: (() => {
+          const u = unlockByLessonId.get(l.id)
+          if (!u) return null
+          return {
+            id: u.id,
+            status: u.status,
+            criadoEm: u.criadoEm.toISOString(),
+            adminNotes: u.adminNotes,
+          }
+        })(),
+        teacherAbsentFromCall: teacherAbsentFlags.get(l.id) ?? false,
       }
     })
 

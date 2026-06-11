@@ -563,7 +563,7 @@ Equipe Seidmann Institute`
               type="button"
               onClick={() => openEditValorModal(row)}
               className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50"
-              title="Propor alteração de valor (aguardará aprovação do admin)"
+              title="Alterar valor (aprovação só se mudar em relação ao mês anterior)"
               aria-label="Propor alteração"
             >
               <Pencil className="w-4 h-4" />
@@ -922,7 +922,7 @@ Equipe Seidmann Institute`
               Referência: {MESES_LABELS[selectedMes]} de {selectedAno}. Opcionalmente aplique o mesmo valor a todos os meses do ano.
             </p>
             <p className="text-sm text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-              A alteração será registrada como proposta e só terá efeito após aprovação do admin.
+              Se o valor for igual ao do mês anterior, será confirmado automaticamente. Só pede aprovação do admin quando o valor mudar.
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>

@@ -17,10 +17,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const [nota1Count, nota2Count, nota45Count, teacherRequestsCount] = await Promise.all([
-      prisma.teacher.count({ where: { nota: 1 } }),
-      prisma.teacher.count({ where: { nota: 2 } }),
-      prisma.teacher.count({ where: { nota: { in: [4, 5] } } }),
+    const activeOnly = { status: { not: 'INACTIVE' as const } }
+    const [nota1Count, nota2Count, nota45Count, inactiveCount, teacherRequestsCount] =
+      await Promise.all([
+      prisma.teacher.count({ where: { nota: 1, ...activeOnly } }),
+      prisma.teacher.count({ where: { nota: 2, ...activeOnly } }),
+      prisma.teacher.count({ where: { nota: { in: [4, 5] }, ...activeOnly } }),
+      prisma.teacher.count({ where: { status: 'INACTIVE' } }),
       (async () => {
         try {
           return await prisma.teacherRequest.count()
@@ -36,6 +39,7 @@ export async function GET(request: NextRequest) {
         nota1: nota1Count,
         nota2: nota2Count,
         nota45: nota45Count,
+        inativos: inactiveCount,
         teacherRequests: teacherRequestsCount,
       },
     })

@@ -9,6 +9,7 @@ import { useTranslation } from '@/contexts/LanguageContext'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Calendar, Check, Loader2, Minus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getDayOfWeekInTZ, getTimeInTZ } from '@/lib/datetime'
@@ -365,7 +366,7 @@ export default function MinhaAgendaPage() {
           {t('professor.agenda.loading')}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm -mx-4 px-4 sm:mx-0 sm:px-0">
+        <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm -mx-4 px-4 sm:mx-0 sm:px-0">
           <div className="inline-block min-w-full">
             <table className="w-full border-collapse text-xs sm:text-sm min-w-[800px] sm:min-w-[1000px] lg:min-w-[1200px]">
               <thead>
@@ -463,7 +464,7 @@ export default function MinhaAgendaPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </TableScrollArea>
       )}
 
       <Modal

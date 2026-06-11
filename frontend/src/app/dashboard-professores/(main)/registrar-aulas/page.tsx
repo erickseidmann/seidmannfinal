@@ -14,9 +14,36 @@ import {
   type ProfessorCatalogBook,
 } from '@/lib/professor-catalog-books'
 import Modal from '@/components/admin/Modal'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { canRegisterLesson, isLessonCancelledFamily, LESSON_STATUS_LABELS, type LessonStatusUi } from '@/lib/lesson-status'
+import {
+  isLessonStartNotYetRegisterable,
+  isTeacherLessonRecordDeadlineExpired,
+  TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE,
+  formatTeacherRecordDeadlineLabel,
+  canTeacherRegisterLessonConsideringUnlock,
+} from '@/lib/teacher-lesson-record-deadline'
+import {
+  isLessonRecordUnlockApproved,
+  isLessonRecordUnlockPending,
+  LESSON_RECORD_UNLOCK_STATUS_LABELS,
+} from '@/lib/lesson-record-unlock'
+import { TEACHER_ATTENDANCE_REQUIRED_MESSAGE } from '@/lib/lesson-attendance-summary'
+import TeacherRecordDeadlineAlert from '@/components/professor/TeacherRecordDeadlineAlert'
+import ConfirmModal from '@/components/admin/ConfirmModal'
+import {
+  bookAdvanceConfirmMessage,
+  checkBookProgression,
+  isBookOptionBelowReference,
+  resolveBookProgressionReference,
+} from '@/lib/lesson-record-book-progression'
+import {
+  assertLessonRecordDiffersFromPrevious,
+  lessonRecordCompareFromProfessorForm,
+  lessonRecordCompareFromUltimaRecord,
+} from '@/lib/lesson-record-diff-from-previous'
 
 const BRAZIL_TZ = 'America/Sao_Paulo'
 
@@ -37,6 +64,13 @@ interface Lesson {
   }
   teacher: { id: string; nome: string }
   record?: { id: string; criadoEm?: string; atualizadoEm?: string } | null
+  recordUnlockRequest?: {
+    id: string
+    status: 'PENDING' | 'APPROVED' | 'DENIED'
+    criadoEm: string
+    adminNotes?: string | null
+  } | null
+  teacherAbsentFromCall?: boolean
 }
 
 interface UltimaRecord {
@@ -131,10 +165,19 @@ function isLessonOpenPending(
   paidPeriodRange: { start: number; end: number } | null
 ): boolean {
   if (lesson.record?.id) return false
+  if (lesson.teacherAbsentFromCall) return false
   if (!canRegisterLesson(lesson.status)) return false
   if (holidays.has(toDateKeyInTZ(lesson.startAt))) return false
+  if (isLessonStartNotYetRegisterable(lesson.startAt)) return false
+  if (
+    !canTeacherRegisterLessonConsideringUnlock(
+      lesson.startAt,
+      isLessonRecordUnlockApproved(lesson.recordUnlockRequest)
+    )
+  ) {
+    return false
+  }
   const lessonStartMs = new Date(lesson.startAt).getTime()
-  if (lessonStartMs > Date.now()) return false
   const isInPaidPeriod =
     !!paidPeriodRange &&
     lessonStartMs >= paidPeriodRange.start &&
@@ -171,9 +214,12 @@ export default function RegistrarAulasPage() {
   const [stats, setStats] = useState({ totalAulasRegistradas: 0, totalHorasRegistradas: 0, valorAPagar: 0 })
   const [showPendingList, setShowPendingList] = useState(false)
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null)
+  const [editingOriginalBook, setEditingOriginalBook] = useState<string | null>(null)
+  const [bookAdvanceConfirm, setBookAdvanceConfirm] = useState<{ referenceBook: string; newBook: string } | null>(null)
   const [loadingRecord, setLoadingRecord] = useState(false)
   const [periodPaid, setPeriodPaid] = useState(false)
   const [registeringLessonId, setRegisteringLessonId] = useState<string | null>(null)
+  const [requestingUnlockLessonId, setRequestingUnlockLessonId] = useState<string | null>(null)
   const [catalogBooks, setCatalogBooks] = useState<ProfessorCatalogBook[]>([])
   const [catalogBooksLoading, setCatalogBooksLoading] = useState(true)
 
@@ -316,6 +362,15 @@ export default function RegistrarAulasPage() {
     return catalogNomes.has(t) ? null : t
   }, [form.book, catalogNomes])
 
+  const bookProgressionReference = useMemo(() => {
+    return resolveBookProgressionReference({
+      latestRecordBook: ultimaRecord?.book,
+      latestRecordId: ultimaRecord?.id,
+      editingRecordId,
+      editingOriginalBook,
+    })
+  }, [ultimaRecord?.book, ultimaRecord?.id, editingRecordId, editingOriginalBook])
+
   useEffect(() => {
     if (initialMonthResolved) return
     resolveCurrentPeriodMonth()
@@ -383,19 +438,27 @@ export default function RegistrarAulasPage() {
   }, [lessons, holidays, periodPaid, paidPeriodRange])
 
   const pendingLessons = useMemo(() => {
-    const nowMs = Date.now()
+    return lessons.filter((l) => isLessonOpenPending(l, holidays, periodPaid, paidPeriodRange))
+  }, [lessons, holidays, periodPaid, paidPeriodRange])
+
+  const expiredPendingLessons = useMemo(() => {
     return lessons.filter((l) => {
+      if (l.record?.id) return false
       if (!canRegisterLesson(l.status)) return false
-      const isHoliday = holidays.has(toDateKeyInTZ(l.startAt))
-      if (isHoliday) return false
-      const startAtMs = new Date(l.startAt).getTime()
-      const isFuture = startAtMs > nowMs
-      if (isFuture) return false
-      // Se o período está pago, não contar pendências DENTRO do período pago (essas ficam fechadas)
-      if (paidPeriodRange && startAtMs >= paidPeriodRange.start && startAtMs <= paidPeriodRange.end) {
+      if (holidays.has(toDateKeyInTZ(l.startAt))) return false
+      if (isLessonStartNotYetRegisterable(l.startAt)) return false
+      if (!isTeacherLessonRecordDeadlineExpired(l.startAt)) return false
+      if (isLessonRecordUnlockPending(l.recordUnlockRequest)) return false
+      if (isLessonRecordUnlockApproved(l.recordUnlockRequest)) return false
+      const lessonStartMs = new Date(l.startAt).getTime()
+      if (
+        paidPeriodRange &&
+        lessonStartMs >= paidPeriodRange.start &&
+        lessonStartMs <= paidPeriodRange.end
+      ) {
         return false
       }
-      return !l.record?.id
+      return true
     })
   }, [lessons, holidays, paidPeriodRange])
   const registrosEmAberto = periodPaid ? 0 : pendingLessons.length
@@ -407,26 +470,60 @@ export default function RegistrarAulasPage() {
   const modalOpen = selectedLesson !== null
   const isGroupLesson = selectedLesson?.enrollment?.tipoAula === 'GRUPO' && selectedLesson?.enrollment?.nomeGrupo?.trim()
   const selectedLessonIsHoliday = selectedLesson ? holidays.has(toDateKeyInTZ(selectedLesson.startAt)) : false
-  const selectedLessonIsFuture = selectedLesson ? new Date(selectedLesson.startAt) > new Date() : false
+  const selectedLessonIsFuture = selectedLesson
+    ? isLessonStartNotYetRegisterable(selectedLesson.startAt)
+    : false
+  const selectedLessonDeadlineExpired = selectedLesson
+    ? isTeacherLessonRecordDeadlineExpired(selectedLesson.startAt) &&
+      !isLessonRecordUnlockApproved(selectedLesson.recordUnlockRequest)
+    : false
   const selectedLessonBlocked = selectedLesson ? !canRegisterLesson(selectedLesson.status) : false
+  const selectedLessonTeacherAbsent = selectedLesson?.teacherAbsentFromCall ?? false
 
   const closeModal = useCallback(() => {
     setSelectedLesson(null)
     setEditingRecordId(null)
+    setEditingOriginalBook(null)
+    setBookAdvanceConfirm(null)
     setUltimaRecord(null)
     setForm(emptyForm)
     setStudentsPresence([])
     setGroupMembers([])
   }, [])
 
+  const handleRequestUnlock = async (lesson: Lesson) => {
+    if (requestingUnlockLessonId) return
+    setRequestingUnlockLessonId(lesson.id)
+    try {
+      const res = await fetch('/api/professor/lesson-record-unlock-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ lessonId: lesson.id }),
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        setToast({ message: json.message || 'Erro ao solicitar liberação', type: 'error' })
+        return
+      }
+      setToast({ message: json.message || 'Solicitação enviada', type: 'success' })
+      fetchData()
+    } catch {
+      setToast({ message: 'Erro ao solicitar liberação', type: 'error' })
+    } finally {
+      setRequestingUnlockLessonId(null)
+    }
+  }
+
   const handleLessonClick = (lesson: Lesson) => {
-    if (!canRegisterLesson(lesson.status) || lesson.record?.id) return
+    if (!canRegisterLesson(lesson.status) || lesson.record?.id || lesson.teacherAbsentFromCall) return
     if (registeringLessonId) {
       setToast({ message: t('professor.registerClasses.waitRegistration'), type: 'error' })
       return
     }
     setShowPendingList(false)
     setEditingRecordId(null)
+    setEditingOriginalBook(null)
     setSelectedLesson(lesson)
     setForm({
       ...emptyForm,
@@ -447,6 +544,7 @@ export default function RegistrarAulasPage() {
     setShowPendingList(false)
     setSelectedLesson(lesson)
     setEditingRecordId(lesson.record.id)
+    setEditingOriginalBook(null)
     setForm(emptyForm)
     setStudentsPresence([])
     setUltimaRecord(null)
@@ -460,6 +558,7 @@ export default function RegistrarAulasPage() {
       .then((json) => {
         if (!json.ok || !json.data?.record) return
         const r = json.data.record
+        setEditingOriginalBook(r.book?.trim() || null)
         setForm({
           status: (['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(r.status) ? r.status : 'CONFIRMED') as FormStatus,
           presence: (['PRESENTE', 'NAO_COMPARECEU', 'ATRASADO'].includes(r.presence) ? r.presence : 'PRESENTE') as FormPresence,
@@ -551,48 +650,28 @@ export default function RegistrarAulasPage() {
     if (ultimaRecord.studentPresences?.length) {
       setStudentsPresence(ultimaRecord.studentPresences.map((s) => ({ enrollmentId: s.enrollmentId, presence: s.presence })))
     }
-    setToast({ message: 'Formulário preenchido com os dados da última aula', type: 'success' })
+    setToast({
+      message: 'Formulário preenchido com os dados da última aula. Altere pelo menos um campo antes de salvar.',
+      type: 'success',
+    })
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleBookChange = (nextBook: string) => {
+    const check = checkBookProgression(nextBook, bookProgressionReference)
+    if (!check.ok && check.code === 'RETROGRADE') {
+      setToast({ message: check.message, type: 'error' })
+      return
+    }
+    setForm((prev) => ({ ...prev, book: nextBook }))
+  }
+
+  const submitRecord = (confirmBookAdvance = false) => {
     if (!selectedLesson) return
-    if (!canRegisterLesson(selectedLesson.status)) {
-      setToast({
-        message:
-          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
-        type: 'error',
-      })
-      return
-    }
-    if (!editingRecordId && selectedLessonIsHoliday) {
-      setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
-      return
-    }
-    if (!editingRecordId && selectedLessonIsFuture) {
-      setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
-      return
-    }
-    if (!form.book?.trim()) {
-      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
-      return
-    }
-    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
-      setToast({
-        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
-        type: 'error',
-      })
-      return
-    }
-    if (!form.lastPage?.trim()) {
-      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
-      return
-    }
 
     const lessonIdToRegister = selectedLesson.id
     let url: string
     let method: string
-    let payload: object
+    let payload: Record<string, unknown>
 
     if (editingRecordId) {
       url = `/api/professor/lesson-records/${editingRecordId}`
@@ -614,6 +693,7 @@ export default function RegistrarAulasPage() {
         gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
         gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
         gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
+        ...(confirmBookAdvance ? { confirmBookAdvance: true } : {}),
       }
     } else {
       url = '/api/professor/lesson-records'
@@ -638,10 +718,11 @@ export default function RegistrarAulasPage() {
         gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
         gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
         gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
+        ...(confirmBookAdvance ? { confirmBookAdvance: true } : {}),
       }
     }
 
-    closeModal()
+    setSaving(true)
     setRegisteringLessonId(lessonIdToRegister)
 
     fetch(url, {
@@ -653,14 +734,94 @@ export default function RegistrarAulasPage() {
       .then((res) => res.json())
       .then((json) => {
         if (!json.ok) {
+          if (json.code === 'ADVANCE_NEEDS_CONFIRM') {
+            setBookAdvanceConfirm({
+              referenceBook: bookProgressionReference || '',
+              newBook: form.book.trim(),
+            })
+            return
+          }
           setToast({ message: json.message || 'Erro ao salvar', type: 'error' })
           return
         }
+        setBookAdvanceConfirm(null)
+        closeModal()
         setToast({ message: editingRecordId ? 'Registro atualizado' : 'Registro de aula criado', type: 'success' })
         fetchData()
       })
       .catch(() => setToast({ message: 'Erro ao salvar', type: 'error' }))
-      .finally(() => setRegisteringLessonId(null))
+      .finally(() => {
+        setSaving(false)
+        setRegisteringLessonId(null)
+      })
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedLesson) return
+    if (!canRegisterLesson(selectedLesson.status)) {
+      setToast({
+        message:
+          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
+        type: 'error',
+      })
+      return
+    }
+    if (!editingRecordId && selectedLessonIsHoliday) {
+      setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
+      return
+    }
+    if (!editingRecordId && selectedLessonIsFuture) {
+      setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
+      return
+    }
+    if (!editingRecordId && selectedLessonDeadlineExpired) {
+      setToast({ message: TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE, type: 'error' })
+      return
+    }
+    if (!form.book?.trim()) {
+      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
+      return
+    }
+    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
+      setToast({
+        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
+        type: 'error',
+      })
+      return
+    }
+    if (!form.lastPage?.trim()) {
+      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
+      return
+    }
+
+    const bookCheck = checkBookProgression(form.book, bookProgressionReference)
+    if (!bookCheck.ok && bookCheck.code === 'RETROGRADE') {
+      setToast({ message: bookCheck.message, type: 'error' })
+      return
+    }
+    if (!bookCheck.ok && bookCheck.code === 'ADVANCE_NEEDS_CONFIRM') {
+      setBookAdvanceConfirm({
+        referenceBook: bookCheck.referenceBook,
+        newBook: bookCheck.newBook,
+      })
+      return
+    }
+
+    if (!editingRecordId && ultimaRecord) {
+      const diffCheck = assertLessonRecordDiffersFromPrevious(
+        lessonRecordCompareFromProfessorForm(form, {
+          studentsPresence: isGroupLesson && studentsPresence.length > 0 ? studentsPresence : undefined,
+        }),
+        lessonRecordCompareFromUltimaRecord(ultimaRecord)
+      )
+      if (!diffCheck.ok) {
+        setToast({ message: diffCheck.message, type: 'error' })
+        return
+      }
+    }
+
+    submitRecord(false)
   }
 
   const hasPeriod = periodStart != null && periodEnd != null
@@ -675,6 +836,23 @@ export default function RegistrarAulasPage() {
         <ClipboardList className="w-7 h-7 text-brand-orange" />
         {t('professor.registerClasses.title')}
       </h1>
+
+      <TeacherRecordDeadlineAlert
+        registerablePending={pendingLessons}
+        expiredPending={expiredPendingLessons}
+        dateLocale={dateLocale}
+        title={t('professor.registerClasses.deadlineAlert.title')}
+        intro={t('professor.registerClasses.deadlineAlert.intro')}
+        backlogNote={t('professor.registerClasses.deadlineAlert.backlog')}
+        newRuleNote={t('professor.registerClasses.deadlineAlert.newRule')}
+        registerableTitle={t('professor.registerClasses.deadlineAlert.registerable')}
+        expiredTitle={t('professor.registerClasses.deadlineAlert.expired')}
+        expiredNote={t('professor.registerClasses.deadlineAlert.expiredNote')}
+        deadlineUntil={t('professor.registerClasses.deadlineAlert.deadlineUntil')}
+        registerLinkLabel={t('professor.registerClasses.deadlineAlert.goRegister')}
+        onLessonClick={handleLessonClick}
+        showRegisterLink={false}
+      />
 
       {/* Cubos de resumo */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -777,7 +955,7 @@ export default function RegistrarAulasPage() {
             {t('professor.registerClasses.noLessons')}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <TableScrollArea>
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50 text-gray-600 text-sm font-medium">
@@ -793,21 +971,24 @@ export default function RegistrarAulasPage() {
                   const isCancelled = isLessonCancelledFamily(lesson.status)
                   const isHoliday = holidays.has(toDateKeyInTZ(lesson.startAt))
                   const lessonStartMs = new Date(lesson.startAt).getTime()
-                  const isFuture = lessonStartMs > Date.now()
+                  const isFuture = isLessonStartNotYetRegisterable(lesson.startAt)
+                  const isDeadlineExpired = isTeacherLessonRecordDeadlineExpired(lesson.startAt)
                   const isInPaidPeriod =
                     !!paidPeriodRange &&
                     lessonStartMs >= paidPeriodRange.start &&
                     lessonStartMs <= paidPeriodRange.end
-                  const clickable =
-                    !hasRecord && !isCancelled && !isHoliday && !isFuture && (!periodPaid || !isInPaidPeriod)
+                  const clickable = isLessonOpenPending(lesson, holidays, periodPaid, paidPeriodRange)
+                  const teacherAbsent = lesson.teacherAbsentFromCall && !hasRecord
                   return (
                     <tr
                       key={lesson.id}
                       onClick={() => clickable && handleLessonClick(lesson)}
                       className={`border-b border-gray-100 ${
-                        clickable
-                          ? 'cursor-pointer hover:bg-brand-orange/5 transition-colors'
-                          : 'bg-gray-50/50'
+                        teacherAbsent
+                          ? 'bg-red-50/80'
+                          : clickable
+                            ? 'cursor-pointer hover:bg-brand-orange/5 transition-colors'
+                            : 'bg-gray-50/50'
                       }`}
                     >
                       <td className="px-4 py-3 text-gray-900 whitespace-nowrap">
@@ -863,10 +1044,51 @@ export default function RegistrarAulasPage() {
                           </span>
                         ) : periodPaid && isInPaidPeriod ? (
                           <span className="text-gray-400 text-sm">—</span>
+                        ) : isLessonRecordUnlockPending(lesson.recordUnlockRequest) ? (
+                          <span className="inline-flex items-center gap-1 text-blue-700 text-sm font-medium">
+                            <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                            {t('professor.registerClasses.unlockPending')}
+                          </span>
+                        ) : lesson.teacherAbsentFromCall ? (
+                          <span className="inline-flex items-center gap-1 text-red-700 text-sm font-medium">
+                            Ausência na chamada
+                          </span>
+                        ) : isDeadlineExpired ? (
+                          <span className="inline-flex flex-col gap-1 text-red-700 text-sm">
+                            <span className="inline-flex items-center gap-1 font-medium">
+                              <Circle className="w-4 h-4 shrink-0" />
+                              {lesson.recordUnlockRequest?.status === 'DENIED'
+                                ? t('professor.registerClasses.unlockDenied')
+                                : t('professor.registerClasses.deadlineExpired')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void handleRequestUnlock(lesson)
+                              }}
+                              disabled={requestingUnlockLessonId === lesson.id}
+                              className="text-left text-xs font-semibold text-brand-orange hover:underline disabled:opacity-50"
+                            >
+                              {requestingUnlockLessonId === lesson.id
+                                ? t('professor.registerClasses.unlockRequesting')
+                                : t('professor.registerClasses.requestUnlock')}
+                            </button>
+                          </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-amber-700 text-sm">
-                            <Circle className="w-4 h-4 shrink-0" />
-                            {t('professor.registerClasses.pending')}
+                          <span className="inline-flex flex-col gap-0.5 text-amber-700 text-sm">
+                            <span className="inline-flex items-center gap-1">
+                              <Circle className="w-4 h-4 shrink-0" />
+                              {t('professor.registerClasses.pending')}
+                            </span>
+                            {!isFuture && (
+                              <span className="text-[11px] text-amber-800/90">
+                                {t('professor.registerClasses.deadlineUntil').replace(
+                                  '{date}',
+                                  formatTeacherRecordDeadlineLabel(lesson.startAt, dateLocale)
+                                )}
+                              </span>
+                            )}
                           </span>
                         )}
                       </td>
@@ -875,7 +1097,7 @@ export default function RegistrarAulasPage() {
                 })}
               </tbody>
             </table>
-          </div>
+          </TableScrollArea>
         )}
       </div>
 
@@ -894,7 +1116,7 @@ export default function RegistrarAulasPage() {
                 {t('professor.calendar.fillFromLast')}
               </Button>
             )}
-            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || (!editingRecordId && (selectedLessonIsHoliday || selectedLessonIsFuture))}>
+            <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || selectedLessonTeacherAbsent || (!editingRecordId && (selectedLessonIsHoliday || selectedLessonIsFuture || selectedLessonDeadlineExpired))}>
               {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               {saving ? t('professor.calendar.saving') : editingRecordId ? t('professor.registerClasses.saveRecord') : t('professor.calendar.createRecord')}
             </Button>
@@ -925,6 +1147,16 @@ export default function RegistrarAulasPage() {
             {selectedLessonIsFuture && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
                 {t('professor.calendar.noFutureLessonRecord')}
+              </div>
+            )}
+            {selectedLessonDeadlineExpired && !editingRecordId && (
+              <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800">
+                {TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE}
+              </div>
+            )}
+            {selectedLessonTeacherAbsent && !editingRecordId && (
+              <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800">
+                {TEACHER_ATTENDANCE_REQUIRED_MESSAGE}
               </div>
             )}
             <p className="text-sm text-gray-600">
@@ -1030,7 +1262,7 @@ export default function RegistrarAulasPage() {
                 <>
                   <select
                     value={form.book}
-                    onChange={(e) => setForm({ ...form, book: e.target.value })}
+                    onChange={(e) => handleBookChange(e.target.value)}
                     className="input w-full"
                     required
                     aria-required="true"
@@ -1043,11 +1275,20 @@ export default function RegistrarAulasPage() {
                       </option>
                     )}
                     {catalogBooks.map((b) => (
-                      <option key={b.id} value={b.nome}>
+                      <option
+                        key={b.id}
+                        value={b.nome}
+                        disabled={isBookOptionBelowReference(b.nome, bookProgressionReference)}
+                      >
                         {labelProfessorCatalogBook(b)}
                       </option>
                     ))}
                   </select>
+                  {bookProgressionReference && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Livro atual do aluno (última aula): <strong>{bookProgressionReference}</strong>
+                    </p>
+                  )}
                   {catalogBooks.length === 0 && (
                     <p className="text-xs text-amber-700 mt-1">
                       Nenhum livro cadastrado. Peça à administração para cadastrar em Admin → Livros.
@@ -1155,6 +1396,24 @@ export default function RegistrarAulasPage() {
           onClose={() => setToast(null)}
         />
       )}
+
+      <ConfirmModal
+        isOpen={bookAdvanceConfirm != null}
+        onClose={() => setBookAdvanceConfirm(null)}
+        onConfirm={() => submitRecord(true)}
+        title="Atenção"
+        message={
+          bookAdvanceConfirm
+            ? bookAdvanceConfirmMessage(
+                bookAdvanceConfirm.referenceBook,
+                bookAdvanceConfirm.newBook,
+                selectedLesson?.enrollment?.nome
+              )
+            : ''
+        }
+        confirmLabel="Sim, progredir"
+        cancelLabel="Cancelar"
+      />
     </div>
   )
 }

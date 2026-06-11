@@ -8,6 +8,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin, isSuperAdminEmail } from '@/lib/auth'
 import { markLinkedTeacherPaidForAdminCompetenceMonth } from '@/lib/finance/sync-linked-teacher-paid-from-admin'
+import {
+  getPreviousApprovedAdminValor,
+  resolveAdminValorReference,
+  shouldAutoApproveAdminValor,
+} from '@/lib/admin-user-payment-valor'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -153,9 +158,19 @@ export async function PATCH(
       return NextResponse.json({ ok: true, message: 'Valor aprovado e atualizado.' })
     }
 
-    // Propor alteração de valor (fica em valorPendente até aprovação)
+    // Alteração de valor: igual ao mês anterior → aplica direto; diferente → proposta (valorPendente)
     if (replicateToAllMonths && valorNum !== undefined) {
-      const now = new Date()
+      const previousValor = await getPreviousApprovedAdminValor(prisma, userId, year, month)
+      const existingMonth = await prisma.adminUserPaymentMonth.findUnique({
+        where: { userId_year_month: { userId, year, month } },
+        select: { valor: true },
+      })
+      const reference = resolveAdminValorReference(
+        existingMonth?.valor != null ? Number(existingMonth.valor) : null,
+        previousValor
+      )
+      const autoApprove = shouldAutoApproveAdminValor(valorNum, reference)
+
       for (let m = 1; m <= 12; m++) {
         await prisma.adminUserPaymentMonth.upsert({
           where: { userId_year_month: { userId, year, month: m } },
@@ -163,22 +178,70 @@ export async function PATCH(
             userId,
             year,
             month: m,
-            valor: null,
-            valorPendente: valorNum,
-            valorPendenteRequestedAt: now,
+            valor: autoApprove ? valorNum : null,
+            valorPendente: autoApprove ? null : valorNum,
+            valorPendenteRequestedAt: autoApprove ? null : new Date(),
             paymentStatus: m === month && paymentStatusVal !== undefined ? paymentStatusVal : null,
           },
-          update: {
-            valorPendente: valorNum,
-            valorPendenteRequestedAt: now,
-            ...(m === month && paymentStatusVal !== undefined ? { paymentStatus: paymentStatusVal } : {}),
-          },
+          update: autoApprove
+            ? {
+                valor: valorNum,
+                valorPendente: null,
+                valorPendenteRequestedAt: null,
+                ...(m === month && paymentStatusVal !== undefined ? { paymentStatus: paymentStatusVal } : {}),
+              }
+            : {
+                valorPendente: valorNum,
+                valorPendenteRequestedAt: new Date(),
+                ...(m === month && paymentStatusVal !== undefined ? { paymentStatus: paymentStatusVal } : {}),
+              },
         })
       }
-      return NextResponse.json({ ok: true, message: 'Proposta de valor registrada para todos os meses. Aguardando aprovação do admin.' })
+      return NextResponse.json({
+        ok: true,
+        message: autoApprove
+          ? 'Valor confirmado para todos os meses (igual ao mês anterior).'
+          : 'Proposta de valor registrada para todos os meses. Aguardando aprovação do admin.',
+      })
     }
 
     if (valorNum !== undefined) {
+      const previousValor = await getPreviousApprovedAdminValor(prisma, userId, year, month)
+      const existingMonth = await prisma.adminUserPaymentMonth.findUnique({
+        where: { userId_year_month: { userId, year, month } },
+        select: { valor: true },
+      })
+      const reference = resolveAdminValorReference(
+        existingMonth?.valor != null ? Number(existingMonth.valor) : null,
+        previousValor
+      )
+      const autoApprove = shouldAutoApproveAdminValor(valorNum, reference)
+
+      if (autoApprove) {
+        await prisma.adminUserPaymentMonth.upsert({
+          where: { userId_year_month: { userId, year, month } },
+          create: {
+            userId,
+            year,
+            month,
+            valor: valorNum,
+            valorPendente: null,
+            valorPendenteRequestedAt: null,
+            paymentStatus: paymentStatusVal ?? null,
+          },
+          update: {
+            valor: valorNum,
+            valorPendente: null,
+            valorPendenteRequestedAt: null,
+            ...(paymentStatusVal !== undefined ? { paymentStatus: paymentStatusVal } : {}),
+          },
+        })
+        return NextResponse.json({
+          ok: true,
+          message: 'Valor confirmado (igual ao mês anterior).',
+        })
+      }
+
       const now = new Date()
       await prisma.adminUserPaymentMonth.upsert({
         where: { userId_year_month: { userId, year, month } },
@@ -197,7 +260,10 @@ export async function PATCH(
           ...(paymentStatusVal !== undefined ? { paymentStatus: paymentStatusVal } : {}),
         },
       })
-      return NextResponse.json({ ok: true, message: 'Proposta de valor registrada. Aguardando aprovação do admin.' })
+      return NextResponse.json({
+        ok: true,
+        message: 'Proposta de valor registrada. Aguardando aprovação do admin.',
+      })
     }
 
     if (paymentStatusVal !== undefined) {

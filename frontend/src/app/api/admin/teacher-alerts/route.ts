@@ -130,6 +130,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (teacher.status === 'INACTIVE') {
+      return NextResponse.json(
+        { ok: false, message: 'Professor inativo — não é possível criar alertas' },
+        { status: 400 }
+      )
+    }
+
     const createdById = auth.session?.sub ?? null
 
     const alert = await prisma.teacherAlert.create({

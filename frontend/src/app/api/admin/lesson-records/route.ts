@@ -9,6 +9,7 @@ import { requireAdmin } from '@/lib/auth'
 import { sendEmail, mensagemAulaRegistrada } from '@/lib/email'
 import { toDateKeyInTZ } from '@/lib/datetime'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import { assertLessonRecordBookProgression } from '@/lib/lesson-record-book-progression'
 
 type RecordWithLessonAndPresences = {
   lesson: { startAt: Date; enrollment: { nome: string; email?: string | null }; teacher: { nome: string } }
@@ -92,7 +93,46 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const { searchParams } = new URL(request.url)
+    const startParam = searchParams.get('start')
+    const endParam = searchParams.get('end')
+    const teacherId = searchParams.get('teacherId')?.trim() || null
+    const enrollmentId = searchParams.get('enrollmentId')?.trim() || null
+
+    if (!startParam || !endParam) {
+      return NextResponse.json({ ok: true, data: { records: [] } })
+    }
+
+    const start = new Date(startParam)
+    const end = new Date(endParam)
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return NextResponse.json({ ok: false, message: 'Período inválido' }, { status: 400 })
+    }
+
+    const lessonWhere: Record<string, unknown> = {
+      startAt: { gte: start, lte: end },
+    }
+    if (teacherId) {
+      lessonWhere.teacherId = teacherId
+    }
+
+    let where: Record<string, unknown>
+    if (enrollmentId) {
+      where = {
+        OR: [
+          { lesson: { ...lessonWhere, enrollmentId } },
+          {
+            studentPresences: { some: { enrollmentId } },
+            lesson: lessonWhere,
+          },
+        ],
+      }
+    } else {
+      where = { lesson: lessonWhere }
+    }
+
     const records = await (prisma as any).lessonRecord.findMany({
+      where,
       include: {
         studentPresences: {
           include: { enrollment: { select: { id: true, nome: true } } },
@@ -107,7 +147,7 @@ export async function GET(request: NextRequest) {
           },
         },
       },
-      orderBy: { criadoEm: 'desc' },
+      orderBy: { lesson: { startAt: 'desc' } },
     })
 
     return NextResponse.json({ ok: true, data: { records } })
@@ -159,6 +199,7 @@ export async function POST(request: NextRequest) {
       gradeSpeaking,
       gradeListening,
       gradeUnderstanding,
+      confirmBookAdvance,
     } = body
 
     if (!lessonId) {
@@ -248,6 +289,18 @@ export async function POST(request: NextRequest) {
     const validHomeworkDone = ['SIM', 'NAO', 'PARCIAL', 'NAO_APLICA'].includes(homeworkDone) ? homeworkDone : null
     const validCurso = curso != null && ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL'].includes(curso) ? curso : (lesson.enrollment as { curso?: string })?.curso ?? null
     const tempo = tempoAulaMinutos != null ? Number(tempoAulaMinutos) : (lesson as { durationMinutes?: number }).durationMinutes ?? null
+
+    if (book?.trim()) {
+      const bookCheck = await assertLessonRecordBookProgression(prisma, lesson.enrollmentId, book, {
+        confirmBookAdvance: confirmBookAdvance === true,
+      })
+      if (!bookCheck.ok) {
+        return NextResponse.json(
+          { ok: false, message: bookCheck.message, code: bookCheck.code },
+          { status: bookCheck.code === 'ADVANCE_NEEDS_CONFIRM' ? 409 : 400 }
+        )
+      }
+    }
 
     const record = await (prisma as any).lessonRecord.create({
       data: {

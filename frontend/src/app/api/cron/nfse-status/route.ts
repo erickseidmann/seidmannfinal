@@ -1,6 +1,6 @@
 /**
  * Endpoint para disparo manual do job: atualizar status das NFSe.
- * Protegido por autenticação admin. O scheduler chama runNfseStatus() direto a cada 5 minutos (automático).
+ * Protegido por autenticação admin. O scheduler chama runNfseStatus() direto a cada 30 minutos (automático).
  *
  * GET sem manual: mesmo critério do cron (só processando_autorizacao com +2 min).
  * POST { "manual": true } ou GET ?manual=1: consulta todas as notas exceto autorizadas ativas (limite 500 por vez).

@@ -120,6 +120,18 @@ export async function GET(
       select: { book: true, lastPage: true, assignedHomework: true },
     })
 
+    const teacherAbsenceReports = await prisma.teacherAbsenceReport.findMany({
+      where: { lessonId, enrollmentId: lesson.enrollmentId },
+      select: { reportType: true, status: true },
+    })
+
+    const reportWindowEnd = new Date(lessonStart.getTime() + 15 * 60 * 1000)
+    const canReportTeacherAbsence =
+      lesson.status === 'CONFIRMED' &&
+      !!lesson.teacherId &&
+      now >= lessonStart &&
+      now <= reportWindowEnd
+
     return NextResponse.json({
       ok: true,
       data: {
@@ -141,6 +153,12 @@ export async function GET(
           windowStart: windowStart.toISOString(),
           windowEnd: windowEnd.toISOString(),
           reason,
+        },
+        teacherAbsence: {
+          canReport: canReportTeacherAbsence,
+          windowEnd: reportWindowEnd.toISOString(),
+          reportedAbsent: teacherAbsenceReports.some((r) => r.reportType === 'ABSENT'),
+          reportedLate: teacherAbsenceReports.some((r) => r.reportType === 'LATE'),
         },
       },
     })

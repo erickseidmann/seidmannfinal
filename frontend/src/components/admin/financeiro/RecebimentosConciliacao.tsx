@@ -38,6 +38,7 @@ export interface RecebimentoItem {
   status: string
   divergenciaValor: boolean
   semCobrancaAberta: boolean
+  mesAnteriorReferenciaPendente?: boolean
   enrollmentId: string | null
   enrollmentNome: string | null
   allocations?: RecebimentoAllocation[]
@@ -122,6 +123,12 @@ function providerBadgeClass(provider: string): string {
 
 function conciliacaoStatusBadge(r: RecebimentoItem): { label: string; className: string } {
   const base = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold'
+  if (r.status === 'VINCULADO' && r.mesAnteriorReferenciaPendente) {
+    return {
+      label: 'Mês anterior pago',
+      className: `${base} bg-red-100 text-red-800`,
+    }
+  }
   if (r.status === 'VINCULADO') {
     return { label: 'Conciliado', className: `${base} bg-green-100 text-green-800` }
   }
@@ -139,10 +146,17 @@ const PAGE_SIZE = 20
 interface Props {
   onToast: (message: string, type: 'success' | 'error') => void
   onVinculado?: () => void
+  /** card = seção recolhível (legado); page = página dedicada, sempre expandida */
+  variant?: 'card' | 'page'
 }
 
-export default function RecebimentosConciliacao({ onToast, onVinculado }: Props) {
+export default function RecebimentosConciliacao({
+  onToast,
+  onVinculado,
+  variant = 'card',
+}: Props) {
   const { confirm, ConfirmDialog } = useConfirmDialog()
+  const isPage = variant === 'page'
   const [expanded, setExpanded] = useState(true)
   const [filtroIdentificador, setFiltroIdentificador] = useState('')
   const [filtroProvider, setFiltroProvider] = useState('')
@@ -389,30 +403,46 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
     }
   }
 
+  const showContent = isPage || expanded
+
   return (
     <>
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
-        >
-          <Hash className="w-5 h-5 text-brand-orange shrink-0" />
-          <span>Recebimentos a conciliar</span>
-          {totalPendentes > 0 && (
-            <span className="ml-1 rounded-full bg-gradient-to-r from-[#FF5200] to-[#FFAA00] px-2 py-0.5 text-xs font-bold text-white">
-              {totalPendentes}
-            </span>
-          )}
-          {expanded ? (
-            <ChevronDown className="w-5 h-5 ml-auto" />
-          ) : (
-            <ChevronRight className="w-5 h-5 ml-auto" />
-          )}
-        </button>
+      <div
+        className={
+          isPage
+            ? ''
+            : 'rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden'
+        }
+      >
+        {!isPage && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left text-base font-semibold text-gray-800 hover:bg-gray-50"
+          >
+            <Hash className="w-5 h-5 text-brand-orange shrink-0" />
+            <span>Recebimentos a conciliar</span>
+            {totalPendentes > 0 && (
+              <span className="ml-1 rounded-full bg-gradient-to-r from-[#FF5200] to-[#FFAA00] px-2 py-0.5 text-xs font-bold text-white">
+                {totalPendentes}
+              </span>
+            )}
+            {expanded ? (
+              <ChevronDown className="w-5 h-5 ml-auto" />
+            ) : (
+              <ChevronRight className="w-5 h-5 ml-auto" />
+            )}
+          </button>
+        )}
 
-        {expanded && (
-          <div className="px-5 pb-5 pt-0 border-t border-gray-200">
+        {showContent && (
+          <div
+            className={
+              isPage
+                ? 'rounded-xl border border-gray-200 bg-white shadow-sm px-5 pb-5 pt-5'
+                : 'px-5 pb-5 pt-0 border-t border-gray-200'
+            }
+          >
             <div className="flex flex-col lg:flex-row lg:items-end gap-4 pt-4">
               <div className="flex-1 min-w-0">
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
@@ -476,7 +506,11 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                   return (
                   <li
                     key={r.id}
-                    className="rounded-lg border border-gray-100 bg-gray-50/80 p-4 flex flex-col sm:flex-row sm:items-start gap-3"
+                    className={`rounded-lg border p-4 flex flex-col sm:flex-row sm:items-start gap-3 ${
+                      r.mesAnteriorReferenciaPendente
+                        ? 'border-red-200 bg-red-50/80'
+                        : 'border-gray-100 bg-gray-50/80'
+                    }`}
                   >
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -495,13 +529,25 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                       </div>
                       {r.status === 'VINCULADO' &&
                         (r.allocations && r.allocations.length > 0 ? (
-                          <p className="text-sm text-green-700 font-medium">
+                          <p
+                            className={`text-sm font-medium ${
+                              r.mesAnteriorReferenciaPendente
+                                ? 'text-red-700'
+                                : 'text-green-700'
+                            }`}
+                          >
                             {r.allocations.length === 1
                               ? `Aluno: ${r.allocations[0].enrollmentNome}`
                               : `Alunos: ${r.allocations.map((a) => `${a.enrollmentNome} (${formatMoneyCents(a.valorCentavos)})`).join(' · ')}`}
                           </p>
                         ) : r.enrollmentNome ? (
-                          <p className="text-sm text-green-700 font-medium">
+                          <p
+                            className={`text-sm font-medium ${
+                              r.mesAnteriorReferenciaPendente
+                                ? 'text-red-700'
+                                : 'text-green-700'
+                            }`}
+                          >
                             Aluno: {r.enrollmentNome}
                           </p>
                         ) : null)}
@@ -526,6 +572,12 @@ export default function RecebimentosConciliacao({ onToast, onVinculado }: Props)
                         <p className="text-xs font-semibold text-yellow-700 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           Valor diferente da mensalidade — vincule manualmente
+                        </p>
+                      )}
+                      {r.mesAnteriorReferenciaPendente && (
+                        <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Valor referente ao mês anterior — ainda aguardando pagamento deste mês
                         </p>
                       )}
                       {r.semCobrancaAberta && r.status === 'VINCULADO' && (

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cutoffDateProfessorHomeFeed } from '@/lib/professor-home-feed'
+import { PROFESSOR_SYSTEM_ALERT_TYPES } from '@/lib/teacher-alert-kinds'
 import { requireTeacher } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -41,15 +42,7 @@ export async function GET(request: NextRequest) {
         teacherId: teacher.id,
         isActive: true,
         readAt: null,
-        type: {
-          in: [
-            'PAYMENT_DONE',
-            'NEW_ANNOUNCEMENT',
-            'NEW_STUDENT',
-            'PROOF_RESEND_NEEDED',
-            'STUDENT_INACTIVE',
-          ],
-        },
+        type: { in: [...PROFESSOR_SYSTEM_ALERT_TYPES] },
         criadoEm: { gte: feedCutoff },
       },
     })

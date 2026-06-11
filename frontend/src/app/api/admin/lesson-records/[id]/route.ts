@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import { assertLessonRecordBookProgression } from '@/lib/lesson-record-book-progression'
 
 export async function GET(
   request: NextRequest,
@@ -70,7 +71,11 @@ export async function PATCH(
 
     const existing = await (prisma as any).lessonRecord.findUnique({
       where: { id },
-      select: { id: true, lesson: { select: { status: true } } },
+      select: {
+        id: true,
+        book: true,
+        lesson: { select: { status: true, enrollmentId: true } },
+      },
     })
     if (!existing) {
       return NextResponse.json(
@@ -105,7 +110,27 @@ export async function PATCH(
       gradeSpeaking,
       gradeListening,
       gradeUnderstanding,
+      confirmBookAdvance,
     } = body
+
+    if (book !== undefined && book?.trim()) {
+      const bookCheck = await assertLessonRecordBookProgression(
+        prisma,
+        existing.lesson.enrollmentId,
+        book,
+        {
+          excludeRecordId: id,
+          existingBookOnRecord: existing.book,
+          confirmBookAdvance: confirmBookAdvance === true,
+        }
+      )
+      if (!bookCheck.ok) {
+        return NextResponse.json(
+          { ok: false, message: bookCheck.message, code: bookCheck.code },
+          { status: bookCheck.code === 'ADVANCE_NEEDS_CONFIRM' ? 409 : 400 }
+        )
+      }
+    }
 
     const updateData: Record<string, unknown> = {}
     if (statusBody != null && ['CONFIRMED', 'CANCELLED', 'REPOSICAO'].includes(statusBody)) updateData.status = statusBody

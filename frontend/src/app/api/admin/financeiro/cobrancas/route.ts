@@ -108,10 +108,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       message:
-        `${result.success} boletos gerados` +
-        (result.skippedPaid > 0 ? `. ${result.skippedPaid} aluno(s) já pagaram e foram ignorados.` : ''),
+        `${result.success} boleto(s) gerado(s)` +
+        (result.skippedExisting > 0
+          ? `. ${result.skippedExisting} já tinham boleto neste mês.`
+          : '') +
+        (result.skippedPaid > 0 ? ` ${result.skippedPaid} já pagaram.` : '') +
+        (result.skippedIneligible > 0
+          ? ` ${result.skippedIneligible} não pagam por boleto (PIX/cartão/empresa).`
+          : ''),
       success: result.success,
       skippedPaid: result.skippedPaid,
+      skippedExisting: result.skippedExisting,
+      skippedIneligible: result.skippedIneligible,
       errors: result.errors,
     })
   } catch (error) {

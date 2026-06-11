@@ -14,6 +14,11 @@ import { logFinanceAction } from '@/lib/finance'
 import { generateMonthlyBilling, generateBulkBilling } from '@/lib/cora/billing'
 import { getInvoice } from '@/lib/cora/client'
 import { liberarAcessoAlunoSafe } from '@/lib/access'
+import {
+  BOLETO_ALREADY_EXISTS_MESSAGE,
+  BOLETO_NOT_ELIGIBLE_MESSAGE,
+  enrollmentEligibleForBoleto,
+} from '@/lib/boleto-eligibility'
 
 const createBillingSchema = z.object({
   enrollmentId: z.string().optional(),
@@ -59,7 +64,13 @@ export async function POST(request: NextRequest) {
     if (enrollmentId) {
       const enrollment = await prisma.enrollment.findUnique({
         where: { id: enrollmentId },
-        select: { bolsista: true, nome: true },
+        select: {
+          bolsista: true,
+          nome: true,
+          faturamentoTipo: true,
+          metodoPagamento: true,
+          paymentInfo: { select: { metodo: true } },
+        },
       })
       if (!enrollment) {
         return NextResponse.json({ ok: false, message: 'Matrícula não encontrada' }, { status: 404 })
@@ -70,12 +81,36 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
+
+      const existingInvoice = await prisma.coraInvoice.findUnique({
+        where: { enrollmentId_year_month: { enrollmentId, year, month } },
+      })
+      if (existingInvoice) {
+        return NextResponse.json(
+          { ok: false, message: BOLETO_ALREADY_EXISTS_MESSAGE },
+          { status: 409 }
+        )
+      }
+
+      if (!enrollmentEligibleForBoleto(enrollment)) {
+        return NextResponse.json(
+          { ok: false, message: BOLETO_NOT_ELIGIBLE_MESSAGE },
+          { status: 400 }
+        )
+      }
+
       const result = await generateMonthlyBilling({
         enrollmentId,
         year,
         month,
         performedBy,
       })
+      if (!result.created) {
+        return NextResponse.json(
+          { ok: false, message: BOLETO_ALREADY_EXISTS_MESSAGE },
+          { status: 409 }
+        )
+      }
       return NextResponse.json({
         ok: true,
         invoice: {
@@ -97,6 +132,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         success: result.success,
+        skippedPaid: result.skippedPaid,
+        skippedExisting: result.skippedExisting,
+        skippedIneligible: result.skippedIneligible,
         errors: result.errors,
         total: result.success + result.errors.length,
       })

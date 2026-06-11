@@ -26,7 +26,7 @@ export async function PATCH(
 
     const { id } = params
     const body = await request.json()
-    const { nome, email, whatsapp, telefone, funcao, emailPessoal, adminPages, status, senha } = body
+    const { nome, email, whatsapp, telefone, funcao, emailPessoal, adminPages, status, senha, canApproveLateLessonEdits } = body
 
     const existing = await prisma.user.findUnique({
       where: { id },
@@ -53,6 +53,7 @@ export async function PATCH(
       funcao?: string | null
       emailPessoal?: string | null
       adminPages?: string[] | undefined
+      canApproveLateLessonEdits?: boolean
       senha?: string
     } = {}
     if (nome != null) updateData.nome = String(nome).trim()
@@ -83,6 +84,9 @@ export async function PATCH(
     if (adminPages !== undefined) {
       updateData.adminPages = Array.isArray(adminPages) ? adminPages : undefined
     }
+    if (canApproveLateLessonEdits !== undefined) {
+      updateData.canApproveLateLessonEdits = Boolean(canApproveLateLessonEdits)
+    }
     if (senha && String(senha).trim().length >= 6) {
       updateData.senha = await bcrypt.hash(String(senha).trim(), 10)
     }
@@ -100,6 +104,7 @@ export async function PATCH(
         funcao: true,
         emailPessoal: true,
         adminPages: true,
+        canApproveLateLessonEdits: true,
         criadoEm: true,
         atualizadoEm: true,
       },
@@ -111,6 +116,7 @@ export async function PATCH(
         user: {
           ...user,
           adminPages: Array.isArray(user.adminPages) ? user.adminPages : [],
+          canApproveLateLessonEdits: user.canApproveLateLessonEdits ?? false,
           criadoEm: user.criadoEm.toISOString(),
           atualizadoEm: user.atualizadoEm.toISOString(),
         },

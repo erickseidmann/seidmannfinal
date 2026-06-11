@@ -18,6 +18,7 @@ import {
   toDateKeyInTZ,
 } from '@/lib/datetime'
 import { mensagemAlunoInativoProfessor, sendEmail } from '@/lib/email'
+import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -190,9 +191,13 @@ export async function PATCH(
       updateData.inactiveReason = null
       updateData.inactiveReasonOther = null
     }
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
     const updatedEnrollment = await prisma.enrollment.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        ...auditFieldsForUpdate(adminActor),
+      },
       include: {
         user: {
           select: {
@@ -205,6 +210,20 @@ export async function PATCH(
         paymentInfo: true,
       },
     })
+
+    if (enrollment.userId) {
+      if (status === 'ACTIVE') {
+        await prisma.user.update({
+          where: { id: enrollment.userId },
+          data: { status: 'ACTIVE' },
+        })
+      } else if (status === 'INACTIVE') {
+        await prisma.user.update({
+          where: { id: enrollment.userId },
+          data: { status: 'INACTIVE' },
+        })
+      }
+    }
 
     // Se status for ACTIVE e tiver PaymentInfo com status PENDING, atualizar para CONFIRMED
     if (status === 'ACTIVE' && updatedEnrollment.paymentInfo && updatedEnrollment.paymentInfo.paymentStatus === 'PENDING') {

@@ -6,7 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import {
+  canAdminEditLessonOnDate,
+  LESSON_PAST_EDIT_DENIED_MESSAGE,
+} from '@/lib/lesson-past-edit'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
 
 function formatarDataHoraSimples(d: Date): string {
   return d.toLocaleString('pt-BR', {
@@ -85,7 +90,7 @@ export async function POST(
 
     const targetTeacher = await prisma.teacher.findUnique({
       where: { id: targetTeacherId },
-      select: { id: true, nome: true },
+      select: { id: true, nome: true, niveisEnsina: true },
     })
 
     if (!sourceTeacher) {
@@ -118,6 +123,7 @@ export async function POST(
       },
       select: {
         id: true,
+        enrollmentId: true,
         notes: true,
         startAt: true,
         durationMinutes: true,
@@ -132,6 +138,17 @@ export async function POST(
         message: 'Nenhuma aula para transferir',
         data: { transferred: 0 },
       })
+    }
+
+    const enrollmentIdsToCheck = enrollmentId
+      ? [enrollmentId]
+      : [...new Set(lessons.map((l) => l.enrollmentId))]
+
+    for (const eid of enrollmentIdsToCheck) {
+      const nivelCheck = await assertTeacherTeachesEnrollmentLevel(prisma, eid, targetTeacher)
+      if (!nivelCheck.ok) {
+        return NextResponse.json({ ok: false, message: nivelCheck.message }, { status: 400 })
+      }
     }
 
     // Verificar se o professor destino tem disponibilidade para todas as aulas
@@ -206,6 +223,13 @@ export async function POST(
     let transferred = 0
 
     for (const lesson of lessons) {
+      if (!canAdminEditLessonOnDate(lesson.startAt, auth.session?.email)) {
+        return NextResponse.json(
+          { ok: false, message: LESSON_PAST_EDIT_DENIED_MESSAGE },
+          { status: 403 }
+        )
+      }
+
       const notesAtuais = lesson.notes
       const novaObservacao = adicionarObservacaoTransferencia(
         notesAtuais,

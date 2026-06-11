@@ -227,6 +227,97 @@ async function sumTotalEntradaMovimentacoes(monthsToProcess: { year: number; mon
   return Math.round(t * 100) / 100
 }
 
+async function computeMovimentacoesEntradaForReport(monthsToProcess: { year: number; month: number }[]): Promise<{
+  movimentacoesEntradaLinhas: Array<{
+    id: string
+    name: string
+    valor: number
+    year: number
+    month: number
+    data: string
+    transacao: string
+    identificacao: string
+  }>
+}> {
+  const rows = await prisma.adminExpense.findMany({
+    where: { OR: monthsToProcess.map(({ year, month }) => ({ year, month })) },
+    select: {
+      id: true,
+      name: true,
+      valor: true,
+      description: true,
+      year: true,
+      month: true,
+      fixedSeriesId: true,
+      criadoEm: true,
+    },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }, { criadoEm: 'desc' }],
+  })
+  const rowsUnicas = dedupeLinhasMovimentacaoParaSoma(
+    rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      valor: r.valor,
+      description: r.description,
+      year: r.year,
+      month: r.month,
+      fixedSeriesId: r.fixedSeriesId,
+      criadoEm: r.criadoEm,
+    }))
+  )
+  const entradas = rowsUnicas.filter((r) => shouldIncludeValorInTotalEntradaRegis(r.description))
+  const movimentacoesEntradaLinhas = entradas
+    .map((r) => {
+      const m = extractMovimentacaoMarcadoresExtrato(r.description)
+      return {
+        id: r.id,
+        name: r.name,
+        valor: Math.round(Number(r.valor) * 100) / 100,
+        year: r.year,
+        month: r.month,
+        data: m.data,
+        transacao: m.transacao,
+        identificacao: m.identificacao || r.name,
+      }
+    })
+    .sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year
+      if (b.month !== a.month) return b.month - a.month
+      return b.valor - a.valor
+    })
+    .slice(0, 120)
+
+  return { movimentacoesEntradaLinhas }
+}
+
+async function buildEntradaConciliacao(
+  year: number,
+  month: number,
+  totalExtrato: number,
+  totalAlunos: number
+) {
+  const diferenca = Math.round((totalExtrato - totalAlunos) * 100) / 100
+  const requerJustificativa = Math.abs(diferenca) >= 0.01
+  let justificativa: string | null = null
+  if (prisma.adminFinanceiroEntradaJustificativa) {
+    const row = await prisma.adminFinanceiroEntradaJustificativa.findUnique({
+      where: { year_month: { year, month } },
+      select: { justificativa: true },
+    })
+    justificativa = row?.justificativa?.trim() || null
+  }
+  const justificativaPreenchida = Boolean(justificativa && justificativa.length >= 15)
+  return {
+    totalExtrato,
+    totalAlunos,
+    diferenca,
+    requerJustificativa,
+    justificativa,
+    justificativaPreenchida,
+    conciliado: !requerJustificativa || justificativaPreenchida,
+  }
+}
+
 async function computeMovimentacoesSaidaForReport(monthsToProcess: { year: number; month: number }[]): Promise<{
   totalSaidaRegis: number
   movimentacoesSaidaLinhas: Array<{
@@ -963,13 +1054,15 @@ async function buildGeralReport(
   month: number | undefined,
   monthsToProcess: { year: number; month: number }[]
 ) {
-  const [receitasData, despesasData, totalEntradaRegis, saidaBlock] = await Promise.all([
+  const [receitasData, despesasData, totalEntradaRegis, saidaBlock, entradaBlock] = await Promise.all([
     buildReceitasReport(year, month, monthsToProcess),
     buildDespesasReport(year, month, monthsToProcess),
     sumTotalEntradaMovimentacoes(monthsToProcess),
     computeMovimentacoesSaidaForReport(monthsToProcess),
+    computeMovimentacoesEntradaForReport(monthsToProcess),
   ])
   const { totalSaidaRegis, movimentacoesSaidaLinhas } = saidaBlock
+  const { movimentacoesEntradaLinhas } = entradaBlock
   const totalPagoAlunos = Math.round(((receitasData as { totalPago?: number }).totalPago ?? 0) * 100) / 100
   const entradasAlunosPagosLinhas = entradasAlunosPagosFromReceitas(receitasData as { items?: unknown[] }, month)
 
@@ -977,6 +1070,7 @@ async function buildGeralReport(
     totalEntradaRegis,
     totalSaidaRegis,
     movimentacoesSaidaLinhas,
+    movimentacoesEntradaLinhas,
     totalPagoAlunos,
     entradasAlunosPagosLinhas,
   }
@@ -1041,6 +1135,12 @@ async function buildGeralReport(
       },
       'mes'
     )
+    const entradaConciliacao = await buildEntradaConciliacao(
+      year,
+      month,
+      totalEntradaRegis,
+      totalPagoAlunos
+    )
     return {
       items,
       matriculadosCount: kpis.matriculadosCount,
@@ -1048,6 +1148,7 @@ async function buildGeralReport(
       inativadosCount: kpis.inativadosCount,
       valorPerdidoInativos: kpis.valorPerdidoInativos,
       escolaSaude,
+      entradaConciliacao,
       ...movimentacaoResumo,
     }
   }

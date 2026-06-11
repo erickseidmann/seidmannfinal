@@ -12,6 +12,7 @@ import {
 } from '@/lib/professor-home-feed'
 import { findTeacherAlertsForProfessorWidgets } from '@/lib/prisma-teacher-alert-enrollment-column'
 import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert'
+import { PROFESSOR_SYSTEM_ALERT_TYPES } from '@/lib/teacher-alert-kinds'
 import { requireTeacher } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -43,21 +44,13 @@ export async function GET(request: NextRequest) {
 
     const feedCutoff = cutoffDateProfessorHomeFeed()
     const readStillVisibleSince = cutoffDateProfessorReadAlertsStillVisible()
-    const TIPOS_NOTIFICACAO = [
-      'PAYMENT_DONE',
-      'NEW_ANNOUNCEMENT',
-      'NEW_STUDENT',
-      'PROOF_RESEND_NEEDED',
-      'STUDENT_INACTIVE',
-    ] as const
-
     // Janela de 30 dias; notificações já lidas somem após 2 dias
     const rawAlerts = await findTeacherAlertsForProfessorWidgets(
       prisma,
       {
         teacherId: teacher.id,
         isActive: true,
-        type: { in: [...TIPOS_NOTIFICACAO] },
+        type: { in: [...PROFESSOR_SYSTEM_ALERT_TYPES] },
         criadoEm: { gte: feedCutoff },
         OR: [
           { readAt: null },

@@ -8,6 +8,12 @@ import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 import { isValidCPF, validateEmail } from '@/lib/finance/validators'
 import { prisma } from '@/lib/prisma'
 import { Decimal } from '@prisma/client/runtime/library'
+import {
+  BOLETO_ALREADY_EXISTS_MESSAGE,
+  BOLETO_NOT_ELIGIBLE_MESSAGE,
+  boletoIneligibilityReason,
+  enrollmentEligibleForBoleto,
+} from '@/lib/boleto-eligibility'
 
 const MESES = [
   'Janeiro',
@@ -88,6 +94,11 @@ export async function generateMonthlyBilling(params: {
     throw new Error(`Aluno bolsista (${enrollment.nome}) não deve gerar boleto.`)
   }
 
+  if (!enrollmentEligibleForBoleto(enrollment as Parameters<typeof enrollmentEligibleForBoleto>[0])) {
+    const reason = boletoIneligibilityReason(enrollment as Parameters<typeof boletoIneligibilityReason>[0])
+    throw new Error(reason ? `${BOLETO_NOT_ELIGIBLE_MESSAGE} (${reason})` : BOLETO_NOT_ELIGIBLE_MESSAGE)
+  }
+
   const existing = await prisma.coraInvoice.findUnique({
     where: { enrollmentId_year_month: { enrollmentId, year, month } },
   })
@@ -101,6 +112,7 @@ export async function generateMonthlyBilling(params: {
     return {
       invoice: coraInvoice,
       enrollmentPaymentMonth: epm,
+      created: false as const,
     }
   }
 
@@ -173,35 +185,31 @@ export async function generateMonthlyBilling(params: {
   const bankSlip = invoice.payment_options?.bank_slip
   const pix = invoice.payment_options?.pix
 
-  await prisma.coraInvoice.upsert({
-    where: {
-      enrollmentId_year_month: { enrollmentId, year, month },
-    },
-    create: {
-      enrollmentId,
-      coraInvoiceId: invoice.id,
-      code,
-      year,
-      month,
-      amount: amountCents,
-      dueDate: new Date(dueDate),
-      status: invoice.status ?? 'OPEN',
-      digitableLine: bankSlip?.digitable_line ?? null,
-      barCode: bankSlip?.barcode ?? null,
-      pixQrCode: pix?.qr_code ?? pix?.qr_code_url ?? null,
-      pixCopyPaste: pix?.emv ?? null,
-      boletoUrl: bankSlip?.url ?? null,
-    },
-    update: {
-      coraInvoiceId: invoice.id,
-      status: invoice.status ?? 'OPEN',
-      digitableLine: bankSlip?.digitable_line ?? null,
-      barCode: bankSlip?.barcode ?? null,
-      pixQrCode: pix?.qr_code ?? pix?.qr_code_url ?? null,
-      pixCopyPaste: pix?.emv ?? null,
-      boletoUrl: bankSlip?.url ?? null,
-    },
-  })
+  try {
+    await prisma.coraInvoice.create({
+      data: {
+        enrollmentId,
+        coraInvoiceId: invoice.id,
+        code,
+        year,
+        month,
+        amount: amountCents,
+        dueDate: new Date(dueDate),
+        status: invoice.status ?? 'OPEN',
+        digitableLine: bankSlip?.digitable_line ?? null,
+        barCode: bankSlip?.barcode ?? null,
+        pixQrCode: pix?.qr_code ?? pix?.qr_code_url ?? null,
+        pixCopyPaste: pix?.emv ?? null,
+        boletoUrl: bankSlip?.url ?? null,
+      },
+    })
+  } catch (dbErr: unknown) {
+    const code = (dbErr as { code?: string })?.code
+    if (code === 'P2002') {
+      throw new Error(BOLETO_ALREADY_EXISTS_MESSAGE)
+    }
+    throw dbErr
+  }
 
   const enrollmentPaymentMonth = await prisma.enrollmentPaymentMonth.upsert({
     where: {
@@ -239,7 +247,7 @@ export async function generateMonthlyBilling(params: {
     },
   }).catch(() => {})
 
-  return { invoice, enrollmentPaymentMonth }
+  return { invoice, enrollmentPaymentMonth, created: true as const }
 }
 
 /**
@@ -249,7 +257,7 @@ export async function generateBulkBilling(params: {
   year: number
   month: number
   performedBy: string
-}): Promise<{ success: number; skippedPaid: number; errors: Array<{ enrollmentId: string; name: string; error: string }> }> {
+}): Promise<{ success: number; skippedPaid: number; skippedExisting: number; skippedIneligible: number; errors: Array<{ enrollmentId: string; name: string; error: string }> }> {
   const { year, month, performedBy } = params
 
   const enrollments = await prisma.enrollment.findMany({
@@ -265,7 +273,10 @@ export async function generateBulkBilling(params: {
       id: true,
       nome: true,
       valorMensalidade: true,
-      paymentInfo: { select: { valorMensal: true } },
+      bolsista: true,
+      faturamentoTipo: true,
+      metodoPagamento: true,
+      paymentInfo: { select: { valorMensal: true, metodo: true } },
     },
   })
 
@@ -286,27 +297,38 @@ export async function generateBulkBilling(params: {
   const errors: Array<{ enrollmentId: string; name: string; error: string }> = []
   let success = 0
   let skippedPaid = 0
+  let skippedExisting = 0
+  let skippedIneligible = 0
 
   for (const enrollment of enrollments) {
-    // Pular se já está pago
     if (paidSet.has(enrollment.id)) {
       skippedPaid++
       continue
     }
 
-    // Pular se já tem boleto gerado
     if (invoiceSet.has(enrollment.id)) {
+      skippedExisting++
+      continue
+    }
+
+    if (!enrollmentEligibleForBoleto(enrollment)) {
+      skippedIneligible++
       continue
     }
 
     try {
-      await generateMonthlyBilling({
+      const result = await generateMonthlyBilling({
         enrollmentId: enrollment.id,
         year,
         month,
         performedBy,
       })
-      success++
+      if (result.created) {
+        success++
+        invoiceSet.add(enrollment.id)
+      } else {
+        skippedExisting++
+      }
     } catch (error) {
       errors.push({
         enrollmentId: enrollment.id,
@@ -316,5 +338,5 @@ export async function generateBulkBilling(params: {
     }
   }
 
-  return { success, skippedPaid, errors }
+  return { success, skippedPaid, skippedExisting, skippedIneligible, errors }
 }

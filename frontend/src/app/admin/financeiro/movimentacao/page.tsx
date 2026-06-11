@@ -11,6 +11,9 @@ import {
   extractTipoMovimentacao as extractTipo,
   isCreditoComoNaTelaMovimentacoes,
   dedupeLinhasMovimentacaoParaSoma,
+  parseCompetenciaVinculada,
+  applyCompetenciaVinculadaMarker,
+  resolveCompetenciaExibicao,
 } from '@/lib/admin-movimentacao'
 import { buildMovimentacaoNomeFromCategoria } from '@/lib/movimentacao-categoria-nome'
 import { normalizarIdentificacaoMovimentacao, type MovimentacaoIdentRegraApi } from '@/lib/movimentacao-ident-regra'
@@ -52,6 +55,9 @@ interface EditableRow {
   categoriaPrincipal: string
   subcategoria: string
   categoriaOutro: string
+  /** Mês/ano de referência do valor (entrada). Igual ao extrato = sem vínculo explícito. */
+  competenciaVinculadaMes: number
+  competenciaVinculadaAno: number
 }
 
 interface ExtratoMeta {
@@ -161,6 +167,36 @@ function buildDescription(nextTipo: MovTipo, currentDescription: string | null):
     .trim()
   const prefix = `[TIPO:${nextTipo}]`
   return cleaned ? `${prefix} ${cleaned}` : prefix
+}
+
+function buildDescriptionForSave(
+  row: ExpenseRow,
+  draft: EditableRow
+): string | null {
+  const withTipo = buildDescription(draft.tipo, row.description)
+  return applyCompetenciaVinculadaMarker(withTipo, {
+    rowYear: row.year,
+    rowMonth: row.month,
+    vinculadaYear: draft.competenciaVinculadaAno,
+    vinculadaMonth: draft.competenciaVinculadaMes,
+    includeMarker: draft.tipo === 'ENTRADA',
+  })
+}
+
+function competenciaVinculadaFromRow(row: ExpenseRow): { mes: number; ano: number } {
+  const vinc = parseCompetenciaVinculada(row.description)
+  return {
+    mes: vinc?.month ?? row.month,
+    ano: vinc?.year ?? row.year,
+  }
+}
+
+function isCompetenciaVinculadaDirty(row: ExpenseRow, draft: EditableRow, original: EditableRow): boolean {
+  if (draft.tipo !== 'ENTRADA') return false
+  return (
+    draft.competenciaVinculadaMes !== original.competenciaVinculadaMes ||
+    draft.competenciaVinculadaAno !== original.competenciaVinculadaAno
+  )
 }
 
 function parseCategoriaFromName(name: string, tipo: MovTipo): Omit<EditableRow, 'id' | 'tipo'> {
@@ -309,12 +345,15 @@ export default function FinanceiroMovimentacaoPage() {
       rows.forEach((r) => {
         const tipo = extractTipo(r.description)
         const parsed = resolveEditableCategorias(r, tipo, regraPorChave)
+        const comp = competenciaVinculadaFromRow(r)
         mapped[r.id] = {
           id: r.id,
           tipo,
           categoriaPrincipal: parsed.categoriaPrincipal,
           subcategoria: parsed.subcategoria,
           categoriaOutro: parsed.categoriaOutro,
+          competenciaVinculadaMes: comp.mes,
+          competenciaVinculadaAno: comp.ano,
         }
       })
       setEditable(mapped)
@@ -383,22 +422,25 @@ export default function FinanceiroMovimentacaoPage() {
   const allSelectedOnScreen =
     movimentacoes.length > 0 && movimentacoes.every((m) => selectedIds.includes(m.id))
   const dirtyIds = useMemo(() => {
+    const rowById = new Map(expenses.map((e) => [e.id, e]))
     const ids: string[] = []
     Object.keys(editable).forEach((id) => {
       const current = editable[id]
       const original = originalEditable[id]
-      if (!current || !original) return
+      const row = rowById.get(id)
+      if (!current || !original || !row) return
       if (
         current.tipo !== original.tipo ||
         current.categoriaPrincipal !== original.categoriaPrincipal ||
         current.subcategoria !== original.subcategoria ||
-        current.categoriaOutro.trim() !== original.categoriaOutro.trim()
+        current.categoriaOutro.trim() !== original.categoriaOutro.trim() ||
+        isCompetenciaVinculadaDirty(row, current, original)
       ) {
         ids.push(id)
       }
     })
     return ids
-  }, [editable, originalEditable])
+  }, [editable, originalEditable, expenses])
   const selectedDirtyIds = useMemo(
     () => selectedIds.filter((id) => dirtyIds.includes(id)),
     [selectedIds, dirtyIds]
@@ -593,7 +635,7 @@ export default function FinanceiroMovimentacaoPage() {
             subcategoria: draft.subcategoria,
             categoriaOutro: draft.categoriaOutro,
           }),
-          description: buildDescription(draft.tipo, row.description),
+          description: buildDescriptionForSave(row, draft),
         }),
       })
       const json = await res.json()
@@ -630,7 +672,7 @@ export default function FinanceiroMovimentacaoPage() {
               subcategoria: draft.subcategoria,
               categoriaOutro: draft.categoriaOutro,
             }),
-            description: buildDescription(draft.tipo, row.description),
+            description: buildDescriptionForSave(row, draft),
           }),
         })
         const json = await res.json()
@@ -844,11 +886,14 @@ export default function FinanceiroMovimentacaoPage() {
           value={editable[row.id]?.tipo ?? extractTipo(row.description)}
           onChange={(e) => {
             const nextTipo = e.target.value as MovTipo
+            const comp = competenciaVinculadaFromRow(row)
             const base =
               editable[row.id] ?? {
                 id: row.id,
                 tipo: extractTipo(row.description),
                 ...parseCategoriaFromName(row.name, extractTipo(row.description)),
+                competenciaVinculadaMes: comp.mes,
+                competenciaVinculadaAno: comp.ano,
               }
             const cat = resolveEditableCategorias(row, nextTipo, identRegraMap)
             setEditable((prev) => ({
@@ -859,6 +904,8 @@ export default function FinanceiroMovimentacaoPage() {
                 categoriaPrincipal: cat.categoriaPrincipal,
                 subcategoria: cat.subcategoria,
                 categoriaOutro: cat.categoriaOutro,
+                competenciaVinculadaMes: nextTipo === 'ENTRADA' ? base.competenciaVinculadaMes : row.month,
+                competenciaVinculadaAno: nextTipo === 'ENTRADA' ? base.competenciaVinculadaAno : row.year,
               },
             }))
           }}
@@ -893,7 +940,67 @@ export default function FinanceiroMovimentacaoPage() {
     {
       key: 'competencia',
       label: 'Competência',
-      render: (row) => `${String(row.month).padStart(2, '0')}/${row.year}`,
+      render: (row) => {
+        const draft = editable[row.id]
+        const extratoLabel = `${String(row.month).padStart(2, '0')}/${row.year}`
+        if (draft?.tipo !== 'ENTRADA') {
+          return extratoLabel
+        }
+        const exib = resolveCompetenciaExibicao(row, {
+          year: draft.competenciaVinculadaAno,
+          month: draft.competenciaVinculadaMes,
+        })
+        return (
+          <div className="min-w-[150px] space-y-1">
+            <p className="text-xs text-gray-500">Extrato: {extratoLabel}</p>
+            <label className="block text-xs font-medium text-gray-700">Referência do valor</label>
+            <div className="flex gap-1">
+              <select
+                value={draft.competenciaVinculadaMes}
+                onChange={(e) =>
+                  setEditable((prev) => {
+                    const cur = prev[row.id]
+                    if (!cur) return prev
+                    return {
+                      ...prev,
+                      [row.id]: { ...cur, competenciaVinculadaMes: Number(e.target.value) },
+                    }
+                  })
+                }
+                className="rounded border border-gray-300 px-1 py-1 text-xs"
+                title="Mês de referência do pagamento (ex.: mensalidade de março paga em maio)"
+              >
+                {Object.entries(MESES_ABREV).map(([m, label]) => (
+                  <option key={m} value={m}>{label}</option>
+                ))}
+              </select>
+              <select
+                value={draft.competenciaVinculadaAno}
+                onChange={(e) =>
+                  setEditable((prev) => {
+                    const cur = prev[row.id]
+                    if (!cur) return prev
+                    return {
+                      ...prev,
+                      [row.id]: { ...cur, competenciaVinculadaAno: Number(e.target.value) },
+                    }
+                  })
+                }
+                className="rounded border border-gray-300 px-1 py-1 text-xs"
+              >
+                {ANOS_DISPONIVEIS.map((ano) => (
+                  <option key={ano} value={ano}>{ano}</option>
+                ))}
+              </select>
+            </div>
+            {exib.referenciaDiferente ? (
+              <p className="text-xs text-brand-orange font-medium">{extratoLabel} → {exib.referencia}</p>
+            ) : (
+              <p className="text-xs text-gray-400">Mesmo mês do extrato</p>
+            )}
+          </div>
+        )
+      },
     },
     {
       key: 'acoes',
@@ -907,7 +1014,8 @@ export default function FinanceiroMovimentacaoPage() {
             current.tipo !== original.tipo ||
             current.categoriaPrincipal !== original.categoriaPrincipal ||
             current.subcategoria !== original.subcategoria ||
-            current.categoriaOutro.trim() !== original.categoriaOutro.trim()
+            current.categoriaOutro.trim() !== original.categoriaOutro.trim() ||
+            isCompetenciaVinculadaDirty(row, current, original)
           )
         if (!isDirty) return <span className="text-xs text-gray-400">Salvo</span>
         return (
@@ -940,7 +1048,7 @@ export default function FinanceiroMovimentacaoPage() {
             <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-900">Extratos bancários</p>
               <p className="text-xs text-gray-500 mt-1">
-                Faça upload do extrato para lançar movimentações automaticamente no mês selecionado.
+                Faça upload do extrato da competência selecionada (OFX/CSV). Não é permitido importar extratos de outros meses nem anexar o mesmo arquivo duas vezes.
               </p>
               <p className="text-sm text-gray-700 mt-2">
                 {extratosLoading ? 'Carregando lista…' : `${extratos.length} arquivo(s) neste mês.`}
@@ -1136,6 +1244,7 @@ export default function FinanceiroMovimentacaoPage() {
             </div>
             <p className="text-sm text-gray-600 mt-0.5">
               Exibimos Data, Transação, Tipo Transação, Identificação e Valor do extrato importado.
+              Em entradas, use <strong>Referência do valor</strong> para vincular pagamentos atrasados a outro mês (ex.: mensalidade de março paga em maio).
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {dirtyIds.length > 0 && (

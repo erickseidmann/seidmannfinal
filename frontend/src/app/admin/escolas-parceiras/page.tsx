@@ -5,6 +5,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import { School, Loader2, Search, Download } from 'lucide-react'
 import { useTranslation } from '@/contexts/LanguageContext'
 import Button from '@/components/ui/Button'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 
 type SchoolOption = {
   value: string
@@ -23,7 +24,7 @@ type ApiResponse = {
   schoolOptions: SchoolOption[]
   selectedSchool: string | null
   period: { startDate: string | null; endDate: string | null }
-  totals: { totalMatriculados: number; totalAtivos: number }
+  totals: { totalMatriculados: number; totalAtivos: number; valorTotal: number }
   enrollments: EnrollmentRow[]
 }
 
@@ -97,7 +98,10 @@ export default function AdminPartnerSchoolsPage() {
   }, [])
 
   const rows = data?.enrollments ?? []
-  const totalValor = useMemo(() => rows.reduce((acc, row) => acc + row.valorMensalidade, 0), [rows])
+  const totalValor = useMemo(() => {
+    if (data?.totals?.valorTotal != null) return data.totals.valorTotal
+    return rows.reduce((acc, row) => acc + row.valorMensalidade, 0)
+  }, [data?.totals?.valorTotal, rows])
 
   const handleDownload = useCallback(async () => {
     try {
@@ -224,7 +228,7 @@ export default function AdminPartnerSchoolsPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+          <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <table className="w-full min-w-[620px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
@@ -261,7 +265,7 @@ export default function AdminPartnerSchoolsPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </TableScrollArea>
         </div>
       </div>
     </AdminLayout>

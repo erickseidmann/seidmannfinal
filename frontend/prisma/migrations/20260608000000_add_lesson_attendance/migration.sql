@@ -1,0 +1,21 @@
+CREATE TABLE `lesson_attendance` (
+  `id`            VARCHAR(191) NOT NULL,
+  `lesson_id`     VARCHAR(191) NOT NULL,
+  `role`          ENUM('TEACHER','STUDENT') NOT NULL,
+  `teacher_id`    VARCHAR(191) NULL,
+  `enrollment_id` VARCHAR(191) NULL,
+  `joined_at`     DATETIME(3) NOT NULL,
+  `last_seen`     DATETIME(3) NOT NULL,
+  `left_at`       DATETIME(3) NULL,
+  `status`        ENUM('ACTIVE','ENDED') NOT NULL DEFAULT 'ACTIVE',
+  `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  INDEX `idx_att_lesson` (`lesson_id`),
+  INDEX `idx_att_teacher` (`teacher_id`),
+  INDEX `idx_att_enrollment` (`enrollment_id`),
+  INDEX `idx_att_status` (`status`),
+  CONSTRAINT `fk_att_lesson`     FOREIGN KEY (`lesson_id`)     REFERENCES `lessons`(`id`)     ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_att_teacher`    FOREIGN KEY (`teacher_id`)    REFERENCES `teachers`(`id`)    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `fk_att_enrollment` FOREIGN KEY (`enrollment_id`) REFERENCES `enrollments`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

@@ -16,6 +16,9 @@ import {
   releaseBooksToTeacherForLanguages,
 } from '@/lib/teacher-book-releases'
 import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window'
+import { managementTeacherAlertWhere } from '@/lib/teacher-alert-kinds'
+import { auditFieldsForCreate, resolveAdminActor, resolveAuditNames } from '@/lib/record-audit'
+import { sanitizeTeacherNiveisEnsina, normalizeTeacherNiveisEnsina } from '@/lib/teacher-teaching-levels'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
 
@@ -44,17 +47,32 @@ export async function GET(request: NextRequest) {
     const limitParam = request.nextUrl.searchParams.get('limit')
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
     
-    const searchFilter = searchParam
-      ? { nome: { contains: searchParam } }
-      : {}
+    const searchFilter = (() => {
+      if (!searchParam) return {}
+      const digits = searchParam.replace(/\D/g, '')
+      const or: import('@prisma/client').Prisma.TeacherWhereInput[] = [
+        { nome: { contains: searchParam } },
+        { email: { contains: searchParam } },
+        { whatsapp: { contains: searchParam } },
+      ]
+      if (digits.length >= 3) {
+        or.push({ whatsapp: { contains: digits } })
+      }
+      return { OR: or }
+    })()
     let notaFilter: { nota: number } | { nota: { in: number[] } } | {} = {}
     if (notaParam === '1') notaFilter = { nota: 1 }
     else if (notaParam === '2') notaFilter = { nota: 2 }
     else if (notaParam === '45') notaFilter = { nota: { in: [4, 5] } }
     
-    const statusFilter = statusParam && (statusParam === 'ACTIVE' || statusParam === 'INACTIVE' || statusParam === 'PENDING' || statusParam === 'BLOCKED')
-      ? { status: statusParam as 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'BLOCKED' }
-      : {}
+    const statusFilter =
+      statusParam &&
+      (statusParam === 'ACTIVE' ||
+        statusParam === 'INACTIVE' ||
+        statusParam === 'PENDING' ||
+        statusParam === 'BLOCKED')
+        ? { status: statusParam as 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'BLOCKED' }
+        : { status: { not: 'INACTIVE' as const } }
 
     const teachers = await prisma.teacher.findMany({
       where: { ...searchFilter, ...notaFilter, ...statusFilter } as import('@prisma/client').Prisma.TeacherWhereInput,
@@ -68,6 +86,7 @@ export async function GET(request: NextRequest) {
           },
         },
         alerts: {
+          where: managementTeacherAlertWhere(),
           select: { id: true, message: true, level: true },
           orderBy: { criadoEm: 'desc' },
         },
@@ -77,9 +96,11 @@ export async function GET(request: NextRequest) {
         _count: {
           select: {
             attendances: true,
-            alerts: true,
+            alerts: { where: managementTeacherAlertWhere() },
           },
         },
+        createdBy: { select: { nome: true } },
+        updatedBy: { select: { nome: true } },
       },
       orderBy: {
         criadoEm: 'desc',
@@ -130,16 +151,24 @@ export async function GET(request: NextRequest) {
             infosPagamento: t.infosPagamento,
             nota: t.nota,
             status: t.status,
+            inactiveAt: (t as { inactiveAt?: Date | null }).inactiveAt?.toISOString() ?? null,
             userId: t.userId,
             user: t.user,
             idiomasFala: Array.isArray(t.idiomasFala) ? t.idiomasFala : (t.idiomasFala ? [t.idiomasFala] : []),
             idiomasEnsina: Array.isArray(t.idiomasEnsina) ? t.idiomasEnsina : (t.idiomasEnsina ? [t.idiomasEnsina] : []),
+            niveisEnsina: normalizeTeacherNiveisEnsina((t as { niveisEnsina?: unknown }).niveisEnsina),
             linkSala: t.linkSala ?? null,
             attendancesCount: t._count.attendances,
             alertsCount: t._count.alerts,
             alerts: t.alerts.map((a) => ({ id: a.id, message: a.message, level: a.level })),
             criadoEm: t.criadoEm.toISOString(),
             atualizadoEm: t.atualizadoEm.toISOString(),
+            ...resolveAuditNames({
+              createdByName: (t as { createdByName?: string | null }).createdByName,
+              updatedByName: (t as { updatedByName?: string | null }).updatedByName,
+              createdBy: (t as { createdBy?: { nome: string } | null }).createdBy,
+              updatedBy: (t as { updatedBy?: { nome: string } | null }).updatedBy,
+            }),
             horariosPreenchido: {
               disponivelMinutos,
               comAulasMinutos,
@@ -184,6 +213,7 @@ export async function POST(request: NextRequest) {
       senha,
       idiomasFala,
       idiomasEnsina,
+      niveisEnsina,
       linkSala,
       paymentDueDay,
     } = body
@@ -228,6 +258,7 @@ export async function POST(request: NextRequest) {
     const IDIOMAS_VALIDOS = ['INGLES', 'ESPANHOL', 'PORTUGUES', 'ITALIANO', 'FRANCES']
     const arrFala = Array.isArray(idiomasFala) ? idiomasFala.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
     const arrEnsina = Array.isArray(idiomasEnsina) ? idiomasEnsina.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase())) : []
+    const arrNiveis = sanitizeTeacherNiveisEnsina(niveisEnsina)
 
     let dueDayToUse: number = DEFAULT_TEACHER_PAYMENT_DUE_DAY
     if (paymentDueDay !== undefined && paymentDueDay !== null && paymentDueDay !== '') {
@@ -242,8 +273,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
+
     const teacher = await prisma.teacher.create({
       data: {
+        ...auditFieldsForCreate(adminActor),
         nome: nome.trim(),
         nomePreferido: nomePreferido?.trim() || null,
         email: normalizedEmail,
@@ -257,6 +291,7 @@ export async function POST(request: NextRequest) {
         status: status || 'ACTIVE',
         idiomasFala: arrFala.length > 0 ? arrFala : undefined,
         idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : undefined,
+        niveisEnsina: arrNiveis.length > 0 ? arrNiveis : undefined,
         linkSala: typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null,
         paymentDueDay: dueDayToUse,
       },

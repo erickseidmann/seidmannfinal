@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
     const search = (searchParams.get('search') || '').trim()
     const bookIdFilter = (searchParams.get('bookId') || '').trim()
     const roleFilter = searchParams.get('role') || '' // STUDENT | TEACHER
+    const userIdFilter = (searchParams.get('userId') || '').trim()
 
     const userWhere: Record<string, unknown> = {}
     if (search) {
@@ -35,7 +36,9 @@ export async function GET(request: NextRequest) {
     }
 
     const where: Record<string, unknown> = {}
-    if (Object.keys(userWhere).length > 0) {
+    if (userIdFilter) {
+      where.userId = userIdFilter
+    } else if (Object.keys(userWhere).length > 0) {
       where.user = userWhere
     }
     if (bookIdFilter) {

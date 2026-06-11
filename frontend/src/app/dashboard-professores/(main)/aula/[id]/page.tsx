@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import { useTranslation } from '@/contexts/LanguageContext'
+import { useLessonAttendance } from '@/hooks/useLessonAttendance'
 
 // ——— Tipos ———
 interface LessonData {
@@ -143,6 +144,7 @@ export default function AulaProfessorPage() {
   const router = useRouter()
   const params = useParams()
   const lessonId = typeof params?.id === 'string' ? params.id : ''
+  const { registerJoin } = useLessonAttendance(lessonId, 'professor')
 
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [classroom, setClassroom] = useState<ClassroomAccess | null>(null)
@@ -288,6 +290,9 @@ export default function AulaProfessorPage() {
                         href={lesson.teacher.linkSala || `https://meet.jit.si/${classroom.roomName}#config.prejoinPageEnabled=false`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => {
+                          void registerJoin()
+                        }}
                         className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
                       >
                         <Video className="w-5 h-5" />

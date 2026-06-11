@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { syncReportFromTodoStatus } from '@/lib/teacher-absence-report'
 
 function todoJson(t: {
   id: string
@@ -166,6 +167,14 @@ export async function PATCH(
         completedBy: { select: { id: true, nome: true } },
       },
     })
+
+    if (typeof data.status === 'string') {
+      try {
+        await syncReportFromTodoStatus(id, data.status, userId)
+      } catch (syncErr) {
+        console.warn('[dashboard-todos PATCH] sync teacher absence report:', syncErr)
+      }
+    }
 
     return NextResponse.json({
       ok: true,

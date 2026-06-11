@@ -22,12 +22,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Video,
 } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard-professores', labelKey: 'professor.nav.home', icon: LayoutDashboard, showUnreadDot: true },
   { href: '/dashboard-professores/dados-pessoais', labelKey: 'professor.nav.personalData', icon: User },
   { href: '/dashboard-professores/calendario', labelKey: 'professor.nav.calendar', icon: Calendar },
+  { href: '/dashboard-professores/aula', labelKey: 'professor.nav.classroom', icon: Video },
   { href: '/dashboard-professores/minha-agenda', labelKey: 'professor.nav.myAgenda', icon: Clock },
   { href: '/dashboard-professores/registrar-aulas', labelKey: 'professor.nav.registerClasses', icon: ClipboardList },
   { href: '/dashboard-professores/financeiro', labelKey: 'professor.nav.financial', icon: Wallet },
@@ -46,8 +48,48 @@ export default function DashboardProfessoresMainLayout({
   const [loading, setLoading] = useState(true)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [activeClassroomId, setActiveClassroomId] = useState<string | null>(null)
+  const [nextLessonStartAt, setNextLessonStartAt] = useState<number | null>(null)
+  const [tick, setTick] = useState(() => Date.now())
   /** Mobile: fechado por padrão; a partir de md (768px): aberto. */
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const checkActiveClassroom = useCallback(() => {
+    fetch('/api/professor/dashboard-home', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok && json.data) {
+          const joinable = json.data.joinableLesson as { id: string } | null | undefined
+          if (joinable?.id) {
+            setActiveClassroomId(joinable.id)
+            setNextLessonStartAt(null)
+          } else {
+            setActiveClassroomId(null)
+            const upcoming = json.data.upcomingLessons as { startAt: string }[] | undefined
+            const next = upcoming?.[0]
+            setNextLessonStartAt(next ? new Date(next.startAt).getTime() : null)
+          }
+        }
+      })
+      .catch(() => {
+        setActiveClassroomId(null)
+        setNextLessonStartAt(null)
+      })
+  }, [])
+
+  useEffect(() => {
+    checkActiveClassroom()
+    const interval = setInterval(checkActiveClassroom, 60_000)
+    return () => clearInterval(interval)
+  }, [checkActiveClassroom, pathname])
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const sidebarMinutesUntilNext =
+    nextLessonStartAt != null ? (nextLessonStartAt - tick) / (1000 * 60) : null
 
   useLayoutEffect(() => {
     const mq = window.matchMedia('(min-width: 768px)')
@@ -172,12 +214,48 @@ export default function DashboardProfessoresMainLayout({
             const { href, labelKey, icon: Icon } = item
             const showUnreadDot = 'showUnreadDot' in item ? item.showUnreadDot : undefined
             const showChatDot = 'showChatDot' in item ? item.showChatDot : undefined
-            const isActive = href === '/dashboard-professores' ? pathname === href : pathname.startsWith(href)
-            const showDot = (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
+            const isClassroom = href === '/dashboard-professores/aula'
+            const linkHref =
+              isClassroom && activeClassroomId
+                ? `/dashboard-professores/aula/${activeClassroomId}`
+                : href
+            const isActive =
+              linkHref === '/dashboard-professores'
+                ? pathname === linkHref
+                : href === '/dashboard-professores/material'
+                  ? pathname.startsWith(href) || pathname.startsWith('/dashboard-professores/treinamentos')
+                  : isClassroom
+                    ? pathname.startsWith('/dashboard-professores/aula')
+                    : pathname.startsWith(href)
+            const showDot =
+              (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
+
+            if (isClassroom && !activeClassroomId) {
+              const showAvailableIn =
+                sidebarMinutesUntilNext != null && sidebarMinutesUntilNext > 0
+              return (
+                <div
+                  key={href}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 cursor-not-allowed opacity-50"
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span className="flex-1 min-w-0 truncate">
+                    {t(labelKey)}
+                    {showAvailableIn && (
+                      <span className="block text-xs font-normal text-gray-500 mt-0.5 truncate">
+                        Disponível em {Math.ceil(sidebarMinutesUntilNext)} min
+                      </span>
+                    )}
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                </div>
+              )
+            }
+
             return (
               <Link
                 key={href}
-                href={href}
+                href={linkHref}
                 onClick={() => {
                   if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
                     setSidebarOpen(false)
@@ -191,10 +269,21 @@ export default function DashboardProfessoresMainLayout({
               >
                 <Icon className="w-5 h-5 shrink-0" />
                 <span className="flex-1 min-w-0 truncate">{t(labelKey)}</span>
+                {isClassroom && activeClassroomId && (
+                  <span className="ml-auto w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
+                )}
                 {showDot && (
                   <span
                     className="ml-auto w-2 h-2 rounded-full bg-red-500 shrink-0"
-                    title={showChatDot ? (unreadChatCount > 0 ? t('professor.chatUnreadTitle').replace('{n}', String(unreadChatCount)) : t('professor.chat')) : (unreadAlertsCount > 0 ? t('professor.home.notificationsUnreadTitle').replace('{n}', String(unreadAlertsCount)) : t(labelKey))}
+                    title={
+                      showChatDot
+                        ? unreadChatCount > 0
+                          ? t('professor.chatUnreadTitle').replace('{n}', String(unreadChatCount))
+                          : t('professor.chat')
+                        : unreadAlertsCount > 0
+                          ? t('professor.home.notificationsUnreadTitle').replace('{n}', String(unreadAlertsCount))
+                          : t(labelKey)
+                    }
                     aria-label={t('professor.home.notificationsUnreadTitle').replace('{n}', String(unreadAlertsCount))}
                   />
                 )}

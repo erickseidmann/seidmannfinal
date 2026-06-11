@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import AdminHeader from '@/components/admin/AdminHeader'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Search, Eye, CheckCircle, Ban, ArrowLeft } from 'lucide-react'
 
 interface Enrollment {
@@ -223,7 +224,7 @@ export default function AdminPage() {
                 Nenhum enrollment encontrado com os filtros selecionados.
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <TableScrollArea>
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200">
@@ -286,7 +287,7 @@ export default function AdminPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             )}
           </Card>
 

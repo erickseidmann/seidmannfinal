@@ -288,22 +288,93 @@ function tryDetectCsvWithoutHeader(lines: string[], sep: string): ParsedExtratoL
   return rows
 }
 
+export function parseExtratoAllLines(
+  text: string,
+  ext: string
+): { lines: ParsedExtratoLine[]; format: 'ofx' | 'csv' | 'none' } {
+  const e = ext.toLowerCase()
+  if (['.ofx', '.qfx', '.ofc'].includes(e) || (e === '.txt' && /OFXHEADER|<OFX/i.test(text))) {
+    return { lines: parseOfxContent(text), format: 'ofx' }
+  }
+  if (e === '.csv' || (e === '.txt' && text.includes(';') && /\d{1,2}\/\d{1,2}\/\d{4}/.test(text))) {
+    return { lines: parseBankCsvContent(text), format: 'csv' }
+  }
+  return { lines: [], format: 'none' }
+}
+
+const MESES_COMPETENCIA_LABEL: Record<number, string> = {
+  1: 'Janeiro',
+  2: 'Fevereiro',
+  3: 'Março',
+  4: 'Abril',
+  5: 'Maio',
+  6: 'Junho',
+  7: 'Julho',
+  8: 'Agosto',
+  9: 'Setembro',
+  10: 'Outubro',
+  11: 'Novembro',
+  12: 'Dezembro',
+}
+
+function labelCompetencia(year: number, month: number): string {
+  return `${MESES_COMPETENCIA_LABEL[month] ?? String(month).padStart(2, '0')}/${year}`
+}
+
+export type ExtratoCompetenciaValidation =
+  | { ok: true; lines: ParsedExtratoLine[]; format: 'ofx' | 'csv' | 'none' }
+  | { ok: false; message: string }
+
+/** Garante que OFX/CSV só contém lançamentos da competência selecionada. PDF/imagem passam sem linhas. */
+export function validateExtratoCompetencia(
+  text: string,
+  ext: string,
+  competenciaYear: number,
+  competenciaMonth: number
+): ExtratoCompetenciaValidation {
+  const { lines: all, format } = parseExtratoAllLines(text, ext)
+  if (format === 'none') {
+    return { ok: true, lines: [], format: 'none' }
+  }
+  if (all.length === 0) {
+    return {
+      ok: false,
+      message:
+        'Não foi possível ler movimentações no arquivo. Verifique se o extrato está em CSV ou OFX e tente novamente.',
+    }
+  }
+
+  const outside = all.filter((l) => l.year !== competenciaYear || l.month !== competenciaMonth)
+  if (outside.length === 0) {
+    return { ok: true, lines: all, format }
+  }
+
+  const competenciaLabel = labelCompetencia(competenciaYear, competenciaMonth)
+  const otherLabels = [
+    ...new Set(outside.map((l) => labelCompetencia(l.year, l.month))),
+  ].slice(0, 4)
+
+  if (outside.length === all.length) {
+    return {
+      ok: false,
+      message: `Este extrato é de ${otherLabels[0]}. Selecione ${otherLabels[0]} no controle ou envie o extrato de ${competenciaLabel}.`,
+    }
+  }
+
+  const othersText = otherLabels.join(', ')
+  return {
+    ok: false,
+    message: `O extrato contém movimentações de outras competências (${othersText}). Só é permitido importar extratos de ${competenciaLabel}.`,
+  }
+}
+
 export function parseExtratoForExpenses(
   text: string,
   ext: string,
   competenciaYear: number,
   competenciaMonth: number
 ): { lines: ParsedExtratoLine[]; format: 'ofx' | 'csv' | 'none' } {
-  const e = ext.toLowerCase()
-  if (['.ofx', '.qfx', '.ofc'].includes(e) || (e === '.txt' && /OFXHEADER|<OFX/i.test(text))) {
-    const all = parseOfxContent(text)
-    const lines = all.filter((l) => l.year === competenciaYear && l.month === competenciaMonth)
-    return { lines, format: 'ofx' }
-  }
-  if (e === '.csv' || (e === '.txt' && text.includes(';') && /\d{1,2}\/\d{1,2}\/\d{4}/.test(text))) {
-    const all = parseBankCsvContent(text)
-    const lines = all.filter((l) => l.year === competenciaYear && l.month === competenciaMonth)
-    return { lines, format: 'csv' }
-  }
-  return { lines: [], format: 'none' }
+  const { lines: all, format } = parseExtratoAllLines(text, ext)
+  const lines = all.filter((l) => l.year === competenciaYear && l.month === competenciaMonth)
+  return { lines, format }
 }

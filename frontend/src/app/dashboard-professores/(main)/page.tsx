@@ -16,6 +16,7 @@ import {
   BookOpen,
   Bell,
   Megaphone,
+  Video,
 } from 'lucide-react'
 import { useTranslation, useLanguage } from '@/contexts/LanguageContext'
 import { formatTimeInTZ } from '@/lib/datetime'
@@ -23,6 +24,15 @@ import {
   resolveProfessorFinanceiroForToday,
   percentRegistrosFromFinanceiroData,
 } from '@/lib/professor-fin-period'
+import {
+  isLessonStartNotYetRegisterable,
+  isTeacherLessonRecordDeadlineExpired,
+} from '@/lib/teacher-lesson-record-deadline'
+import { canRegisterLesson } from '@/lib/lesson-status'
+import { toDateKeyInTZ } from '@/lib/datetime'
+import TeacherRecordDeadlineAlert, {
+  type TeacherRecordDeadlineLesson,
+} from '@/components/professor/TeacherRecordDeadlineAlert'
 
 function getStartOfDay(d: Date): Date {
   const x = new Date(d)
@@ -83,6 +93,7 @@ type AnnouncementRow = {
 function notifTypeLabel(type: string, t: (key: string) => string): string {
   if (type === 'PAYMENT_DONE') return t('professor.home.notifPayment')
   if (type === 'NEW_ANNOUNCEMENT') return t('professor.home.notifAnnouncement')
+  if (type === 'NEW_TRAINING') return t('professor.home.notifTraining')
   if (type === 'NEW_STUDENT') return t('professor.home.notifNewStudent')
   if (type === 'PROOF_RESEND_NEEDED') return t('professor.home.notifProofResend')
   if (type === 'STUDENT_INACTIVE') return t('professor.home.notifStudentInactive')
@@ -95,6 +106,10 @@ export default function DashboardProfessoresInicioPage() {
   const dateLocale = locale === 'pt-BR' ? 'pt-BR' : locale === 'es' ? 'es' : 'en-US'
   const [professor, setProfessor] = useState<Professor | null>(null)
   const [alertRegistros, setAlertRegistros] = useState<{ show: boolean; pendingCount: number } | null>(null)
+  const [deadlineLessons, setDeadlineLessons] = useState<{
+    registerable: TeacherRecordDeadlineLesson[]
+    expired: TeacherRecordDeadlineLesson[]
+  }>({ registerable: [], expired: [] })
   const [loadingAlertRegistros, setLoadingAlertRegistros] = useState(true)
   const [periodMetrics, setPeriodMetrics] = useState<{
     percentHorariosUsados: number | null
@@ -104,17 +119,40 @@ export default function DashboardProfessoresInicioPage() {
   const [loadingMetrics, setLoadingMetrics] = useState(true)
   const [widgets, setWidgets] = useState<{
     upcomingLessons: UpcomingRow[]
+    joinableLesson: {
+      id: string
+      startAt: string
+      durationMinutes: number | null
+      studentLabel: string
+    } | null
     alerts: AlertRow[]
     announcements: AnnouncementRow[]
   } | null>(null)
   const [widgetsLoading, setWidgetsLoading] = useState(true)
   const [widgetsError, setWidgetsError] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
-    setWidgetsLoading(true)
+    const isInitialLoad = tick === 0
+    if (isInitialLoad) setWidgetsLoading(true)
     setWidgetsError(null)
-    const empty = { upcomingLessons: [] as UpcomingRow[], alerts: [] as AlertRow[], announcements: [] as AnnouncementRow[] }
+    const empty = {
+      upcomingLessons: [] as UpcomingRow[],
+      joinableLesson: null as {
+        id: string
+        startAt: string
+        durationMinutes: number | null
+        studentLabel: string
+      } | null,
+      alerts: [] as AlertRow[],
+      announcements: [] as AnnouncementRow[],
+    }
     fetch('/api/professor/dashboard-home', { credentials: 'include' })
       .then(async (res) => {
         let json: { ok?: boolean; data?: unknown; message?: string } | null = null
@@ -144,12 +182,25 @@ export default function DashboardProfessoresInicioPage() {
         }
         const d = data as {
           upcomingLessons: unknown
+          joinableLesson: unknown
           alerts: unknown
           announcements: unknown
         }
         setWidgetsError(null)
         setWidgets({
           upcomingLessons: Array.isArray(d.upcomingLessons) ? d.upcomingLessons : [],
+          joinableLesson:
+            d.joinableLesson &&
+            typeof d.joinableLesson === 'object' &&
+            d.joinableLesson !== null &&
+            'id' in d.joinableLesson
+              ? (d.joinableLesson as {
+                  id: string
+                  startAt: string
+                  durationMinutes: number | null
+                  studentLabel: string
+                })
+              : null,
           alerts: Array.isArray(d.alerts) ? d.alerts : [],
           announcements: Array.isArray(d.announcements) ? d.announcements : [],
         })
@@ -161,12 +212,12 @@ export default function DashboardProfessoresInicioPage() {
         }
       })
       .finally(() => {
-        if (!cancelled) setWidgetsLoading(false)
+        if (!cancelled && isInitialLoad) setWidgetsLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [t, tick])
 
   const markAlertRead = async (id: string) => {
     try {
@@ -246,6 +297,7 @@ export default function DashboardProfessoresInicioPage() {
 
         if (!finJson?.ok || !finJson.data) {
           setAlertRegistros(null)
+          setDeadlineLessons({ registerable: [], expired: [] })
           return
         }
         const d = finJson.data as {
@@ -255,18 +307,7 @@ export default function DashboardProfessoresInicioPage() {
         }
         if (!d.dataInicio || !d.dataTermino) {
           setAlertRegistros(null)
-          return
-        }
-        if (d.statusPagamento === 'PAGO') {
-          setAlertRegistros(null)
-          return
-        }
-        const dataTermino = new Date(d.dataTermino + 'T23:59:59.999Z')
-        const hoje = getStartOfDay(now)
-        const limite = addDays(hoje, 7)
-        const pagamentoChegando = dataTermino.getTime() <= limite.getTime()
-        if (!pagamentoChegando) {
-          setAlertRegistros(null)
+          setDeadlineLessons({ registerable: [], expired: [] })
           return
         }
         const start = d.dataInicio + 'T00:00:00.000Z'
@@ -278,12 +319,50 @@ export default function DashboardProfessoresInicioPage() {
         const lessonsJson = await lessonsRes.json()
         if (cancelled) return
         const lessons: LessonItem[] = lessonsJson?.ok && Array.isArray(lessonsJson?.data?.lessons) ? lessonsJson.data.lessons : []
-        const pendingCount = lessons.filter((l) => !l.record?.id && l.status !== 'CANCELLED').length
-        setAlertRegistros(pendingCount > 0 ? { show: true, pendingCount } : null)
+
+        let holidays = new Set<string>()
+        try {
+          const holidaysRes = await fetch(
+            `/api/professor/holidays?start=${d.dataInicio}&end=${d.dataTermino}`,
+            { credentials: 'include' }
+          )
+          const holidaysJson = await holidaysRes.json()
+          if (holidaysJson.ok && Array.isArray(holidaysJson.data?.holidays)) {
+            holidays = new Set(holidaysJson.data.holidays)
+          }
+        } catch {
+          /* ignore */
+        }
+
+        const periodPaid = d.statusPagamento === 'PAGO'
+        const registerable: TeacherRecordDeadlineLesson[] = []
+        const expired: TeacherRecordDeadlineLesson[] = []
+        for (const l of lessons) {
+          if (l.record?.id) continue
+          if (!canRegisterLesson(l.status ?? '')) continue
+          if (holidays.has(toDateKeyInTZ(l.startAt))) continue
+          if (isLessonStartNotYetRegisterable(l.startAt)) continue
+          if (periodPaid) continue
+          const item: TeacherRecordDeadlineLesson = {
+            id: l.id,
+            startAt: l.startAt,
+            enrollment: l.enrollment,
+          }
+          if (isTeacherLessonRecordDeadlineExpired(l.startAt)) {
+            expired.push(item)
+          } else {
+            registerable.push(item)
+          }
+        }
+        setDeadlineLessons({ registerable, expired })
+
+        const pendingCount = registerable.length
+        setAlertRegistros(!periodPaid && pendingCount > 0 ? { show: true, pendingCount } : null)
       } catch {
         if (!cancelled) {
           setPeriodMetrics(null)
           setAlertRegistros(null)
+          setDeadlineLessons({ registerable: [], expired: [] })
         }
       } finally {
         if (!cancelled) {
@@ -339,6 +418,8 @@ export default function DashboardProfessoresInicioPage() {
     return parts.join(' · ')
   }
 
+  const joinLesson = widgets?.joinableLesson ?? null
+
   return (
     <div className="max-w-7xl">
       <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 tracking-tight mb-3">
@@ -356,6 +437,24 @@ export default function DashboardProfessoresInicioPage() {
           {widgetsError}
         </div>
       ) : null}
+
+      <div className="mb-8">
+        <TeacherRecordDeadlineAlert
+          registerablePending={deadlineLessons.registerable}
+          expiredPending={deadlineLessons.expired}
+          dateLocale={dateLocale}
+          title={t('professor.registerClasses.deadlineAlert.title')}
+          intro={t('professor.registerClasses.deadlineAlert.intro')}
+          backlogNote={t('professor.registerClasses.deadlineAlert.backlog')}
+          newRuleNote={t('professor.registerClasses.deadlineAlert.newRule')}
+          registerableTitle={t('professor.registerClasses.deadlineAlert.registerable')}
+          expiredTitle={t('professor.registerClasses.deadlineAlert.expired')}
+          expiredNote={t('professor.registerClasses.deadlineAlert.expiredNote')}
+          deadlineUntil={t('professor.registerClasses.deadlineAlert.deadlineUntil')}
+          registerLinkLabel={t('professor.registerClasses.deadlineAlert.goRegister')}
+          showRegisterLink
+        />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-5">
         {quickLinks.map(({ href, title, description, icon: Icon, iconWrap }) => (
@@ -438,6 +537,30 @@ export default function DashboardProfessoresInicioPage() {
           </div>
         </Link>
       </div>
+
+      {joinLesson && (
+        <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-white">
+              <Video className="h-5 w-5" aria-hidden />
+            </div>
+            <div>
+              <p className="font-semibold text-emerald-900">Sua aula está prestes a começar</p>
+              <p className="text-sm text-emerald-800/80 mt-0.5">
+                {joinLesson.studentLabel} · {formatShortDate(joinLesson.startAt)} ·{' '}
+                {formatTimeInTZ(joinLesson.startAt, dateLocale)}
+              </p>
+            </div>
+          </div>
+          <Link
+            href={`/dashboard-professores/aula/${joinLesson.id}`}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
+          >
+            <Video className="w-4 h-4" />
+            Entrar na Aula
+          </Link>
+        </div>
+      )}
 
       <div className="mt-10 grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Próximas aulas — faixa azul */}

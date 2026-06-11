@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 
@@ -37,6 +38,52 @@ function nextDueDateFixed(dayOfMonth: number, refDate: Date): Date {
 /** Ano/mês calendário em UTC (evita deslocar o mês por fuso quando a data veio como meia-noite UTC). */
 function getYearMonthUtc(d: Date): { year: number; month: number } {
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 }
+}
+
+async function fetchReceiptUrlMap(
+  year: number,
+  month: number,
+  enrollmentIds: string[]
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (enrollmentIds.length === 0) return map
+
+  try {
+    const rows = await prisma.enrollmentPaymentMonth.findMany({
+      where: {
+        year,
+        month,
+        enrollmentId: { in: enrollmentIds },
+        receiptUrl: { not: null },
+      },
+      select: { enrollmentId: true, receiptUrl: true },
+    })
+    for (const row of rows) {
+      if (row.receiptUrl) map.set(row.enrollmentId, row.receiptUrl)
+    }
+    return map
+  } catch {
+    // Fallback quando o client Prisma em cache ainda não conhece receiptUrl
+    try {
+      const rows = await prisma.$queryRaw<Array<{ enrollment_id: string; receipt_url: string | null }>>(
+        Prisma.sql`
+          SELECT enrollment_id, receipt_url
+          FROM enrollment_payment_months
+          WHERE year = ${year}
+            AND month = ${month}
+            AND receipt_url IS NOT NULL
+            AND enrollment_id IN (${Prisma.join(enrollmentIds)})
+        `
+      )
+      for (const row of rows) {
+        if (row.receipt_url) map.set(row.enrollment_id, row.receipt_url)
+      }
+    } catch {
+      // Coluna ainda não migrada — segue sem comprovantes
+    }
+  }
+
+  return map
 }
 
 export async function GET(request: NextRequest) {
@@ -165,6 +212,11 @@ export async function GET(request: NextRequest) {
         : enrollments
 
     const enrollmentIds = filteredEnrollments.map((e) => e.id)
+
+    const receiptUrlMap =
+      hasMonthFilter && year != null && month != null
+        ? await fetchReceiptUrlMap(year, month, enrollmentIds)
+        : new Map<string, string>()
 
     // Último e-mail de cobrança enviado (manual e/ou automações)
     const [invoiceSentAuditMax, paymentNotificationMax] = await Promise.all([
@@ -395,6 +447,7 @@ export async function GET(request: NextRequest) {
           return null
         })(),
         status,
+        receiptUrl: hasMonthFilter ? receiptUrlMap.get(e.id) ?? null : null,
         enrollmentStatus: e.status,
         inactiveAt: e.inactiveAt?.toISOString() ?? null,
         metodoPagamento: e.metodoPagamento ?? pi?.metodo ?? null,

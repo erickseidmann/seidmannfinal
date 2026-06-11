@@ -17,8 +17,11 @@ import {
   Calendar,
   ChevronRight,
   Loader2,
+  UserX,
+  Clock3,
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
+import { useLessonAttendance } from '@/hooks/useLessonAttendance'
 
 // ——— Tipos ———
 interface LessonData {
@@ -58,6 +61,13 @@ interface ClassroomAccess {
   windowStart: string
   windowEnd: string
   reason: string | null
+}
+
+interface TeacherAbsenceState {
+  canReport: boolean
+  windowEnd: string
+  reportedAbsent: boolean
+  reportedLate: boolean
 }
 
 // ——— Helpers ———
@@ -131,12 +141,16 @@ export default function AulaAlunoPage() {
   const router = useRouter()
   const params = useParams()
   const lessonId = typeof params?.id === 'string' ? params.id : ''
+  const { registerJoin } = useLessonAttendance(lessonId, 'student')
 
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [classroom, setClassroom] = useState<ClassroomAccess | null>(null)
+  const [teacherAbsence, setTeacherAbsence] = useState<TeacherAbsenceState | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  const [reportingType, setReportingType] = useState<'ABSENT' | 'LATE' | null>(null)
+  const [reportMessage, setReportMessage] = useState<string | null>(null)
 
   const fetchLesson = useCallback(async () => {
     if (!lessonId) return
@@ -156,6 +170,7 @@ export default function AulaAlunoPage() {
       setError(null)
       setLesson(json.data.lesson)
       setClassroom(json.data.classroom)
+      setTeacherAbsence(json.data.teacherAbsence ?? null)
     } catch (e) {
       setError('Erro de conexão. Tente novamente.')
       setLesson(null)
@@ -178,6 +193,46 @@ export default function AulaAlunoPage() {
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [])
+
+  const submitTeacherAbsenceReport = useCallback(
+    async (type: 'ABSENT' | 'LATE') => {
+      if (!lessonId) return
+      setReportingType(type)
+      setReportMessage(null)
+      try {
+        const res = await fetch(`/api/student/lessons/${lessonId}/teacher-absence-report`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setReportMessage(json.message || 'Não foi possível registrar o reporte')
+          return
+        }
+        setReportMessage(
+          type === 'LATE'
+            ? 'Atraso do professor registrado. A equipe foi notificada.'
+            : 'Professor ausente registrado. A equipe foi notificada.'
+        )
+        setTeacherAbsence((prev) =>
+          prev
+            ? {
+                ...prev,
+                reportedAbsent: type === 'ABSENT' ? true : prev.reportedAbsent,
+                reportedLate: type === 'LATE' ? true : prev.reportedLate,
+              }
+            : prev
+        )
+      } catch {
+        setReportMessage('Erro de conexão. Tente novamente.')
+      } finally {
+        setReportingType(null)
+      }
+    },
+    [lessonId]
+  )
 
   if (loading && !lesson) {
     return (
@@ -211,6 +266,18 @@ export default function AulaAlunoPage() {
   const canEnter = (minutesUntilStart <= 3 || now >= lessonStartTime) && now < lessonEndTime
   const lessonEnded = now >= lessonEndTime
   const showCountdown = !classroom.canJoin && now < windowStartTime
+
+  const reportWindowEndTime = teacherAbsence?.windowEnd
+    ? new Date(teacherAbsence.windowEnd).getTime()
+    : lessonStartTime + 15 * 60 * 1000
+  const reportWindowActive =
+    now >= lessonStartTime && now <= reportWindowEndTime
+  const reportWindowExpired = now > reportWindowEndTime
+  const showTeacherAbsenceSection =
+    classroom.canJoin &&
+    lesson.status === 'CONFIRMED' &&
+    !!lesson.teacher?.id &&
+    !lessonEnded
 
   return (
     <div className="space-y-6">
@@ -267,6 +334,9 @@ export default function AulaAlunoPage() {
                         href={lesson.teacher.linkSala || `https://meet.jit.si/${classroom.roomName}#config.prejoinPageEnabled=false`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => {
+                          void registerJoin()
+                        }}
                         className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
                       >
                         <Video className="w-5 h-5" />
@@ -287,6 +357,71 @@ export default function AulaAlunoPage() {
                     <p className="text-sm text-gray-500 mt-2">
                       Certifique-se de permitir câmera e microfone no navegador.
                     </p>
+
+                    {showTeacherAbsenceSection ? (
+                      <div className="mt-6 pt-6 border-t border-gray-100 w-full max-w-lg">
+                        <h3 className="text-sm font-semibold text-gray-900 mb-2 flex items-center justify-center gap-2">
+                          <UserX className="w-4 h-4 text-amber-600" />
+                          Reportar professor
+                        </h3>
+                        {now < lessonStartTime ? (
+                          <p className="text-xs text-gray-500 mb-3">
+                            Disponível após o início da aula, por até 15 minutos.
+                          </p>
+                        ) : reportWindowExpired ? (
+                          <p className="text-xs text-gray-500 mb-3">
+                            O prazo para reportar encerrou (15 min após o início).
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-500 mb-3">
+                            Disponível nos primeiros 15 minutos da aula.
+                          </p>
+                        )}
+                        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                          <button
+                            type="button"
+                            disabled={
+                              !reportWindowActive ||
+                              !!teacherAbsence?.reportedAbsent ||
+                              reportingType === 'ABSENT'
+                            }
+                            onClick={() => void submitTeacherAbsenceReport('ABSENT')}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-red-200 text-red-800 bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {reportingType === 'ABSENT' ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <UserX className="w-4 h-4" />
+                            )}
+                            {teacherAbsence?.reportedAbsent
+                              ? 'Professor ausente — registrado'
+                              : 'Declarar professor ausente'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={
+                              !reportWindowActive ||
+                              !!teacherAbsence?.reportedLate ||
+                              reportingType === 'LATE'
+                            }
+                            onClick={() => void submitTeacherAbsenceReport('LATE')}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border border-amber-200 text-amber-900 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {reportingType === 'LATE' ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Clock3 className="w-4 h-4" />
+                            )}
+                            {teacherAbsence?.reportedLate
+                              ? 'Atraso — registrado'
+                              : 'Declarar atraso do professor'}
+                          </button>
+                        </div>
+                        {reportMessage ? (
+                          <p className="text-sm text-gray-600 mt-3">{reportMessage}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </>
               ) : (
@@ -309,6 +444,7 @@ export default function AulaAlunoPage() {
                   </div>
                 </>
               )}
+
             </div>
           </div>
 

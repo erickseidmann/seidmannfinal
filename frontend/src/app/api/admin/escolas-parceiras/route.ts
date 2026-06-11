@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { isSuperAdminEmail } from '@/lib/auth'
+import { resolveEnrollmentValorMensalidade } from '@/lib/enrollment-valor-mensalidade'
 
 const PARTNER_SCHOOL_PREFIX = 'escola-parceira:'
 
@@ -135,6 +136,7 @@ export async function GET(request: NextRequest) {
         totals: {
           totalMatriculados: 0,
           totalAtivos: 0,
+          valorTotal: 0,
         },
         enrollments: [],
       }
@@ -189,6 +191,7 @@ export async function GET(request: NextRequest) {
         nome: true,
         criadoEm: true,
         status: true,
+        bolsista: true,
         valorMensalidade: true,
         paymentInfo: {
           select: {
@@ -200,12 +203,11 @@ export async function GET(request: NextRequest) {
     })
 
     const rows = enrollments.map((e) => {
-      const valor =
-        e.valorMensalidade != null
-          ? Number(e.valorMensalidade)
-          : e.paymentInfo?.valorMensal != null
-            ? Number(e.paymentInfo.valorMensal)
-            : 0
+      const valor = resolveEnrollmentValorMensalidade({
+        bolsista: e.bolsista,
+        valorMensalidade: e.valorMensalidade,
+        paymentInfoValorMensal: e.paymentInfo?.valorMensal,
+      })
       return {
         id: e.id,
         nome: e.nome,
@@ -215,9 +217,12 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    const valorTotal = rows.reduce((s, r) => s + r.valorMensalidade, 0)
+
     const totals = {
       totalMatriculados: rows.length,
       totalAtivos: rows.filter((r) => r.status === 'ACTIVE').length,
+      valorTotal: Math.round(valorTotal * 100) / 100,
     }
 
     if (responseFormat === 'csv') {

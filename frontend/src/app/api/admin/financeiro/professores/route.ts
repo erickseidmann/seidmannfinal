@@ -20,6 +20,7 @@ import {
   teacherPaymentPeriodBoundsUtc,
 } from '@/lib/teacher-paid-period'
 import { ymdUtc } from '@/lib/datetime'
+import { isTeacherPayableInMonth } from '@/lib/teacher-inactive'
 
 function startOfDay(d: Date): Date {
   const x = new Date(d)
@@ -69,6 +70,8 @@ export async function GET(request: NextRequest) {
     const teacherSelect = {
       id: true,
       nome: true,
+      status: true,
+      inactiveAt: true,
       criadoEm: true,
       valorPorHora: true,
       metodoPagamento: true,
@@ -85,16 +88,23 @@ export async function GET(request: NextRequest) {
       }),
     } as const
 
-    const teachers = await prisma.teacher.findMany({
+    const teachersRaw = await prisma.teacher.findMany({
       where:
         useMonthMode && periodEnd != null
           ? {
-              status: 'ACTIVE',
               criadoEm: { lte: periodEnd },
+              OR: [{ status: 'ACTIVE' }, { status: 'INACTIVE' }],
             }
-          : { status: 'ACTIVE' },
+          : { OR: [{ status: 'ACTIVE' }, { status: 'INACTIVE' }] },
       select: teacherSelect,
       orderBy: { nome: 'asc' },
+    })
+
+    const teachers = teachersRaw.filter((t) => {
+      if (useMonthMode && viewedYear != null && viewedMonth != null) {
+        return isTeacherPayableInMonth(t.status, t.inactiveAt, viewedYear, viewedMonth)
+      }
+      return t.status === 'ACTIVE'
     })
 
     // No modo mês: buscar o período que TERMINA no mês selecionado (ex.: em abril mostrar 23/03–23/04, não 23/04–23/05).
@@ -391,6 +401,7 @@ export async function GET(request: NextRequest) {
       return {
         id: t.id,
         nome: t.nome,
+        paymentDueDay: t.paymentDueDay ?? null,
         valorPorHora,
         dataInicio: dataInicioISO,
         dataTermino: dataTerminoISO,

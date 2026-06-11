@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window'
+import { auditFieldsForCreate, resolveAdminActor } from '@/lib/record-audit'
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = []
@@ -94,6 +95,7 @@ export async function POST(request: NextRequest) {
     const created: { id: string; nome: string; email: string }[] = []
     const errors: { row: number; message: string }[] = []
     const seenEmails = new Set<string>()
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
 
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r]
@@ -151,6 +153,7 @@ export async function POST(request: NextRequest) {
       try {
         const teacher = await prisma.teacher.create({
           data: {
+            ...auditFieldsForCreate(adminActor),
             nome: nome.trim(),
             nomePreferido: row[headerMap['nomepreferido']]?.trim() || null,
             email,

@@ -7,6 +7,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import {
+  canAdminEditLessonOnDate,
+  LESSON_PAST_EDIT_DENIED_MESSAGE,
+} from '@/lib/lesson-past-edit'
 import { sendEmail } from '@/lib/email'
 
 const DIAS_SEMANA = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
@@ -116,6 +120,13 @@ export async function PATCH(
     const enrollment = lesson.enrollment
 
     if (action === 'APPROVE') {
+      if (!canAdminEditLessonOnDate(lesson.startAt, auth.session?.email)) {
+        return NextResponse.json(
+          { ok: false, message: LESSON_PAST_EDIT_DENIED_MESSAGE },
+          { status: 403 }
+        )
+      }
+
       // Buscar nome do admin logado
       let nomeAdmin = 'admin'
       if (auth.session?.sub) {
@@ -161,7 +172,9 @@ export async function PATCH(
         dataReagendamentoAluno,
         dataAprovacaoAdmin
       )
-      const notesFinais = adminNotes ? `${notesReagendamento}\n${adminNotes}` : notesReagendamento
+      const notesFinais = adminNotes
+        ? `${notesReagendamento}\n${adminNotes}\n[cancelledLessonId:${lesson.id}]`
+        : `${notesReagendamento}\n[cancelledLessonId:${lesson.id}]`
       
       const newLesson = await prisma.lesson.create({
         data: {

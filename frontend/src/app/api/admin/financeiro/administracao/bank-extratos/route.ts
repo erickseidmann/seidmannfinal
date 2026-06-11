@@ -5,12 +5,12 @@
 
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { parseExtratoForExpenses } from '@/lib/bank-extrato-parse'
+import { parseExtratoForExpenses, validateExtratoCompetencia } from '@/lib/bank-extrato-parse'
 import { buildMovimentacaoNomeFromCategoria } from '@/lib/movimentacao-categoria-nome'
 import { normalizarIdentificacaoMovimentacao } from '@/lib/movimentacao-ident-regra'
 
@@ -47,6 +47,25 @@ function extFromMime(mime: string): string {
   if (m === 'text/csv') return '.csv'
   if (m === 'text/plain') return '.txt'
   return ''
+}
+
+const MESES_LABEL: Record<number, string> = {
+  1: 'Janeiro',
+  2: 'Fevereiro',
+  3: 'Março',
+  4: 'Abril',
+  5: 'Maio',
+  6: 'Junho',
+  7: 'Julho',
+  8: 'Agosto',
+  9: 'Setembro',
+  10: 'Outubro',
+  11: 'Novembro',
+  12: 'Dezembro',
+}
+
+function labelCompetencia(year: number, month: number): string {
+  return `${MESES_LABEL[month] ?? month}/${year}`
 }
 
 const querySchema = z.object({
@@ -159,11 +178,49 @@ export async function POST(request: NextRequest) {
     }
 
     const safeExt = extOk ? ext : extFromMime(mime) || '.bin'
+    const buffer = Buffer.from(await file.arrayBuffer())
+    const contentHash = createHash('sha256').update(buffer).digest('hex')
+
+    const duplicate = await prisma.adminBankExtrato.findUnique({
+      where: { contentHash },
+      select: {
+        id: true,
+        year: true,
+        month: true,
+        originalFilename: true,
+      },
+    })
+    if (duplicate) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: `Este extrato já foi importado (${duplicate.originalFilename}, competência ${labelCompetencia(duplicate.year, duplicate.month)}).`,
+        },
+        { status: 400 }
+      )
+    }
+
+    const textUtf8 = buffer.toString('utf-8')
+    let competenciaCheck = validateExtratoCompetencia(textUtf8, safeExt, year, month)
+    if (
+      !competenciaCheck.ok &&
+      competenciaCheck.message &&
+      safeExt &&
+      ['.ofx', '.qfx', '.ofc'].includes(safeExt) &&
+      /OFXHEADER|<OFX|<STMTTRN/i.test(textUtf8)
+    ) {
+      const latin = buffer.toString('latin1')
+      const altCheck = validateExtratoCompetencia(latin, safeExt, year, month)
+      if (altCheck.ok) competenciaCheck = altCheck
+    }
+    if (!competenciaCheck.ok) {
+      return NextResponse.json({ ok: false, message: competenciaCheck.message }, { status: 400 })
+    }
+
     const dir = join(process.cwd(), 'public', 'uploads', 'bank-extratos', String(year), String(month))
     await mkdir(dir, { recursive: true })
     const storedName = `${randomUUID()}${safeExt}`
     const fullPath = join(dir, storedName)
-    const buffer = Buffer.from(await file.arrayBuffer())
     await writeFile(fullPath, buffer)
 
     const fileUrl = `/uploads/bank-extratos/${year}/${month}/${storedName}`
@@ -176,6 +233,7 @@ export async function POST(request: NextRequest) {
         fileUrl,
         mimeType: mime || null,
         sizeBytes: buffer.length,
+        contentHash,
       },
       select: {
         id: true,
@@ -187,10 +245,9 @@ export async function POST(request: NextRequest) {
     })
 
     let expensesCreated = 0
-    let parseFormat: 'ofx' | 'csv' | 'none' = 'none'
+    let parseFormat: 'ofx' | 'csv' | 'none' = competenciaCheck.format
     let parseNote: string | undefined
 
-    const textUtf8 = buffer.toString('utf-8')
     let parsed = parseExtratoForExpenses(textUtf8, safeExt, year, month)
     if (
       parsed.format === 'ofx' &&
@@ -264,9 +321,9 @@ export async function POST(request: NextRequest) {
       expensesCreated = slice.length
     } else if (parseFormat === 'none') {
       parseNote =
-        'Arquivo anexado. PDF e imagem não geram linhas na tabela — exporte OFX ou CSV no banco para lançar despesas automaticamente.'
+        'Arquivo anexado. PDF e imagem não geram linhas na tabela — exporte OFX ou CSV do banco para lançar movimentações automaticamente.'
     } else {
-      parseNote = `Arquivo anexado. Nenhuma movimentação lançada para ${String(month).padStart(2, '0')}/${year}: confira se o extrato é desse mês.`
+      parseNote = `Arquivo anexado. Nenhuma movimentação lançada para ${String(month).padStart(2, '0')}/${year}.`
     }
 
     return NextResponse.json({

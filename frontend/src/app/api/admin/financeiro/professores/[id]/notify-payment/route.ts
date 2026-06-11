@@ -14,6 +14,7 @@ import {
   findTeacherPaymentMonthByCompetenceBrt,
   upsertKeysForCompetenceMonth,
 } from '@/lib/teacher-payment-month-db'
+import { isTeacherPayableInMonth } from '@/lib/teacher-inactive'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -76,6 +77,14 @@ export async function POST(
     if (year == null || month == null || month < 1 || month > 12) {
       return NextResponse.json(
         { ok: false, message: 'year e month (1-12) são obrigatórios' },
+        { status: 400 }
+      )
+    }
+
+    const tInactive = teacher as { inactiveAt?: Date | null }
+    if (!isTeacherPayableInMonth(teacher.status, tInactive.inactiveAt, year, month)) {
+      return NextResponse.json(
+        { ok: false, message: 'Professor inativo neste período — notificação não enviada' },
         { status: 400 }
       )
     }

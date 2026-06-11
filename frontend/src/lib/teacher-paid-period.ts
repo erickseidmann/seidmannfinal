@@ -9,6 +9,9 @@
 /** America/Sao_Paulo é UTC−3 (sem horário de verão desde 2019). */
 export const TEACHER_PAYMENT_BRT_OFFSET_MS = 3 * 60 * 60 * 1000
 
+/** Meia-noite civil em BRT = 03:00 UTC (Brasil sem horário de verão). */
+const BRT_MIDNIGHT_UTC_HOUR = 3
+
 export type TeacherPaidPeriodRow = {
   periodoInicio: Date | null
   periodoTermino: Date | null
@@ -21,7 +24,7 @@ function dueDayFromPeriodAnchorBrazil(periodoInicio: Date): number {
 
 /**
  * Limites do período de pagamento (mesma convenção de isLessonStartWithinTeacherPeriodRanges):
- * [startMs, endExclusiveMs) — periodoTermino = 00:00 UTC do dia de pagamento (primeiro instante fora do período).
+ * [startMs, endExclusiveMs) — periodoTermino = 00:00 BRT (03:00 UTC) do dia de pagamento (primeiro instante fora do período).
  */
 export function teacherPaymentPeriodBoundsUtc(
   periodoInicio: Date | null,
@@ -126,8 +129,9 @@ function lastDayOfMonthUtc(year: number, month: number): number {
  * Período de competência do mês de referência `year`/`month` (1–12), com pagamento no dia `dueDay`:
  * do dia `dueDay` do mês anterior até o **dia anterior** ao pagamento no mês atual (último dia com aula).
  *
- * Armazenamento: `periodoTermino` = 00:00 UTC do **dia de pagamento** no mês atual = primeiro instante
- * **fora** do período (fim exclusivo). Ex.: venc. 28/03 → aulas até 27/03 inclusive; termino = 28/03 00:00 UTC.
+ * Armazenamento: `periodoTermino` = 00:00 BRT (03:00 UTC) do **dia de pagamento** no mês atual =
+ * primeiro instante **fora** do período (fim exclusivo).
+ * Ex.: venc. 28/03 → aulas até 27/03 23:59:59 BRT inclusive; termino = 28/03 00:00 BRT (28/03 03:00 UTC).
  */
 export function teacherPaymentBoundsFromDueDay(
   year: number,
@@ -135,22 +139,26 @@ export function teacherPaymentBoundsFromDueDay(
   dueDay: number
 ): { inicio: Date; termino: Date } {
   // Regra especial e explícita para vencimento no dia 1:
-  // competência = mês civil anterior completo (01..último dia).
-  // Ex.: referência abril/2026 -> 01/03/2026 .. 01/04/2026 (fim exclusivo).
+  // competência = mês civil anterior completo (01..último dia), limites em 00:00 BRT (03:00 UTC).
+  // Ex.: referência abril/2026 -> 01/03/2026 00:00 BRT .. 01/04/2026 00:00 BRT (fim exclusivo).
   if (dueDay === 1) {
     const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
-    const inicio = new Date(Date.UTC(prev.year, prev.month - 1, 1, 0, 0, 0, 0))
-    const termino = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0))
+    const inicio = new Date(
+      Date.UTC(prev.year, prev.month - 1, 1, BRT_MIDNIGHT_UTC_HOUR, 0, 0, 0)
+    )
+    const termino = new Date(Date.UTC(year, month - 1, 1, BRT_MIDNIGHT_UTC_HOUR, 0, 0, 0))
     return { inicio, termino }
   }
 
   const safeDueCurrent = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(year, month))
-  const pagamentoDate = new Date(Date.UTC(year, month - 1, safeDueCurrent))
-  const termino = new Date(pagamentoDate.getTime())
-  termino.setUTCHours(0, 0, 0, 0)
+  const termino = new Date(
+    Date.UTC(year, month - 1, safeDueCurrent, BRT_MIDNIGHT_UTC_HOUR, 0, 0, 0)
+  )
   const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
   const safeDuePrev = Math.min(Math.max(1, dueDay), lastDayOfMonthUtc(prev.year, prev.month))
-  const inicio = new Date(Date.UTC(prev.year, prev.month - 1, safeDuePrev))
+  const inicio = new Date(
+    Date.UTC(prev.year, prev.month - 1, safeDuePrev, BRT_MIDNIGHT_UTC_HOUR, 0, 0, 0)
+  )
   return { inicio, termino }
 }
 
@@ -211,7 +219,7 @@ export function resolveTeacherPaymentMonthBoundsUtc(
   return b
 }
 
-/** true se o instante de início da aula está dentro de algum intervalo [início 00:00 UTC, fim 00:00 UTC exclusivo] */
+/** true se o instante de início da aula está dentro de algum intervalo [início 00:00 BRT, fim 00:00 BRT exclusivo] */
 export function isLessonStartWithinTeacherPeriodRanges(
   lessonStart: Date,
   periods: TeacherPaidPeriodRow[]

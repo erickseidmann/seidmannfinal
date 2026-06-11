@@ -6,6 +6,39 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { PaymentProvider, ReceivedPaymentStatus, Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import {
+  buildRefMonthStatusMapForPayment,
+  collectPreviousMonthPendingLookups,
+  hasPreviousMonthPaymentPendingCurrent,
+  monthLookupKey,
+  type AllocationPaidMonth,
+} from '@/lib/payments/recebimento-mes-anterior-pendente'
+
+function mapAllocationRows(
+  r: {
+    enrollmentId: string | null
+    enrollmentPaymentMonth: { year: number; month: number } | null
+    allocations: Array<{
+      enrollmentId: string
+      enrollmentPaymentMonth: { year: number; month: number } | null
+    }>
+  }
+): { allocations: AllocationPaidMonth[]; fallback: AllocationPaidMonth | null } {
+  const allocations: AllocationPaidMonth[] = r.allocations.map((a) => ({
+    enrollmentId: a.enrollmentId,
+    paidYear: a.enrollmentPaymentMonth?.year ?? null,
+    paidMonth: a.enrollmentPaymentMonth?.month ?? null,
+  }))
+  const fallback: AllocationPaidMonth | null =
+    r.enrollmentId && r.enrollmentPaymentMonth
+      ? {
+          enrollmentId: r.enrollmentId,
+          paidYear: r.enrollmentPaymentMonth.year,
+          paidMonth: r.enrollmentPaymentMonth.month,
+        }
+      : null
+  return { allocations, fallback }
+}
 
 const PROVIDERS: PaymentProvider[] = ['CORA', 'INFINITEPAY', 'SANTANDER', 'LIXEL']
 
@@ -64,44 +97,107 @@ export async function GET(request: NextRequest) {
         take: pageSize,
         include: {
           enrollment: { select: { id: true, nome: true, email: true } },
+          enrollmentPaymentMonth: { select: { year: true, month: true } },
           allocations: {
             orderBy: { createdAt: 'asc' },
             include: {
               enrollment: { select: { id: true, nome: true } },
+              enrollmentPaymentMonth: {
+                select: { year: true, month: true, paymentStatus: true },
+              },
             },
           },
         },
       }),
     ])
 
+    const pendingLookups = collectPreviousMonthPendingLookups(
+      items.map((r) => {
+        const { allocations, fallback } = mapAllocationRows(r)
+        return {
+          status: r.status,
+          dataPagamento: r.dataPagamento,
+          allocations,
+          fallback,
+        }
+      })
+    )
+
+    const refMonthRows =
+      pendingLookups.length > 0
+        ? await prisma.enrollmentPaymentMonth.findMany({
+            where: {
+              OR: pendingLookups.map((l) => ({
+                enrollmentId: l.enrollmentId,
+                year: l.year,
+                month: l.month,
+              })),
+            },
+            select: {
+              enrollmentId: true,
+              year: true,
+              month: true,
+              paymentStatus: true,
+            },
+          })
+        : []
+
+    const refMonthByKey = new Map<string, string | null>()
+    for (const row of refMonthRows) {
+      refMonthByKey.set(
+        monthLookupKey(row.enrollmentId, row.year, row.month),
+        row.paymentStatus
+      )
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
-        items: items.map((r) => ({
-          id: r.id,
-          provider: r.provider,
-          providerPaymentId: r.providerPaymentId,
-          valor: r.valor,
-          dataPagamento: r.dataPagamento.toISOString(),
-          metodo: r.metodo,
-          documentoPagador: r.documentoPagador,
-          nomePagador: r.nomePagador,
-          txid: r.txid,
-          endToEndId: r.endToEndId,
-          referencia: r.referencia,
-          status: r.status,
-          divergenciaValor: r.divergenciaValor,
-          semCobrancaAberta: r.semCobrancaAberta,
-          enrollmentId: r.enrollmentId,
-          enrollmentNome: r.enrollment?.nome ?? null,
-          allocations: r.allocations.map((a) => ({
-            id: a.id,
-            enrollmentId: a.enrollmentId,
-            enrollmentNome: a.enrollment.nome,
-            valorCentavos: a.valorCentavos,
-          })),
-          createdAt: r.createdAt.toISOString(),
-        })),
+        items: items.map((r) => {
+          const { allocations, fallback } = mapAllocationRows(r)
+          const mesAnteriorReferenciaPendente =
+            r.status === 'VINCULADO' &&
+            hasPreviousMonthPaymentPendingCurrent(
+              r.dataPagamento,
+              allocations,
+              fallback,
+              buildRefMonthStatusMapForPayment(
+                r.dataPagamento,
+                allocations,
+                fallback,
+                refMonthByKey
+              )
+            )
+
+          return {
+            id: r.id,
+            provider: r.provider,
+            providerPaymentId: r.providerPaymentId,
+            valor: r.valor,
+            dataPagamento: r.dataPagamento.toISOString(),
+            metodo: r.metodo,
+            documentoPagador: r.documentoPagador,
+            nomePagador: r.nomePagador,
+            txid: r.txid,
+            endToEndId: r.endToEndId,
+            referencia: r.referencia,
+            status: r.status,
+            divergenciaValor: r.divergenciaValor,
+            semCobrancaAberta: r.semCobrancaAberta,
+            mesAnteriorReferenciaPendente,
+            enrollmentId: r.enrollmentId,
+            enrollmentNome: r.enrollment?.nome ?? null,
+            allocations: r.allocations.map((a) => ({
+              id: a.id,
+              enrollmentId: a.enrollmentId,
+              enrollmentNome: a.enrollment.nome,
+              valorCentavos: a.valorCentavos,
+              paidYear: a.enrollmentPaymentMonth?.year ?? null,
+              paidMonth: a.enrollmentPaymentMonth?.month ?? null,
+            })),
+            createdAt: r.createdAt.toISOString(),
+          }
+        }),
         total,
         page,
         pageSize,

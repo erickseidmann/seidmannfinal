@@ -27,6 +27,7 @@ const ADMIN_PAGES = [
   { key: 'alertas', label: 'Alertas' },
   { key: 'calendario', label: 'Calendário' },
   { key: 'registros-aulas', label: 'Registros de aulas' },
+  { key: 'acompanhar-chamadas', label: 'Acompanhar chamada das aulas' },
   { key: 'chat', label: 'Chat' },
   { key: 'escolas-parceiras', label: 'Escolas parceiras' },
   { key: 'financeiro', label: 'Financeiro (todas)' },
@@ -53,6 +54,7 @@ interface User {
   funcao: string | null
   emailPessoal: string | null
   adminPages: string[]
+  canApproveLateLessonEdits?: boolean
   criadoEm: string
   atualizadoEm: string
 }
@@ -85,6 +87,7 @@ export default function AdminUsuariosPage() {
     funcao: '',
     senha: '',
     adminPages: [] as string[],
+    canApproveLateLessonEdits: false,
     status: 'ACTIVE',
   })
   const [superAdminOk, setSuperAdminOk] = useState<boolean | null>(null)
@@ -155,6 +158,7 @@ export default function AdminUsuariosPage() {
       funcao: '',
       senha: '',
       adminPages: [],
+      canApproveLateLessonEdits: false,
       status: 'ACTIVE',
     })
     setIsModalOpen(true)
@@ -170,6 +174,7 @@ export default function AdminUsuariosPage() {
       funcao: user.funcao || '',
       senha: '',
       adminPages: Array.isArray(user.adminPages) ? [...user.adminPages] : [],
+      canApproveLateLessonEdits: user.canApproveLateLessonEdits ?? false,
       status: user.status,
     })
     setIsModalOpen(true)
@@ -200,6 +205,7 @@ export default function AdminUsuariosPage() {
           emailPessoal: formData.emailPessoal || undefined,
           funcao: formData.funcao || undefined,
           adminPages: formData.adminPages,
+          canApproveLateLessonEdits: formData.canApproveLateLessonEdits,
           status: formData.status,
         }
         if (formData.senha) body.senha = formData.senha
@@ -554,6 +560,27 @@ export default function AdminUsuariosPage() {
                 />
               </div>
             )}
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.canApproveLateLessonEdits}
+                  onChange={(e) =>
+                    setFormData({ ...formData, canApproveLateLessonEdits: e.target.checked })
+                  }
+                  className="mt-1 rounded border-gray-300 text-brand-orange focus:ring-brand-orange"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-gray-700">
+                    Pode aprovar alterações tardias de aulas
+                  </span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    Este usuário poderá aprovar ou rejeitar solicitações de troca em aulas de dias
+                    anteriores no calendário.
+                  </span>
+                </span>
+              </label>
+            </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Páginas que pode acessar (delegar acessos)</label>
               <p className="text-xs text-gray-500 mb-2">Marque as páginas do dashboard que este usuário poderá acessar.</p>

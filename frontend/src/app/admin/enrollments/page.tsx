@@ -7,6 +7,7 @@
 'use client'
 
 import AdminHeader from '@/components/admin/AdminHeader'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Card } from '@/components/ui/Card'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -84,7 +85,7 @@ export default function AdminEnrollmentsPage() {
               </Card>
             ) : (
               <Card className="p-6">
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -125,7 +126,7 @@ export default function AdminEnrollmentsPage() {
                       )}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               </Card>
             )}
           </div>

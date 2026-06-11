@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Loader2, Mail, AlertTriangle, AlertCircle, UserX, Send, ChevronDown } from 'lucide-react'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
@@ -351,7 +352,7 @@ export default function FinanceiroNotificacoesPage() {
             {alunosMaisDe20Dias.length > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
                 <h2 className="font-semibold text-amber-900 p-4 pb-2">Alunos com mais de 20 dias de atraso</h2>
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full text-sm">
                     <thead className="bg-amber-100/80 border-b border-amber-200">
                       <tr>
@@ -379,7 +380,7 @@ export default function FinanceiroNotificacoesPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               </div>
             )}
 
@@ -469,7 +470,7 @@ export default function FinanceiroNotificacoesPage() {
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
+              <TableScrollArea>
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
@@ -517,7 +518,7 @@ export default function FinanceiroNotificacoesPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             </div>
           </>
         )}

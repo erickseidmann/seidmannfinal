@@ -99,6 +99,8 @@ model User {
   /** Dia de pagamento (1–31) só para ADM sem vínculo; com vínculo usa-se Teacher.paymentDueDay */
   adminPaymentDueDay Int?    @map("admin_payment_due_day")
   adminPages   Json?        @map("admin_pages") // P├íginas do dashboard que pode acessar (array de strings)
+  /** Super admin pode marcar: este ADM pode aprovar alterações em aulas de dias anteriores */
+  canApproveLateLessonEdits Boolean @default(false) @map("can_approve_late_lesson_edits")
   /** Post-its do bloco de notas admin (por usuário): { notes: { id, text, hue }[] } */
   adminPostItsBoard Json?   @map("admin_post_its_board")
   mustChangePassword Boolean @default(false) @map("must_change_password") // Professor: obrigar a alterar senha no primeiro acesso
@@ -109,6 +111,10 @@ model User {
   enrollments        Enrollment[]
   /** Matrículas que este admin marcou como inativas */
   enrollmentsInactivated Enrollment[] @relation("EnrollmentInactivatedBy")
+  enrollmentsCreated Enrollment[] @relation("EnrollmentCreatedBy")
+  enrollmentsUpdated Enrollment[] @relation("EnrollmentUpdatedBy")
+  teachersCreated    Teacher[]    @relation("TeacherCreatedBy")
+  teachersUpdated    Teacher[]    @relation("TeacherUpdatedBy")
   attendances        Attendance[]
   bookReleases       BookRelease[]
   teacher            Teacher?
@@ -116,17 +122,23 @@ model User {
   teacherAlertsCreated TeacherAlert[]
   studentAlertsCreated StudentAlert[]
   adminNotifications AdminNotification[]
+  trainingsCreated   Training[]
   adminPaymentMonths AdminUserPaymentMonth[]
   conversationParticipants ConversationParticipant[]
   chatMessagesSent ChatMessage[]
   lessonsCreated Lesson[]
   lessonRequestsCreated LessonRequest[] @relation("LessonRequestsCreated")
   lessonRequestsProcessed LessonRequest[] @relation("LessonRequestsProcessed")
+  lessonRecordUnlocksProcessed LessonRecordUnlockRequest[] @relation("LessonRecordUnlocksProcessed")
   passwordResetTokens   PasswordResetToken[]
   availabilityLogsChanged TeacherAvailabilityLog[]
   adminDashboardTodosCreated   AdminDashboardTodo[] @relation("AdminDashboardTodoCreatedBy")
   adminDashboardTodosProgress  AdminDashboardTodo[] @relation("AdminDashboardTodoProgressBy")
   adminDashboardTodosCompleted AdminDashboardTodo[] @relation("AdminDashboardTodoCompletedBy")
+  teacherAbsenceReportsVerifying TeacherAbsenceReport[] @relation("TeacherAbsenceReportVerifyingBy")
+  teacherAbsenceReportsResolved  TeacherAbsenceReport[] @relation("TeacherAbsenceReportResolvedBy")
+  lessonPastEditRequestsCreated  LessonPastEditRequest[] @relation("LessonPastEditRequestedBy")
+  lessonPastEditRequestsProcessed LessonPastEditRequest[] @relation("LessonPastEditProcessedBy")
   /** Áudios de livro marcados como ouvidos (material do aluno) */
   bookAudioListens BookAudioListen[]
 
@@ -157,6 +169,7 @@ model AdminDashboardTodo {
   createdBy   User  @relation("AdminDashboardTodoCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
   progressBy  User? @relation("AdminDashboardTodoProgressBy", fields: [progressByUserId], references: [id], onDelete: SetNull)
   completedBy User? @relation("AdminDashboardTodoCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  teacherAbsenceReport TeacherAbsenceReport?
 
   @@index([dayKey])
   @@index([status, dayKey])
@@ -249,10 +262,24 @@ model AdminBankExtrato {
   fileUrl          String   @map("file_url") @db.VarChar(512)
   mimeType         String?  @map("mime_type") @db.VarChar(128)
   sizeBytes        Int?     @map("size_bytes")
+  contentHash      String?  @unique @map("content_hash") @db.VarChar(64)
   criadoEm         DateTime @default(now()) @map("created_at")
 
   @@index([year, month])
   @@map("admin_bank_extratos")
+}
+
+/** Justificativa quando entradas do extrato ≠ pagamentos de alunos no mês (Relatórios) */
+model AdminFinanceiroEntradaJustificativa {
+  id            String   @id @default(cuid())
+  year          Int
+  month         Int
+  justificativa String   @db.Text
+  criadoEm      DateTime @default(now()) @map("created_at")
+  atualizadoEm  DateTime @updatedAt @map("updated_at")
+
+  @@unique([year, month])
+  @@map("admin_financeiro_entrada_justificativas")
 }
 
 // Cupom de desconto: define valor por hora-aula e validade
@@ -405,12 +432,18 @@ model Enrollment {
   contractVersion    String?      @map("contract_version")
   dataInicio     DateTime?        @map("data_inicio") // Data de início (editável); aluno só aparece no financeiro a partir deste mês
   couponId       String?          @map("coupon_id") // Cupom usado na inscri├º├úo
+  createdById    String?          @map("created_by_id")
+  createdByName  String?          @db.VarChar(255) @map("created_by_name")
+  updatedById    String?          @map("updated_by_id")
+  updatedByName  String?          @db.VarChar(255) @map("updated_by_name")
   criadoEm       DateTime         @default(now()) @map("created_at")
   atualizadoEm   DateTime         @updatedAt @map("updated_at")
   
   // Relacionamentos
   user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   inactiveByUser User?            @relation("EnrollmentInactivatedBy", fields: [inactiveByUserId], references: [id], onDelete: SetNull)
+  createdBy      User?            @relation("EnrollmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy      User?            @relation("EnrollmentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   coupon         Coupon?          @relation(fields: [couponId], references: [id], onDelete: SetNull)
   paymentInfo    PaymentInfo?
   paymentMonths       EnrollmentPaymentMonth[]
@@ -427,6 +460,8 @@ model Enrollment {
   lessons             Lesson[]
   lessonRequests      LessonRequest[]
   lessonRecordPresences LessonRecordStudent[]
+  lessonAttendances     LessonAttendance[]
+  teacherAbsenceReports TeacherAbsenceReport[]
   adminRedirectHandled AdminRedirectHandled[]
   teacherAlerts      TeacherAlert[]
 
@@ -477,6 +512,7 @@ model EnrollmentPaymentMonth {
   month                Int       // 1-12
   paymentStatus        String?   @map("payment_status") // PAGO, ATRASADO, PENDING
   paidAt               DateTime? @map("paid_at")       // data do pagamento neste mês (independente por mês)
+  receiptUrl           String?   @db.Text @map("receipt_url") // comprovante manual (/uploads/...)
   notaFiscalEmitida    Boolean?  @map("nota_fiscal_emitida")
   criadoEm             DateTime  @default(now()) @map("created_at")
   atualizadoEm         DateTime  @updatedAt @map("updated_at")
@@ -602,6 +638,8 @@ model Teacher {
   infosPagamento  String?      @db.Text @map("infos_pagamento")
   nota            Int?         // Avalia├º├úo 1-5 estrelas
   status          UserStatus   @default(ACTIVE) // ACTIVE ou INACTIVE
+  /** Data de inativação (mês civil BRT). Pagamentos até este mês; listas operacionais excluem INACTIVE. */
+  inactiveAt      DateTime?    @map("inactive_at")
   userId          String?      @unique @map("user_id") // Opcional: link com User se tiver conta
   periodoPagamentoInicio  DateTime? @map("periodo_pagamento_inicio") // Data in├¡cio do per├¡odo de pagamento (por professor)
   periodoPagamentoTermino DateTime? @map("periodo_pagamento_termino") // Data t├®rmino do per├¡odo de pagamento (por professor)
@@ -612,16 +650,27 @@ model Teacher {
   valorExtra              Decimal?  @db.Decimal(10, 2) @map("valor_extra") // Valores extras do per├¡odo (opcional)
   idiomasFala             Json?     @map("idiomas_fala") // ["INGLES","ESPANHOL","PORTUGUES","ITALIANO","FRANCES"]
   idiomasEnsina           Json?     @map("idiomas_ensina") // idiomas que o professor ensina
+  /** Níveis CEFR que o professor pode ensinar: A1, A2, B1.1, … (alinhado aos livros Book 1–8) */
+  niveisEnsina            Json?     @map("niveis_ensina")
   linkSala                String?   @db.Text @map("link_sala") // Link opcional: Google Meet, Zoom ou Teams
+  createdById             String?   @map("created_by_id")
+  createdByName           String?   @db.VarChar(255) @map("created_by_name")
+  updatedById             String?   @map("updated_by_id")
+  updatedByName           String?   @db.VarChar(255) @map("updated_by_name")
   criadoEm        DateTime     @default(now()) @map("created_at")
   atualizadoEm    DateTime     @updatedAt @map("updated_at")
   
   // Relacionamentos
   user              User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdBy         User?                 @relation("TeacherCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy         User?                 @relation("TeacherUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   attendances       Attendance[]
+  lessonAttendances LessonAttendance[]
+  teacherAbsenceReports TeacherAbsenceReport[]
   alerts            TeacherAlert[]
   lessons           Lesson[]
   lessonRequests    LessonRequest[]
+  lessonRecordUnlockRequests LessonRecordUnlockRequest[]
   requestedLessonRequests LessonRequest[] @relation("RequestedTeacher")
   paymentMonths       TeacherPaymentMonth[]
   availabilitySlots   TeacherAvailabilitySlot[]
@@ -629,6 +678,7 @@ model Teacher {
   financeObservations FinanceObservation[]
   /** Funcionários ADM ligados a este cadastro de professor (pagamento de aulas) */
   adminUsersLinkedAsTeacher User[] @relation("AdminUserLinkedTeacher")
+  trainingCompletions     TrainingCompletion[]
 
   // ├ìndices
   @@index([email])
@@ -944,6 +994,10 @@ model Lesson {
   record            LessonRecord?
   createdBy         User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   requests           LessonRequest[]
+  recordUnlockRequests LessonRecordUnlockRequest[]
+  lessonAttendances  LessonAttendance[]
+  teacherAbsenceReports TeacherAbsenceReport[]
+  lessonPastEditRequests LessonPastEditRequest[]
 
   @@index([startAt])
   @@index([enrollmentId])
@@ -1061,6 +1115,36 @@ model LessonRequest {
   @@index([requiresTeacherApproval])
   @@index([teacherApproval])
   @@map("lesson_requests")
+}
+
+enum LessonRecordUnlockStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+// Solicitação do professor para registrar aula após o prazo de 3 dias
+model LessonRecordUnlockRequest {
+  id            String                   @id @default(cuid())
+  lessonId      String                   @map("lesson_id")
+  teacherId     String                   @map("teacher_id")
+  status        LessonRecordUnlockStatus @default(PENDING)
+  message       String?                  @db.Text
+  adminNotes    String?                  @db.Text @map("admin_notes")
+  processedById String?                  @map("processed_by_id")
+  processedAt   DateTime?                @map("processed_at")
+  criadoEm      DateTime                 @default(now()) @map("created_at")
+  atualizadoEm  DateTime                 @updatedAt @map("updated_at")
+
+  lesson        Lesson                   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  teacher       Teacher                  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  processedBy   User?                    @relation("LessonRecordUnlocksProcessed", fields: [processedById], references: [id], onDelete: SetNull)
+
+  @@index([lessonId])
+  @@index([teacherId])
+  @@index([status])
+  @@index([criadoEm])
+  @@map("lesson_record_unlock_requests")
 }
 
 // Boletos PIX/boleto gerados na Cora
@@ -1238,4 +1322,169 @@ model KaraokeSong {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@map("karaoke_songs")
+}
+
+/** Treinamentos para professores (vídeo ou texto + quiz). */
+model Training {
+  id           String   @id @default(cuid())
+  title        String
+  description  String?  @db.Text
+  contentType  String   @map("content_type") // VIDEO | TEXT
+  youtubeId    String?  @map("youtube_id")
+  contentText  String?  @db.Text @map("content_text")
+  active       Boolean  @default(true)
+  publishedAt  DateTime @default(now()) @map("published_at")
+  createdById  String?  @map("created_by_id")
+  criadoEm     DateTime @default(now()) @map("created_at")
+  atualizadoEm DateTime @updatedAt @map("updated_at")
+
+  questions    TrainingQuestion[]
+  completions  TrainingCompletion[]
+  createdBy    User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@map("trainings")
+}
+
+model TrainingQuestion {
+  id         String   @id @default(cuid())
+  trainingId String   @map("training_id")
+  prompt     String   @db.Text
+  sortOrder  Int      @default(0) @map("sort_order")
+  criadoEm   DateTime @default(now()) @map("created_at")
+
+  training   Training @relation(fields: [trainingId], references: [id], onDelete: Cascade)
+  options    TrainingQuestionOption[]
+
+  @@index([trainingId])
+  @@map("training_questions")
+}
+
+model TrainingQuestionOption {
+  id         String   @id @default(cuid())
+  questionId String   @map("question_id")
+  text       String   @db.Text
+  isCorrect  Boolean  @default(false) @map("is_correct")
+  sortOrder  Int      @default(0) @map("sort_order")
+
+  question   TrainingQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@map("training_question_options")
+}
+
+model TrainingCompletion {
+  id           String   @id @default(cuid())
+  trainingId   String   @map("training_id")
+  teacherId    String   @map("teacher_id")
+  scorePercent Int      @map("score_percent")
+  passed       Boolean  @default(false)
+  answersJson  String   @db.Text @map("answers_json")
+  completedAt  DateTime @default(now()) @map("completed_at")
+
+  training     Training @relation(fields: [trainingId], references: [id], onDelete: Cascade)
+  teacher      Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([trainingId, teacherId])
+  @@index([teacherId])
+  @@map("training_completions")
+}
+
+model LessonAttendance {
+  id           String                 @id @default(cuid())
+  lessonId     String                 @map("lesson_id")
+  role         LessonAttendanceRole
+  teacherId    String?                @map("teacher_id")
+  enrollmentId String?                @map("enrollment_id")
+  joinedAt     DateTime               @map("joined_at")
+  lastSeen     DateTime               @map("last_seen")
+  leftAt       DateTime?              @map("left_at")
+  status       LessonAttendanceStatus @default(ACTIVE)
+  criadoEm     DateTime               @default(now()) @map("created_at")
+  atualizadoEm DateTime               @updatedAt @map("updated_at")
+
+  lesson     Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  teacher    Teacher?    @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  enrollment Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId])
+  @@index([teacherId])
+  @@index([enrollmentId])
+  @@index([status])
+  @@map("lesson_attendance")
+}
+
+enum LessonAttendanceRole {
+  TEACHER
+  STUDENT
+}
+
+enum LessonAttendanceStatus {
+  ACTIVE
+  ENDED
+}
+
+enum TeacherAbsenceReportType {
+  ABSENT
+  LATE
+}
+
+enum TeacherAbsenceReportStatus {
+  OPEN
+  VERIFYING
+  RESOLVED
+}
+
+model TeacherAbsenceReport {
+  id                String                     @id @default(cuid())
+  lessonId          String                     @map("lesson_id")
+  enrollmentId      String                     @map("enrollment_id")
+  teacherId         String                     @map("teacher_id")
+  reportType        TeacherAbsenceReportType   @map("report_type")
+  status            TeacherAbsenceReportStatus @default(OPEN)
+  todoId            String?                    @unique @map("todo_id")
+  verifyingByUserId String?                    @map("verifying_by_user_id")
+  resolvedByUserId  String?                    @map("resolved_by_user_id")
+  criadoEm          DateTime                   @default(now()) @map("created_at")
+  atualizadoEm      DateTime                   @updatedAt @map("updated_at")
+
+  lesson      Lesson              @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  enrollment  Enrollment          @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  teacher     Teacher             @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  todo        AdminDashboardTodo? @relation(fields: [todoId], references: [id], onDelete: SetNull)
+  verifyingBy User?               @relation("TeacherAbsenceReportVerifyingBy", fields: [verifyingByUserId], references: [id], onDelete: SetNull)
+  resolvedBy  User?               @relation("TeacherAbsenceReportResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([lessonId, enrollmentId, reportType])
+  @@index([status])
+  @@index([lessonId])
+  @@index([teacherId])
+  @@map("teacher_absence_reports")
+}
+
+enum LessonPastEditRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model LessonPastEditRequest {
+  id                String                      @id @default(cuid())
+  lessonId          String                      @map("lesson_id")
+  requestedByUserId String                      @map("requested_by_user_id")
+  status            LessonPastEditRequestStatus @default(PENDING)
+  payload           Json
+  processedByUserId String?                     @map("processed_by_user_id")
+  processedAt       DateTime?                   @map("processed_at")
+  rejectionNote     String?                     @db.VarChar(500) @map("rejection_note")
+  criadoEm          DateTime                    @default(now()) @map("created_at")
+  atualizadoEm      DateTime                    @updatedAt @map("updated_at")
+
+  lesson      Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  requestedBy User   @relation("LessonPastEditRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+  processedBy User?  @relation("LessonPastEditProcessedBy", fields: [processedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([lessonId])
+  @@index([status])
+  @@index([requestedByUserId])
+  @@map("lesson_past_edit_requests")
 }

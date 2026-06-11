@@ -20,6 +20,7 @@ import {
 } from '@/lib/enrollment-scheduling'
 import { LESSON_STATUSES_SCHEDULED, lessonStatusValidOriginForReposicao } from '@/lib/lesson-status'
 import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
+import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
 
 export async function GET(request: NextRequest) {
   try {
@@ -103,6 +104,7 @@ export async function GET(request: NextRequest) {
             status: true,
             pausedAt: true,
             activationDate: true,
+            inactiveAt: true,
             paymentInfo: { select: { valorHora: true } },
           },
         },
@@ -184,7 +186,7 @@ export async function POST(request: NextRequest) {
       }),
       prisma.teacher.findUnique({
         where: { id: teacherId },
-        select: { idiomasEnsina: true },
+        select: { idiomasEnsina: true, niveisEnsina: true, nome: true },
       }),
     ])
 
@@ -262,6 +264,11 @@ export async function POST(request: NextRequest) {
           { ok: false, message: 'Isso não pode ser feito porque o professor não ensina esse idioma.' },
           { status: 400 }
         )
+      }
+
+      const nivelCheck = await assertTeacherTeachesEnrollmentLevel(prisma, enrollmentId, teacher)
+      if (!nivelCheck.ok) {
+        return NextResponse.json({ ok: false, message: nivelCheck.message }, { status: 400 })
       }
     }
 

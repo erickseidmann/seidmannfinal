@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
             nomeGrupo: true,
             escolaMatricula: true,
             cancelamentoAntecedenciaHoras: true,
+            inactiveAt: true,
           } 
         },
         teacher: { select: { id: true, nome: true } },
@@ -89,8 +90,13 @@ export async function GET(request: NextRequest) {
       startAt: l.startAt.toISOString(),
       durationMinutes: l.durationMinutes ?? 60,
       notes: l.notes,
-      enrollment: l.enrollment,
+      createdByName: l.createdByName,
+      enrollment: {
+        ...l.enrollment,
+        inactiveAt: l.enrollment.inactiveAt?.toISOString() ?? null,
+      },
       teacher: l.teacher,
+      record: l.record ? { id: l.record.id } : null,
       requests: (l.requests || []).map((r: any) => ({
         id: r.id,
         type: r.type,

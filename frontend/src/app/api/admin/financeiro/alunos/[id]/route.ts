@@ -10,6 +10,28 @@ import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateStudentPaymentSchema } from '@/lib/finance'
 import { confirmEnrollmentPayment } from '@/lib/payments'
 
+async function saveEnrollmentMonthReceiptUrl(
+  enrollmentId: string,
+  year: number,
+  month: number,
+  receiptUrl: string
+): Promise<void> {
+  try {
+    await prisma.enrollmentPaymentMonth.update({
+      where: { enrollmentId_year_month: { enrollmentId, year, month } },
+      data: { receiptUrl },
+    })
+  } catch {
+    await prisma.$executeRaw(
+      Prisma.sql`
+        UPDATE enrollment_payment_months
+        SET receipt_url = ${receiptUrl}, updated_at = NOW()
+        WHERE enrollment_id = ${enrollmentId} AND year = ${year} AND month = ${month}
+      `
+    )
+  }
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -64,7 +86,13 @@ export async function PATCH(
       faturamentoDescricaoNfse,
       year: bodyYear,
       month: bodyMonth,
+      receiptUrl,
     } = data
+
+    const receiptUrlVal =
+      typeof receiptUrl === 'string' && receiptUrl.trim().startsWith('/uploads/')
+        ? receiptUrl.trim()
+        : null
 
     const year = bodyYear != null ? bodyYear : null
     const month = bodyMonth != null ? bodyMonth : null
@@ -93,6 +121,16 @@ export async function PATCH(
     const paymentData: Record<string, unknown> = {}
     if (quemPaga !== undefined) paymentData.quemPaga = typeof quemPaga === 'string' ? quemPaga.trim() || null : null
     const newPaymentStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING', 'REMOVIDO'].includes(paymentStatus) ? paymentStatus : null
+    if (paymentStatus === 'PAGO' && !receiptUrlVal) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            'Não é possível marcar como pago manualmente. Vincule o recebimento em Recebimentos a conciliar ou anexe o comprovante de pagamento.',
+        },
+        { status: 400 }
+      )
+    }
     if (!hasMonthContext && paymentStatus !== undefined) paymentData.paymentStatus = newPaymentStatus
     if (banco !== undefined) paymentData.banco = typeof banco === 'string' ? banco.trim() || null : null
     if (periodoPagamento !== undefined) paymentData.periodoPagamento = periodoPagamento != null && ['MENSAL', 'ANUAL', 'SEMESTRAL', 'TRIMESTRAL'].includes(periodoPagamento) ? periodoPagamento : null
@@ -132,6 +170,16 @@ export async function PATCH(
       })
       const newMonthStatus = paymentStatus != null && ['PAGO', 'ATRASADO', 'PENDING', 'REMOVIDO'].includes(paymentStatus) ? paymentStatus : null
       if (newMonthStatus === 'PAGO') {
+        if (!receiptUrlVal) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                'Não é possível marcar como pago manualmente. Vincule o recebimento em Recebimentos a conciliar ou anexe o comprovante de pagamento.',
+            },
+            { status: 400 }
+          )
+        }
         const paymentDate = dataUltimoPagamento ? new Date(dataUltimoPagamento) : new Date()
         await confirmEnrollmentPayment({
           enrollmentId,
@@ -143,6 +191,7 @@ export async function PATCH(
           performedBy: auth.session?.sub ?? null,
           cancelCoraIfOpen: true,
         })
+        await saveEnrollmentMonthReceiptUrl(enrollmentId, year, month, receiptUrlVal)
       } else {
         await prisma.enrollmentPaymentMonth.upsert({
           where: {
@@ -154,10 +203,12 @@ export async function PATCH(
             month,
             paymentStatus: newMonthStatus,
             paidAt: null,
+            receiptUrl: null,
           },
           update: {
             ...(paymentStatus !== undefined && { paymentStatus: newMonthStatus }),
             paidAt: null,
+            receiptUrl: null,
           },
         })
       }

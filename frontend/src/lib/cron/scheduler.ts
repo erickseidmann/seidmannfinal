@@ -9,7 +9,7 @@
  * - generate-invoices: 10h UTC (7h BRT) diariamente
  * - nfse-retry: 10h UTC diariamente
  * - payment-notifications: 12h UTC (9h BRT) diariamente
- * - nfse-status: a cada 5 minutos
+ * - nfse-status: a cada 30 minutos
  * - sync-cora-extrato: a cada 5 minutos
  * - sync-santander-extrato: a cada 5 minutos
  */
@@ -24,6 +24,7 @@ import {
   runNfseScheduled,
   runSyncCoraExtrato,
   runSyncSantanderExtrato,
+  runPurgeLessonAttendance,
 } from './jobs'
 
 const log = (job: string, msg: string, data?: unknown) => {
@@ -34,6 +35,19 @@ export function initScheduler() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') {
     return
   }
+
+  // Presença em chamada — excluir após 60 dias (5h UTC ≈ 2h BRT)
+  cron.schedule('0 5 * * *', async () => {
+    try {
+      log('purge-lesson-attendance', 'Iniciando')
+      const result = await runPurgeLessonAttendance()
+      if (result.deletedSessions > 0) {
+        log('purge-lesson-attendance', 'Concluído', result)
+      }
+    } catch (err) {
+      console.error('[cron/purge-lesson-attendance] Erro:', err)
+    }
+  })
 
   // Mark overdue — 8h UTC diariamente
   cron.schedule('0 8 * * *', async () => {
@@ -72,8 +86,8 @@ export function initScheduler() {
     }
   })
 
-  // Atualizar status NFSe — a cada 5 minutos
-  cron.schedule('*/5 * * * *', async () => {
+  // Atualizar status NFSe — a cada 30 minutos
+  cron.schedule('*/30 * * * *', async () => {
     try {
       const result = await runNfseStatus()
       if (result.processadas > 0) {

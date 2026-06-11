@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { BookOpen, Loader2, X, AlertCircle } from 'lucide-react'
+import MaterialSubNav from '@/components/professor/MaterialSubNav'
 
 const PdfViewer = dynamic(() => import('@/components/aluno/PdfViewer'), {
   ssr: false,
@@ -84,6 +85,8 @@ export default function MaterialProfessorPage() {
           Livros do catálogo para consulta nas aulas. Apenas visualização online – impressão e download desabilitados.
         </p>
       </div>
+
+      <MaterialSubNav />
 
       {error && (
         <div className="flex items-center gap-2 p-4 rounded-lg bg-red-50 text-red-700">

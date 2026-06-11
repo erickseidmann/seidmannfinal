@@ -19,7 +19,7 @@ describe('teacherPaymentCompetenceKeyFromPeriodoTermino', () => {
 describe('teacherPaymentBoundsForCompetenceMonth', () => {
   it('due day 1: competência março → termino 2026-04-01Z', () => {
     const p = teacherPaymentBoundsForCompetenceMonth(2026, 3, 1)
-    expect(p.termino.toISOString()).toBe('2026-04-01T00:00:00.000Z')
+    expect(p.termino.toISOString()).toBe('2026-04-01T03:00:00.000Z')
     expect(teacherPaymentCompetenceKeyFromPeriodoTermino(p.termino)).toEqual({
       year: 2026,
       month: 3,

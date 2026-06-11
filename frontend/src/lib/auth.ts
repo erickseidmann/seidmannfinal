@@ -55,7 +55,7 @@ export function isSuperAdminEmail(email: string | undefined): boolean {
   return (email || '').toLowerCase() === SUPER_ADMIN_EMAIL
 }
 
-/** Sessão do professor (Dashboard Professores) – exige role TEACHER */
+/** Sessão do professor (Dashboard Professores) – exige role TEACHER, User e Teacher ACTIVE */
 export async function requireTeacher(request: NextRequest) {
   const session = await getSession(request)
 
@@ -71,6 +71,31 @@ export async function requireTeacher(request: NextRequest) {
     return {
       authorized: false,
       message: 'Acesso negado. Apenas professores podem acessar.',
+      session: null,
+    }
+  }
+
+  const { prisma } = await import('@/lib/prisma')
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { status: true },
+  })
+  if (!user || user.status !== 'ACTIVE') {
+    return {
+      authorized: false,
+      message: 'Conta inativa. Entre em contato com a administração.',
+      session: null,
+    }
+  }
+
+  const teacher = await prisma.teacher.findFirst({
+    where: { userId: session.userId },
+    select: { status: true },
+  })
+  if (teacher && teacher.status === 'INACTIVE') {
+    return {
+      authorized: false,
+      message: 'Conta inativa. Entre em contato com a administração.',
       session: null,
     }
   }

@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import { Loader2, Search, Download, HeartPulse, Lightbulb, ChevronDown, ChevronRight } from 'lucide-react'
 import {
@@ -62,9 +63,10 @@ function statusLabel(status: string | null): string {
 
 export default function FinanceiroRelatoriosPage() {
   const anoAtual = new Date().getFullYear()
+  const mesAtual = new Date().getMonth() + 1
   const [tipo, setTipo] = useState<ReportType>('geral')
   const [year, setYear] = useState(anoAtual)
-  const [month, setMonth] = useState<string>('')
+  const [month, setMonth] = useState<string>(String(mesAtual))
   const [data, setData] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -214,7 +216,14 @@ export default function FinanceiroRelatoriosPage() {
 
         {/* Resultados */}
         {!loading && !error && data && (
-          <ReportContent tipo={tipo} data={data} hasMonth={hasMonth} month={month ? Number(month) : 0} year={year} />
+          <ReportContent
+            tipo={tipo}
+            data={data}
+            hasMonth={hasMonth}
+            month={month ? Number(month) : 0}
+            year={year}
+            onRefresh={() => void fetchReport(false)}
+          />
         )}
 
         {!loading && !error && !data && (
@@ -233,14 +242,26 @@ function ReportContent({
   hasMonth,
   month,
   year,
+  onRefresh,
 }: {
   tipo: ReportType
   data: unknown
   hasMonth: boolean
   month: number
   year: number
+  onRefresh?: () => void
 }) {
-  if (tipo === 'geral') return <ReportGeral data={data as GeralData} hasMonth={hasMonth} month={month} year={year} />
+  if (tipo === 'geral') {
+    return (
+      <ReportGeral
+        data={data as GeralData}
+        hasMonth={hasMonth}
+        month={month}
+        year={year}
+        onRefresh={onRefresh}
+      />
+    )
+  }
   if (tipo === 'receitas') return <ReportReceitas data={data as ReceitasData} hasMonth={hasMonth} month={month} year={year} />
   if (tipo === 'despesas') return <ReportDespesas data={data as DespesasData} hasMonth={hasMonth} month={month} year={year} />
   if (tipo === 'inadimplencia') return <ReportInadimplencia data={data as InadimplenciaData} />
@@ -299,6 +320,16 @@ interface EntradaAlunoPagoLinhaRelatorio {
   month: number
 }
 
+interface EntradaConciliacaoRelatorio {
+  totalExtrato: number
+  totalAlunos: number
+  diferenca: number
+  requerJustificativa: boolean
+  justificativa: string | null
+  justificativaPreenchida: boolean
+  conciliado: boolean
+}
+
 interface GeralData {
   items?: GeralItem[]
   /** Preenchidos pela API quando há mês específico (Visão geral) */
@@ -311,9 +342,11 @@ interface GeralData {
   /** Soma das saídas (Débito / Saída) alinhada à tela Movimentações */
   totalSaidaRegis?: number
   movimentacoesSaidaLinhas?: MovimentacaoSaidaLinhaRelatorio[]
+  movimentacoesEntradaLinhas?: MovimentacaoSaidaLinhaRelatorio[]
   /** Total pago pelos alunos no período (mesma base do cubo Receita) */
   totalPagoAlunos?: number
   entradasAlunosPagosLinhas?: EntradaAlunoPagoLinhaRelatorio[]
+  entradaConciliacao?: EntradaConciliacaoRelatorio
   /** Visão anual: KPIs por mês + resumo */
   kpisPorMes?: KpisMesItem[]
   resumoAnual?: ResumoAnualPayload
@@ -499,6 +532,267 @@ function CuboSaudeEscola({ saude, descricaoIndicador }: { saude: EscolaSaudePayl
 const SCROLL_LIST_RELATORIO_7 =
   'max-h-[calc(7*3.25rem)] overflow-y-auto rounded-lg border border-gray-200/90 bg-white/80 [scrollbar-width:thin] [scrollbar-color:rgb(209_213_219)_rgb(243_244_246)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-gray-100'
 
+const MIN_JUSTIFICATIVA_ENTRADA = 15
+
+function ConciliacaoEntradasRelatorio({
+  year,
+  month,
+  conciliacao,
+  movimentacoesEntradaLinhas,
+  entradasAlunosPagosLinhas,
+  onSaved,
+}: {
+  year: number
+  month: number
+  conciliacao: EntradaConciliacaoRelatorio
+  movimentacoesEntradaLinhas: MovimentacaoSaidaLinhaRelatorio[]
+  entradasAlunosPagosLinhas: EntradaAlunoPagoLinhaRelatorio[]
+  onSaved?: () => void
+}) {
+  const [abrirExtrato, setAbrirExtrato] = useState(false)
+  const [abrirAlunos, setAbrirAlunos] = useState(false)
+  const [justificativa, setJustificativa] = useState(conciliacao.justificativa ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setJustificativa(conciliacao.justificativa ?? '')
+  }, [conciliacao.justificativa, year, month])
+
+  const labelMes = MESES_LABELS[month] ?? month
+  const diff = conciliacao.diferenca
+  const ok = conciliacao.conciliado
+
+  const handleSaveJustificativa = async () => {
+    if (justificativa.trim().length < MIN_JUSTIFICATIVA_ENTRADA) {
+      setSaveError(`A justificativa deve ter pelo menos ${MIN_JUSTIFICATIVA_ENTRADA} caracteres.`)
+      return
+    }
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const res = await fetch('/api/admin/financeiro/relatorios/entrada-justificativa', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, month, justificativa: justificativa.trim() }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setSaveError(json.message || 'Erro ao salvar justificativa.')
+        return
+      }
+      onSaved?.()
+    } catch {
+      setSaveError('Erro ao salvar justificativa.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className={`rounded-xl border-2 p-4 shadow-sm ${
+        ok ? 'border-emerald-300 bg-emerald-50/80' : 'border-amber-400 bg-amber-50/80'
+      }`}
+    >
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Conciliação de entradas — {labelMes}/{year}</p>
+          <p className="text-xs text-gray-600 mt-1">
+            O total de <strong>créditos no extrato</strong> deve bater com os <strong>pagamentos de alunos</strong> do mês
+            competência. Se houver diferença, registre a justificativa.
+          </p>
+        </div>
+        {ok ? (
+          <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+            Valores conferidos
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
+            Diferença pendente de justificativa
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-violet-200 bg-white p-3">
+          <p className="text-xs font-semibold text-violet-800 uppercase">Entradas no extrato</p>
+          <p className="text-xl font-bold text-violet-950 tabular-nums mt-1">{formatMoney(conciliacao.totalExtrato)}</p>
+          <p className="text-[11px] text-violet-900/80 mt-1">Créditos na Movimentação (extrato importado).</p>
+        </div>
+        <div className="rounded-lg border border-emerald-200 bg-white p-3">
+          <p className="text-xs font-semibold text-emerald-800 uppercase">Entradas de alunos</p>
+          <p className="text-xl font-bold text-emerald-950 tabular-nums mt-1">{formatMoney(conciliacao.totalAlunos)}</p>
+          <p className="text-[11px] text-emerald-900/80 mt-1">Mensalidades com status PAGO no mês competência.</p>
+        </div>
+        <div className={`rounded-lg border p-3 ${ok ? 'border-emerald-200 bg-white' : 'border-amber-300 bg-white'}`}>
+          <p className="text-xs font-semibold uppercase text-gray-700">Diferença</p>
+          <p className={`text-xl font-bold tabular-nums mt-1 ${ok ? 'text-emerald-900' : 'text-amber-900'}`}>
+            {formatMoney(diff)}
+          </p>
+          <p className="text-[11px] text-gray-600 mt-1">Extrato − alunos (deve ser R$ 0,00).</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          {movimentacoesEntradaLinhas.length > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setAbrirExtrato((v) => !v)}
+                className="flex w-full items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-xs font-medium text-violet-900 hover:bg-violet-50"
+              >
+                {abrirExtrato ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {abrirExtrato ? 'Ocultar extrato' : `Ver créditos do extrato (${movimentacoesEntradaLinhas.length})`}
+              </button>
+              {abrirExtrato ? (
+                <ul className={`mt-2 space-y-0 divide-y divide-violet-100 px-2 py-1 text-xs ${SCROLL_LIST_RELATORIO_7}`}>
+                  {movimentacoesEntradaLinhas.map((l) => (
+                    <li key={l.id} className="flex flex-col gap-0.5 py-2">
+                      <span className="font-medium text-gray-900">{l.identificacao}</span>
+                      <span className="text-gray-600">{[l.data, l.transacao].filter(Boolean).join(' · ') || l.name}</span>
+                      <span className="font-semibold text-violet-900 tabular-nums">{formatMoney(l.valor)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs text-gray-500 rounded-lg border border-gray-200 bg-white px-2 py-2">Nenhum crédito no extrato neste mês.</p>
+          )}
+        </div>
+        <div>
+          {entradasAlunosPagosLinhas.length > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setAbrirAlunos((v) => !v)}
+                className="flex w-full items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-xs font-medium text-emerald-900 hover:bg-emerald-50"
+              >
+                {abrirAlunos ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {abrirAlunos ? 'Ocultar alunos' : `Ver alunos pagos (${entradasAlunosPagosLinhas.length})`}
+              </button>
+              {abrirAlunos ? (
+                <ul className={`mt-2 space-y-0 divide-y divide-emerald-100 px-2 py-1 text-xs ${SCROLL_LIST_RELATORIO_7}`}>
+                  {entradasAlunosPagosLinhas.map((l, idx) => (
+                    <li key={`${l.aluno}-${idx}`} className="flex justify-between gap-2 py-2">
+                      <span className="font-medium text-gray-900">{l.aluno}</span>
+                      <span className="font-semibold text-emerald-900 tabular-nums">{formatMoney(l.valor)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-xs text-gray-500 rounded-lg border border-gray-200 bg-white px-2 py-2">
+              Nenhum pagamento de aluno com status PAGO neste mês.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {conciliacao.requerJustificativa ? (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 space-y-2">
+          <p className="text-sm font-medium text-amber-950">Justificativa da diferença *</p>
+          <p className="text-xs text-amber-900/90">
+            Ex.: pagamento de livro no extrato, mensalidade paga em outro mês, recebimento ainda não conciliado, etc.
+          </p>
+          <textarea
+            value={justificativa}
+            onChange={(e) => {
+              setJustificativa(e.target.value)
+              setSaveError(null)
+            }}
+            rows={3}
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            placeholder="Descreva por que os valores do extrato e dos alunos não coincidem..."
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="primary" size="sm" onClick={() => void handleSaveJustificativa()} disabled={saving}>
+              {saving ? 'Salvando…' : 'Salvar justificativa'}
+            </Button>
+            <span className="text-xs text-gray-500">
+              {justificativa.trim().length}/{MIN_JUSTIFICATIVA_ENTRADA} caracteres mínimos
+            </span>
+          </div>
+          {saveError ? <p className="text-xs text-red-600">{saveError}</p> : null}
+          {conciliacao.justificativaPreenchida && conciliacao.justificativa ? (
+            <p className="text-xs text-emerald-700">Justificativa registrada para este mês.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SaidasMovimentacaoRelatorio({
+  totalSaidaRegis,
+  movimentacoesSaidaLinhas,
+  hasMonth,
+}: {
+  totalSaidaRegis: number
+  movimentacoesSaidaLinhas: MovimentacaoSaidaLinhaRelatorio[]
+  hasMonth: boolean
+}) {
+  const [abrirSaidas, setAbrirSaidas] = useState(false)
+  const nSaidas = movimentacoesSaidaLinhas.length
+
+  return (
+    <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4 shadow-sm">
+      <p className="text-xs font-semibold text-rose-900 uppercase">Saídas registradas (movimentações)</p>
+      <p className="text-xl font-bold text-rose-950 mt-1 tabular-nums">{formatMoney(totalSaidaRegis)}</p>
+      <p className="text-xs font-normal text-rose-900/90 mt-2">
+        Soma das linhas em que o tipo de transação é <strong>Débito</strong> (ou Saída manual sem extrato), com a mesma
+        deduplicação da tela Movimentações.
+      </p>
+      {nSaidas > 0 ? (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setAbrirSaidas((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-rose-200 bg-white/90 px-3 py-2 text-left text-xs font-medium text-rose-900 shadow-sm hover:bg-white"
+          >
+            <span className="flex items-center gap-2">
+              {abrirSaidas ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+              {abrirSaidas ? 'Ocultar lançamentos' : `Ver lançamentos (${nSaidas})`}
+            </span>
+          </button>
+          {abrirSaidas ? (
+            <>
+              <ul className={`mt-2 space-y-0 divide-y divide-rose-100 px-2 py-1 text-xs text-rose-950 ${SCROLL_LIST_RELATORIO_7}`}>
+                {movimentacoesSaidaLinhas.map((l) => (
+                  <li key={l.id} className="flex flex-col gap-0.5 py-2 pr-1">
+                    <span className="font-medium text-gray-900 break-words">{l.identificacao}</span>
+                    <span className="text-gray-600 line-clamp-2">
+                      {[l.data, l.transacao].filter(Boolean).join(' · ') || l.name}
+                      {!hasMonth ? (
+                        <span className="text-rose-700/90">
+                          {' '}
+                          · {MESES_LABELS[l.month] ?? l.month}/{l.year}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="text-sm font-semibold text-rose-900 tabular-nums">{formatMoney(l.valor)}</span>
+                  </li>
+                ))}
+              </ul>
+              {!hasMonth ? (
+                <p className="mt-1 text-[10px] text-rose-800/75">Até 120 lançamentos do período filtrado, ordenados por data.</p>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-rose-800/80 rounded-lg border border-rose-100 bg-white/50 px-2 py-2">
+          Nenhuma saída registrada neste período.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function CubosSaidasMovimentacaoEEntradasAlunos({
   totalSaidaRegis,
   movimentacoesSaidaLinhas,
@@ -512,70 +806,21 @@ function CubosSaidasMovimentacaoEEntradasAlunos({
   entradasAlunosPagosLinhas: EntradaAlunoPagoLinhaRelatorio[]
   hasMonth: boolean
 }) {
-  const [abrirSaidas, setAbrirSaidas] = useState(false)
   const [abrirEntradas, setAbrirEntradas] = useState(false)
-
-  const nSaidas = movimentacoesSaidaLinhas.length
   const nEntradas = entradasAlunosPagosLinhas.length
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-rose-900 uppercase">Saídas registradas (movimentações)</p>
-        <p className="text-xl font-bold text-rose-950 mt-1 tabular-nums">{formatMoney(totalSaidaRegis)}</p>
-        <p className="text-xs font-normal text-rose-900/90 mt-2">
-          Soma das linhas em que o tipo de transação é <strong>Débito</strong> (ou Saída manual sem extrato), com a mesma
-          deduplicação da tela Movimentações.
-        </p>
-        {nSaidas > 0 ? (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => setAbrirSaidas((v) => !v)}
-              className="flex w-full items-center justify-between gap-2 rounded-lg border border-rose-200 bg-white/90 px-3 py-2 text-left text-xs font-medium text-rose-900 shadow-sm hover:bg-white"
-            >
-              <span className="flex items-center gap-2">
-                {abrirSaidas ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-                {abrirSaidas ? 'Ocultar lançamentos' : `Ver lançamentos (${nSaidas})`}
-              </span>
-            </button>
-            {abrirSaidas ? (
-              <>
-                <ul className={`mt-2 space-y-0 divide-y divide-rose-100 px-2 py-1 text-xs text-rose-950 ${SCROLL_LIST_RELATORIO_7}`}>
-                  {movimentacoesSaidaLinhas.map((l) => (
-                    <li key={l.id} className="flex flex-col gap-0.5 py-2 pr-1">
-                      <span className="font-medium text-gray-900 break-words">{l.identificacao}</span>
-                      <span className="text-gray-600 line-clamp-2">
-                        {[l.data, l.transacao].filter(Boolean).join(' · ') || l.name}
-                        {!hasMonth ? (
-                          <span className="text-rose-700/90">
-                            {' '}
-                            · {MESES_LABELS[l.month] ?? l.month}/{l.year}
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="text-sm font-semibold text-rose-900 tabular-nums">{formatMoney(l.valor)}</span>
-                    </li>
-                  ))}
-                </ul>
-                {!hasMonth ? (
-                  <p className="mt-1 text-[10px] text-rose-800/75">Até 120 lançamentos do período filtrado, ordenados por data.</p>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        ) : (
-          <p className="mt-3 text-xs text-rose-800/80 rounded-lg border border-rose-100 bg-white/50 px-2 py-2">
-            Nenhuma saída registrada neste período.
-          </p>
-        )}
-      </div>
+      <SaidasMovimentacaoRelatorio
+        totalSaidaRegis={totalSaidaRegis}
+        movimentacoesSaidaLinhas={movimentacoesSaidaLinhas}
+        hasMonth={hasMonth}
+      />
       <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
         <p className="text-xs font-semibold text-emerald-900 uppercase">Entradas (pagamentos de alunos)</p>
         <p className="text-xl font-bold text-emerald-950 mt-1 tabular-nums">{formatMoney(totalPagoAlunos)}</p>
         <p className="text-xs font-normal text-emerald-900/90 mt-2">
-          Total <strong>pago</strong> no mês competência (status PAGO nos pagamentos mensais dos alunos). Equivale ao valor
-          do cubo <strong>Receita</strong> quando o filtro é um mês.
+          Total <strong>pago</strong> no mês competência (status PAGO nos pagamentos mensais dos alunos).
         </p>
         {hasMonth && nEntradas > 0 ? (
           <div className="mt-3">
@@ -613,7 +858,19 @@ function CubosSaidasMovimentacaoEEntradasAlunos({
 }
 
 // --- Geral ---
-function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMonth: boolean; month: number; year: number }) {
+function ReportGeral({
+  data,
+  hasMonth,
+  month,
+  year,
+  onRefresh,
+}: {
+  data: GeralData
+  hasMonth: boolean
+  month: number
+  year: number
+  onRefresh?: () => void
+}) {
   const items = data?.items ?? []
   const receitaTotal = items.reduce((s, i) => s + (i.receita ?? 0), 0)
   const despesaTotal = items.reduce((s, i) => s + (i.totalDespesas ?? 0), 0)
@@ -639,7 +896,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
             <p className="text-xs font-semibold text-green-800 uppercase">Receita</p>
             <p className="text-xl font-bold text-green-900 mt-1">{formatMoney(i?.receita)}</p>
@@ -654,21 +911,22 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
               {formatMoney(i?.saldo)}
             </p>
           </div>
-          <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4">
-            <p className="text-xs font-semibold text-violet-800 uppercase">Total Entrada Regis</p>
-            <p className="text-xl font-bold text-violet-900 mt-1">{formatMoney(md.totalEntradaRegis ?? 0)}</p>
-            <p className="text-xs font-normal text-violet-800/90 mt-2">
-              Soma apenas das linhas em que o tipo de transação é <strong>Crédito</strong> (como na tabela de
-              Movimentações). Lançamentos manuais sem extrato seguem o tipo Entrada/Saída.
-            </p>
-          </div>
         </div>
 
-        <CubosSaidasMovimentacaoEEntradasAlunos
+        {md.entradaConciliacao ? (
+          <ConciliacaoEntradasRelatorio
+            year={year}
+            month={month}
+            conciliacao={md.entradaConciliacao}
+            movimentacoesEntradaLinhas={md.movimentacoesEntradaLinhas ?? []}
+            entradasAlunosPagosLinhas={md.entradasAlunosPagosLinhas ?? []}
+            onSaved={onRefresh}
+          />
+        ) : null}
+
+        <SaidasMovimentacaoRelatorio
           totalSaidaRegis={data.totalSaidaRegis ?? 0}
           movimentacoesSaidaLinhas={data.movimentacoesSaidaLinhas ?? []}
-          totalPagoAlunos={data.totalPagoAlunos ?? 0}
-          entradasAlunosPagosLinhas={data.entradasAlunosPagosLinhas ?? []}
           hasMonth
         />
 
@@ -791,7 +1049,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
           />
         )}
 
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+        <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -839,7 +1097,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
               </tr>
             </tbody>
           </table>
-        </div>
+        </TableScrollArea>
       </div>
     )
   }
@@ -876,7 +1134,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
         hasMonth={hasMonth}
       />
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
@@ -912,7 +1170,7 @@ function ReportGeral({ data, hasMonth, month, year }: { data: GeralData; hasMont
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableScrollArea>
     </div>
   )
 }
@@ -946,7 +1204,7 @@ function ReportReceitas({ data, hasMonth, month, year }: { data: ReceitasData; h
             <p className="text-lg font-bold text-gray-900 mt-1">{formatMoney(totalGeral)}</p>
           </div>
         </div>
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+        <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="w-full min-w-[400px]">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -978,14 +1236,14 @@ function ReportReceitas({ data, hasMonth, month, year }: { data: ReceitasData; h
               </tfoot>
             )}
           </table>
-        </div>
+        </TableScrollArea>
       </div>
     )
   }
 
   const mesItems = items as ReceitasItemMes[]
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+    <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <table className="w-full min-w-[600px]">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
@@ -1012,7 +1270,7 @@ function ReportReceitas({ data, hasMonth, month, year }: { data: ReceitasData; h
           )}
         </tbody>
       </table>
-    </div>
+    </TableScrollArea>
   )
 }
 
@@ -1035,7 +1293,7 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
         <div className="grid gap-4">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <h3 className="px-4 py-3 bg-gray-50 font-semibold text-gray-800 border-b">Professores</h3>
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full min-w-[500px]">
                 <thead><tr className="border-b bg-gray-50"><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Professor</th><th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Horas</th><th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Valor/Hora</th><th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Valor a Pagar</th><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Status</th></tr></thead>
                 <tbody>
@@ -1045,11 +1303,11 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
                 </tbody>
                 {profs.length > 0 && <tfoot><tr className="border-t-2 bg-gray-50 font-semibold"><td className="px-4 py-2">Total</td><td colSpan={2}></td><td className="px-4 py-2 text-right">{formatMoney(totalP)}</td><td></td></tr></tfoot>}
               </table>
-            </div>
+            </TableScrollArea>
           </div>
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <h3 className="px-4 py-3 bg-gray-50 font-semibold text-gray-800 border-b">Admin / Funcionários</h3>
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full min-w-[400px]">
                 <thead><tr className="border-b bg-gray-50"><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Nome</th><th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Valor</th><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Status</th></tr></thead>
                 <tbody>
@@ -1059,11 +1317,11 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
                 </tbody>
                 {admin.length > 0 && <tfoot><tr className="border-t-2 bg-gray-50 font-semibold"><td className="px-4 py-2">Total</td><td className="px-4 py-2 text-right">{formatMoney(totalA)}</td><td></td></tr></tfoot>}
               </table>
-            </div>
+            </TableScrollArea>
           </div>
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <h3 className="px-4 py-3 bg-gray-50 font-semibold text-gray-800 border-b">Despesas avulsas</h3>
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full min-w-[400px]">
                 <thead><tr className="border-b bg-gray-50"><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Despesa</th><th className="px-4 py-2 text-right text-xs font-semibold text-gray-600">Valor</th><th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">Status</th></tr></thead>
                 <tbody>
@@ -1073,7 +1331,7 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
                 </tbody>
                 {expenses.length > 0 && <tfoot><tr className="border-t-2 bg-gray-50 font-semibold"><td className="px-4 py-2">Total</td><td className="px-4 py-2 text-right">{formatMoney(totalE)}</td><td></td></tr></tfoot>}
               </table>
-            </div>
+            </TableScrollArea>
           </div>
         </div>
       </div>
@@ -1082,7 +1340,7 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
 
   const items = data.items ?? []
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+    <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <table className="w-full min-w-[600px]">
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
@@ -1105,7 +1363,7 @@ function ReportDespesas({ data, hasMonth, month, year }: { data: DespesasData; h
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScrollArea>
   )
 }
 
@@ -1120,7 +1378,7 @@ function ReportInadimplencia({ data }: { data: InadimplenciaData }) {
         <p className="text-xs font-semibold text-red-800 uppercase">{items.length} alunos inadimplentes</p>
         <p className="text-2xl font-bold text-red-900 mt-1">Total em aberto: {formatMoney(totalEmAberto)}</p>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="w-full min-w-[600px]">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
@@ -1143,7 +1401,7 @@ function ReportInadimplencia({ data }: { data: InadimplenciaData }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScrollArea>
     </div>
   )
 }
@@ -1159,7 +1417,7 @@ function ReportProfessores({ data }: { data: ProfessoresData }) {
         <p className="text-xs font-semibold text-amber-800 uppercase">Total a pagar para todos os professores</p>
         <p className="text-2xl font-bold text-amber-900 mt-1">{formatMoney(totalGeral)}</p>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="w-full min-w-[600px]">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
@@ -1192,7 +1450,7 @@ function ReportProfessores({ data }: { data: ProfessoresData }) {
             </tfoot>
           )}
         </table>
-      </div>
+      </TableScrollArea>
     </div>
   )
 }

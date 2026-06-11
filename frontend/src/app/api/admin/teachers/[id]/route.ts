@@ -14,6 +14,10 @@ import {
   mapIdiomasToBookLanguages,
   releaseBooksToTeacherForLanguages,
 } from '@/lib/teacher-book-releases'
+import { applyTeacherStatusChange } from '@/lib/teacher-status-change'
+import type { UserStatus } from '@prisma/client'
+import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
+import { sanitizeTeacherNiveisEnsina, normalizeTeacherNiveisEnsina } from '@/lib/teacher-teaching-levels'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
 
@@ -52,7 +56,9 @@ export async function PATCH(
       valorExtra,
       idiomasFala,
       idiomasEnsina,
+      niveisEnsina,
       linkSala,
+      inactiveFrom,
     } = body
 
     // Verificar se o model existe no Prisma Client
@@ -112,7 +118,15 @@ export async function PATCH(
     if (nome) updateData.nome = nome.trim()
     if (email) updateData.email = email.trim().toLowerCase()
     if (whatsapp !== undefined) updateData.whatsapp = whatsapp?.trim() || null
-    if (status) updateData.status = status
+    const validStatuses = ['ACTIVE', 'INACTIVE', 'PENDING', 'BLOCKED'] as const
+    if (status && validStatuses.includes(status)) {
+      if (status !== existing.status) {
+        await applyTeacherStatusChange(id, status as UserStatus, {
+          inactiveFrom: typeof inactiveFrom === 'string' ? inactiveFrom : undefined,
+          userId: existing.userId,
+        })
+      }
+    }
     if (nomePreferido !== undefined) updateData.nomePreferido = nomePreferido?.trim() || null
     if (valorPorHora !== undefined) updateData.valorPorHora = valorPorHora != null && valorPorHora !== '' ? Number(valorPorHora) : null
     if (metodoPagamento !== undefined) updateData.metodoPagamento = metodoPagamento || null
@@ -135,11 +149,18 @@ export async function PATCH(
       const arr = Array.isArray(idiomasEnsina) ? idiomasEnsina : []
       updateData.idiomasEnsina = arr.filter((x: string) => IDIOMAS_VALIDOS.includes(String(x).toUpperCase()))
     }
+    if (niveisEnsina !== undefined) {
+      updateData.niveisEnsina = sanitizeTeacherNiveisEnsina(niveisEnsina)
+    }
     if (linkSala !== undefined) updateData.linkSala = typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null
 
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
     const teacher = await prisma.teacher.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        ...auditFieldsForUpdate(adminActor),
+      },
     })
 
     // Criar ou atualizar login (User) do professor: senha informada (obriga troca se for a padrão) ou padrão 123456
@@ -237,6 +258,7 @@ export async function PATCH(
           valorExtra: teacher.valorExtra != null ? Number(teacher.valorExtra) : null,
           idiomasFala: Array.isArray(teacher.idiomasFala) ? teacher.idiomasFala : (teacher.idiomasFala ? [teacher.idiomasFala] : []),
           idiomasEnsina: Array.isArray(teacher.idiomasEnsina) ? teacher.idiomasEnsina : (teacher.idiomasEnsina ? [teacher.idiomasEnsina] : []),
+          niveisEnsina: normalizeTeacherNiveisEnsina((teacher as { niveisEnsina?: unknown }).niveisEnsina),
           linkSala: teacher.linkSala ?? null,
           criadoEm: teacher.criadoEm.toISOString(),
           atualizadoEm: teacher.atualizadoEm.toISOString(),

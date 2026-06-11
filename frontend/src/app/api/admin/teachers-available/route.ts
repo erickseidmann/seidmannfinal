@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { getEnrollmentNivelLivro } from '@/lib/enrollment-nivel-livro'
+import { teacherCanTeachStudentLevel, normalizeTeacherNiveisEnsina } from '@/lib/teacher-teaching-levels'
 
 function mapIdiomaToCurso(idioma: string | null): string | null {
   if (!idioma) return null
@@ -66,6 +68,7 @@ export async function GET(request: NextRequest) {
     }
 
     const endMinutes = startMinutes + durationMinutes
+    const studentNivel = await getEnrollmentNivelLivro(prisma, enrollmentId)
 
     const teachers = await prisma.teacher.findMany({
       where: { status: 'ACTIVE' },
@@ -74,6 +77,7 @@ export async function GET(request: NextRequest) {
         nome: true,
         nomePreferido: true,
         idiomasEnsina: true,
+        niveisEnsina: true,
         availabilitySlots: {
           select: { dayOfWeek: true, startMinutes: true, endMinutes: true },
         },
@@ -103,8 +107,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const ensinaNivel = (t: { niveisEnsina: unknown }) =>
+      teacherCanTeachStudentLevel(normalizeTeacherNiveisEnsina(t.niveisEnsina), studentNivel)
+
     let teachersFiltered = teachers
       .filter(ensinaCurso)
+      .filter(ensinaNivel)
       .filter(disponivelNoHorario)
 
     const teacherIds = teachersFiltered.map((t) => t.id)

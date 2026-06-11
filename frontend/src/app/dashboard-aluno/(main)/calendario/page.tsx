@@ -19,6 +19,8 @@ import {
   getTimeInTZ,
   ymdInTZ,
 } from '@/lib/datetime'
+import { buildRescheduleLinks } from '@/lib/lesson-reschedule'
+import LessonCalendarBlock from '@/components/calendar/LessonCalendarBlock'
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = [
@@ -34,7 +36,16 @@ interface Lesson {
   startAt: string
   durationMinutes: number
   notes: string | null
-  enrollment: { id: string; nome: string; tipoAula: string | null; nomeGrupo: string | null; escolaMatricula?: string | null; cancelamentoAntecedenciaHoras?: number | null }
+  createdByName?: string | null
+  enrollment: {
+    id: string
+    nome: string
+    tipoAula: string | null
+    nomeGrupo: string | null
+    escolaMatricula?: string | null
+    cancelamentoAntecedenciaHoras?: number | null
+    inactiveAt?: string | null
+  }
   teacher: { id: string; nome: string }
   record?: { id: string } | null
   requests?: Array<{ id: string; type: string; status: string }>
@@ -101,22 +112,6 @@ const statusLabel: Record<string, string> = {
   REPOSICAO: 'Reposição',
 }
 
-const statusColor = (status: string, hasPendingRequest?: boolean, hasRecord?: boolean): string => {
-  if (hasPendingRequest) {
-    return 'bg-purple-100 text-purple-800 border-purple-200'
-  }
-  // Aula já registrada (tem registro de aula): laranjinha
-  if (status === 'CONFIRMED' && hasRecord) {
-    return 'bg-orange-100 text-orange-800 border-orange-200'
-  }
-  const colors: Record<string, string> = {
-    CONFIRMED: 'bg-green-100 text-green-800 border-green-200',
-    CANCELLED: 'bg-red-100 text-red-800 border-red-200',
-    REPOSICAO: 'bg-amber-100 text-amber-800 border-amber-200',
-  }
-  return colors[status] || colors.CONFIRMED
-}
-
 export default function CalendarioAlunoPage() {
   const router = useRouter()
   const [currentDate, setCurrentDate] = useState(() => new Date())
@@ -160,6 +155,11 @@ export default function CalendarioAlunoPage() {
     requestedTeacher: { nome: string } | null
   }>>([])
   const [requestsModalOpen, setRequestsModalOpen] = useState(false)
+
+  const { rescheduledAtByCancelledId, originalAtByReposicaoId } = useMemo(
+    () => buildRescheduleLinks(lessons),
+    [lessons]
+  )
 
   const periodStart = useMemo(() => getStartOfMonth(currentDate), [currentDate])
   const periodEnd = useMemo(() => {
@@ -565,15 +565,22 @@ export default function CalendarioAlunoPage() {
                   )}
                   <div className="mt-1 space-y-0.5">
                     {dayLessons.slice(0, 4).map((l) => (
-                      <button
+                      <LessonCalendarBlock
                         key={l.id}
-                        type="button"
+                        lesson={l}
+                        rescheduledAt={rescheduledAtByCancelledId.get(l.id)}
+                        originalLessonAt={originalAtByReposicaoId.get(l.id)}
+                        size="compact"
+                        hasPendingRequest={Boolean(l.requests?.length)}
+                        hasRecord={Boolean(l.record)}
                         onClick={() => setSelectedLesson(l)}
-                        className={`w-full text-left text-xs px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
-                        title={`Clique para ver detalhes – ${l.teacher.nome} ${formatTimeInTZ(l.startAt, 'pt-BR')}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}`}
-                      >
-                        {l.teacher.nome} {formatTimeInTZ(l.startAt, 'pt-BR')}
-                      </button>
+                        title={`Clique para ver detalhes – ${l.teacher.nome} ${formatTimeInTZ(l.startAt, 'pt-BR')}${l.requests?.length ? ' (Em processo de troca)' : ''}`}
+                        label={
+                          <>
+                            {l.teacher.nome} {formatTimeInTZ(l.startAt, 'pt-BR')}
+                          </>
+                        }
+                      />
                     ))}
                     {dayLessons.length > 4 && (
                       <span className="text-xs text-gray-400">+{dayLessons.length - 4}</span>

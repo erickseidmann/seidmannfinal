@@ -25,6 +25,18 @@ export function isValidInactiveReason(value: unknown): value is InactiveReasonVa
   return typeof value === 'string' && (INACTIVE_REASON_VALUES as readonly string[]).includes(value)
 }
 
+export function formatInactiveReasonLabel(
+  inactiveReason: string | null | undefined,
+  inactiveReasonOther: string | null | undefined
+): string | null {
+  const reasonKey = inactiveReason as InactiveReasonValue | null | undefined
+  if (!reasonKey || !INACTIVE_REASON_LABELS[reasonKey]) return null
+  if (reasonKey === 'OUTRO' && inactiveReasonOther?.trim()) {
+    return `Outro: ${inactiveReasonOther.trim()}`
+  }
+  return INACTIVE_REASON_LABELS[reasonKey]
+}
+
 /** Valida motivo obrigatório ao inativar; OUTRO exige texto (mín. 3 caracteres). */
 export function validateInactiveReasonPayload(
   inactiveReason: unknown,

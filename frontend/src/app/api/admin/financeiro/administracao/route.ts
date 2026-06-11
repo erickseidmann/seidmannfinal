@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin, isSuperAdminEmail } from '@/lib/auth'
+import { shouldAutoApproveAdminValor } from '@/lib/admin-user-payment-valor'
 
 const SUPER_ADMIN_EMAIL = 'admin@seidmann.com'
 
@@ -217,12 +218,38 @@ export async function GET(request: NextRequest) {
         list.sort((a, b) => (a.year !== b.year ? b.year - a.year : b.month - a.month))
       }
 
+      const autoApproveFixes: Promise<unknown>[] = []
+
       adminUsersWithPayment = adminUsers.map((u) => {
         const pm = byUser.get(u.id)
-        const valor = pm?.valor != null ? Number(pm.valor) : null
+        let valor = pm?.valor != null ? Number(pm.valor) : null
         const list = previousByUser.get(u.id)
         const valorRepetido =
           valor == null && list && list.length > 0 ? list[0].valor : null
+        let valorPendente = pm?.valorPendente != null ? Number(pm.valorPendente) : null
+        let valorPendenteRequestedAt = pm?.valorPendenteRequestedAt?.toISOString() ?? null
+
+        if (
+          pm &&
+          valorPendente != null &&
+          valorRepetido != null &&
+          shouldAutoApproveAdminValor(valorPendente, valorRepetido)
+        ) {
+          valor = valorRepetido
+          valorPendente = null
+          valorPendenteRequestedAt = null
+          autoApproveFixes.push(
+            prisma.adminUserPaymentMonth.update({
+              where: { userId_year_month: { userId: u.id, year, month } },
+              data: {
+                valor: valorRepetido,
+                valorPendente: null,
+                valorPendenteRequestedAt: null,
+              },
+            })
+          )
+        }
+
         return {
           id: u.id,
           nome: u.nome,
@@ -239,11 +266,15 @@ export async function GET(request: NextRequest) {
           paidAt: pm?.paidAt?.toISOString() ?? null,
           receiptUrl: pm?.receiptUrl ?? null,
           notificationSentAt: pm?.notificationSentAt?.toISOString() ?? null,
-          valorPendente: pm?.valorPendente != null ? Number(pm.valorPendente) : null,
-          valorPendenteRequestedAt: pm?.valorPendenteRequestedAt?.toISOString() ?? null,
+          valorPendente,
+          valorPendenteRequestedAt,
           valorRepetido,
         }
       })
+
+      if (autoApproveFixes.length > 0) {
+        await Promise.all(autoApproveFixes)
+      }
     }
 
     const temVinculoProfessor = adminUsersWithPayment.some((row) => row.linkedTeacherId != null)

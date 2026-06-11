@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { CalendarRange, Loader2, Award, Clock, CircleDollarSign } from 'lucide-react'
@@ -328,7 +329,7 @@ export default function ControleBolsistasPage() {
               </div>
             )}
           </div>
-          <div className="overflow-x-auto max-h-[min(70vh,720px)] overflow-y-auto">
+          <TableScrollArea scrollClassName="overflow-x-auto max-h-[min(70vh,720px)] overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                 <tr>
@@ -378,7 +379,7 @@ export default function ControleBolsistasPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </TableScrollArea>
         </section>
 
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}

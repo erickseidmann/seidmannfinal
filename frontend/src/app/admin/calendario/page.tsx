@@ -10,6 +10,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
@@ -19,6 +20,22 @@ import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
 import { formatTimeInTZ, getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
+import { DEFAULT_LESSON_REPEAT_WEEKS } from '@/lib/lesson-series'
+import {
+  isLessonOnPastCalendarDay,
+  LESSON_PAST_EDIT_DENIED_MESSAGE,
+  LESSON_PAST_EDIT_NEEDS_APPROVAL_MESSAGE,
+} from '@/lib/lesson-past-edit'
+import {
+  buildRescheduleLinks,
+  extractCancelledAtFromNotes,
+  formatOriginalLessonBadgeDate,
+  formatRescheduledBadgeDate,
+} from '@/lib/lesson-reschedule'
+import {
+  formatInactiveDateLabel,
+  isLessonInInactivationWarningWindow,
+} from '@/lib/enrollment-inactivation-warning'
 import {
   type LessonStatusUi,
   LESSON_STATUS_LABELS,
@@ -46,6 +63,7 @@ interface Lesson {
     status?: string
     pausedAt?: string | null
     activationDate?: string | null
+    inactiveAt?: string | null
   }
   teacher: { id: string; nome: string }
   requests?: Array<{ id: string; type: string; status: string }>
@@ -297,9 +315,13 @@ export default function AdminCalendarioPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const searchParamsKey = searchParams?.toString() ?? ''
+  const reagendarFromUrlHandled = useRef<string | null>(null)
   const [view, setView] = useState<ViewType>('month')
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [lessons, setLessons] = useState<Lesson[]>([])
+  const [reposicaoLookupLessons, setReposicaoLookupLessons] = useState<
+    Pick<Lesson, 'id' | 'enrollmentId' | 'status' | 'startAt' | 'notes'>[]
+  >([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [enrollments, setEnrollments] = useState<{
     id: string
@@ -349,6 +371,7 @@ export default function AdminCalendarioPage() {
   const [reposicaoProfessorSearch, setReposicaoProfessorSearch] = useState('')
   const [deleteLessonModalOpen, setDeleteLessonModalOpen] = useState(false)
   const [savingLesson, setSavingLesson] = useState(false)
+  const [cancellingLessonId, setCancellingLessonId] = useState<string | null>(null)
   const [deletingLesson, setDeletingLesson] = useState(false)
   const [enrollmentIdsWithFullWeek, setEnrollmentIdsWithFullWeek] = useState<string[]>([])
   const [weeklyLessonsByEnrollment, setWeeklyLessonsByEnrollment] = useState<
@@ -394,6 +417,20 @@ export default function AdminCalendarioPage() {
   const [pendingHolidaysApprovedByMe, setPendingHolidaysApprovedByMe] = useState<Set<string>>(new Set())
   const [holidayLoading, setHolidayLoading] = useState<string | null>(null)
   const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const [canDirectEditPastLessons, setCanDirectEditPastLessons] = useState(false)
+  const [canApprovePastLessonEdits, setCanApprovePastLessonEdits] = useState(false)
+  const [pendingPastEditLessonIds, setPendingPastEditLessonIds] = useState<Set<string>>(new Set())
+  const [pastEditApprovalRequest, setPastEditApprovalRequest] = useState<{
+    id: string
+    lessonId: string
+    studentName: string
+    teacherName: string
+    lessonStartAt: string
+    requestedByName: string
+    payload: Record<string, unknown>
+  } | null>(null)
+  const [pastEditActionLoading, setPastEditActionLoading] = useState(false)
   const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
   const [teacherFilterSearch, setTeacherFilterSearch] = useState('')
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null)
@@ -497,6 +534,68 @@ export default function AdminCalendarioPage() {
   } | null>(null)
 
   const weekStartForStats = useMemo(() => getMonday(currentDate), [currentDate])
+
+  const { rescheduledAtByCancelledId: rescheduledAtByCancelledLessonId, originalAtByReposicaoId } =
+    useMemo(
+      () => buildRescheduleLinks([...lessons, ...reposicaoLookupLessons]),
+      [lessons, reposicaoLookupLessons]
+    )
+
+  const canDirectEditLesson = useCallback(
+    (lesson: { startAt: string }) => {
+      if (!isLessonOnPastCalendarDay(lesson.startAt)) return true
+      return canDirectEditPastLessons
+    },
+    [canDirectEditPastLessons]
+  )
+
+  const needsPastEditRequest = useCallback(
+    (lesson: { startAt: string }) =>
+      isLessonOnPastCalendarDay(lesson.startAt) && !canDirectEditPastLessons,
+    [canDirectEditPastLessons]
+  )
+
+  const fetchPendingPastEditLessons = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/lesson-past-edit-requests?lessonIdsOnly=1', {
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.lessonIds)) {
+        setPendingPastEditLessonIds(new Set(json.data.lessonIds as string[]))
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const openPastEditApproval = useCallback(
+    async (lessonId: string) => {
+      setPastEditActionLoading(true)
+      try {
+        const res = await fetch('/api/admin/lesson-past-edit-requests?status=PENDING', {
+          credentials: 'include',
+        })
+        const json = await res.json()
+        if (!json.ok || !Array.isArray(json.data?.requests)) {
+          setToast({ message: 'Não foi possível carregar a solicitação', type: 'error' })
+          return
+        }
+        const req = json.data.requests.find((r: { lessonId: string }) => r.lessonId === lessonId)
+        if (!req) {
+          setToast({ message: 'Solicitação não encontrada ou já processada', type: 'error' })
+          await fetchPendingPastEditLessons()
+          return
+        }
+        setPastEditApprovalRequest(req)
+      } catch {
+        setToast({ message: 'Erro ao carregar solicitação', type: 'error' })
+      } finally {
+        setPastEditActionLoading(false)
+      }
+    },
+    [fetchPendingPastEditLessons]
+  )
 
   // Aplicar filtro de aluno vindo da URL (?aluno=ID) sempre que mudar
   useEffect(() => {
@@ -675,12 +774,34 @@ export default function AdminCalendarioPage() {
       const json = await res.json()
       if (json.ok) {
         const lessonsData = json.data.lessons || []
-        // Debug: verificar se createdByName está sendo retornado
         if (lessonsData.length > 0) {
           console.log('Primeira aula:', lessonsData[0])
           console.log('createdByName na primeira aula:', lessonsData[0]?.createdByName)
         }
         setLessons(lessonsData)
+
+        const lookupEnd = new Date(end)
+        lookupEnd.setDate(lookupEnd.getDate() + 62)
+        const lookupParams = new URLSearchParams({
+          start: start.toISOString(),
+          end: lookupEnd.toISOString(),
+        })
+        if (selectedTeacherId) lookupParams.set('teacherId', selectedTeacherId)
+        const lookupRes = await fetch(`/api/admin/lessons?${lookupParams}`, { credentials: 'include' })
+        if (lookupRes.ok) {
+          const lookupJson = await lookupRes.json()
+          const lookupAll = lookupJson.ok ? lookupJson.data?.lessons || [] : []
+          const visibleIds = new Set(lessonsData.map((l: Lesson) => l.id))
+          setReposicaoLookupLessons(
+            lookupAll.filter(
+              (l: Lesson) =>
+                !visibleIds.has(l.id) &&
+                (l.status === 'REPOSICAO' || isLessonCancelledFamily(l.status))
+            )
+          )
+        } else {
+          setReposicaoLookupLessons([])
+        }
       }
     } catch (e) {
       console.error(e)
@@ -702,11 +823,54 @@ export default function AdminCalendarioPage() {
     }
   }, [weekStartForStats])
 
-  const excluirAulaWrongFrequency = useCallback(
-    async (lessonId: string) => {
-      setExcluindoAulaId(lessonId)
+  const processPastEditApproval = useCallback(
+    async (action: 'APPROVE' | 'REJECT') => {
+      if (!pastEditApprovalRequest) return
+      setPastEditActionLoading(true)
       try {
-        const res = await fetch(`/api/admin/lessons/${lessonId}`, {
+        const res = await fetch(
+          `/api/admin/lesson-past-edit-requests/${pastEditApprovalRequest.id}`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action }),
+          }
+        )
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao processar solicitação', type: 'error' })
+          return
+        }
+        setPastEditApprovalRequest(null)
+        setToast({
+          message:
+            action === 'APPROVE'
+              ? 'Alteração aprovada e aplicada à aula'
+              : 'Solicitação rejeitada',
+          type: 'success',
+        })
+        await fetchPendingPastEditLessons()
+        fetchLessons()
+        fetchStats()
+      } catch {
+        setToast({ message: 'Erro ao processar solicitação', type: 'error' })
+      } finally {
+        setPastEditActionLoading(false)
+      }
+    },
+    [pastEditApprovalRequest, fetchPendingPastEditLessons, fetchLessons, fetchStats]
+  )
+
+  const excluirAulaWrongFrequency = useCallback(
+    async (lesson: { id: string; startAt: string }) => {
+      if (!canDirectEditLesson(lesson)) {
+        setToast({ message: LESSON_PAST_EDIT_DENIED_MESSAGE, type: 'error' })
+        return
+      }
+      setExcluindoAulaId(lesson.id)
+      try {
+        const res = await fetch(`/api/admin/lessons/${lesson.id}`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -725,7 +889,7 @@ export default function AdminCalendarioPage() {
         setExcluindoAulaId(null)
       }
     },
-    [fetchStats]
+    [fetchStats, canDirectEditLesson]
   )
 
   const fetchNovosMatriculadosCount = useCallback(async () => {
@@ -786,7 +950,7 @@ export default function AdminCalendarioPage() {
     try {
       const [enrRes, teaRes] = await Promise.all([
         fetch('/api/admin/enrollments?schedulingEligible=1', { credentials: 'include' }),
-        fetch('/api/admin/teachers', { credentials: 'include' }),
+        fetch('/api/admin/teachers?status=ACTIVE', { credentials: 'include' }),
       ])
       if (enrRes.ok) {
         const j = await enrRes.json()
@@ -1002,6 +1166,20 @@ export default function AdminCalendarioPage() {
   }, [selectedTeacherId])
 
   // Carregar aulas vistas do localStorage
+  useEffect(() => {
+    fetch('/api/admin/me', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && j.data) {
+          if (j.data.isSuperAdmin) setIsSuperAdmin(true)
+          setCanDirectEditPastLessons(!!j.data.canDirectEditPastLessons)
+          setCanApprovePastLessonEdits(!!j.data.canApprovePastLessonEdits)
+        }
+      })
+      .catch(() => {})
+    void fetchPendingPastEditLessons()
+  }, [fetchPendingPastEditLessons])
+
   useEffect(() => {
     const stored = localStorage.getItem('viewedRescheduledLessons')
     if (stored) {
@@ -1259,15 +1437,29 @@ export default function AdminCalendarioPage() {
     setLessonModalOpen(true)
   }
 
-  const openEditLesson = (lesson: Lesson) => {
+  const openEditLesson = (
+    lesson: Lesson,
+    options?: { status?: LessonStatusUi; agendarReposicao?: boolean }
+  ) => {
+    if (pendingPastEditLessonIds.has(lesson.id)) {
+      if (canApprovePastLessonEdits) {
+        void openPastEditApproval(lesson.id)
+        return
+      }
+      setToast({
+        message: 'Esta aula tem alteração pendente de aprovação.',
+        type: 'error',
+      })
+      return
+    }
     setEditingLesson(lesson)
-    setAgendarReposicao(false)
+    setAgendarReposicao(options?.agendarReposicao ?? false)
     setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: lesson.durationMinutes || 30 })
     const start = new Date(lesson.startAt)
     setLessonForm({
       enrollmentId: lesson.enrollmentId,
       teacherId: lesson.teacherId,
-      status: lesson.status,
+      status: options?.status ?? lesson.status,
       startAt: toDatetimeLocal(start),
       durationMinutes: lesson.durationMinutes,
       notes: lesson.notes || '',
@@ -1346,6 +1538,14 @@ export default function AdminCalendarioPage() {
     }
   }, [router])
 
+  // Abrir modal de reposição vindo do alerta de professor ausente (?reagendar=lessonId)
+  useEffect(() => {
+    const lessonId = searchParams?.get('reagendar')?.trim()
+    if (!lessonId || reagendarFromUrlHandled.current === lessonId) return
+    reagendarFromUrlHandled.current = lessonId
+    void abrirReagendamentoDaCancelada(lessonId)
+  }, [searchParamsKey, abrirReagendamentoDaCancelada])
+
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!lessonForm.enrollmentId || !lessonForm.teacherId) {
@@ -1411,19 +1611,64 @@ export default function AdminCalendarioPage() {
     setSavingLesson(true)
     try {
       if (editingLesson) {
-        // Detectar se houve mudança de horário ou professor em relação à aula original
         const teacherChanged = lessonForm.teacherId !== editingLesson.teacherId
         const startChanged = new Date(editingLesson.startAt).getTime() !== startAt.getTime()
+        const durationChanged =
+          (lessonForm.durationMinutes || 30) !== (editingLesson.durationMinutes || 30)
+        const statusChanged = lessonForm.status !== editingLesson.status
         let applyToFuture = false
 
-        if (teacherChanged || startChanged) {
+        if (teacherChanged || startChanged || durationChanged || statusChanged) {
           applyToFuture = await confirm({
-            title: 'Aplicar a aulas futuras?',
+            title: 'Alterar só esta semana?',
             message:
-              'Deseja aplicar esta alteração de professor/horário também para todas as aulas futuras deste aluno?',
-            confirmLabel: 'Sim, aplicar',
-            cancelLabel: 'Só esta aula',
+              'Esta aula faz parte de uma série semanal (mesmo dia e horário). Deseja aplicar a alteração apenas nesta semana ou em todas as aulas futuras desta série, a partir desta data?',
+            confirmLabel: 'Todas dali pra frente',
+            cancelLabel: 'Só esta semana',
           })
+        }
+
+        if (needsPastEditRequest(editingLesson)) {
+          const sendRequest = await confirm({
+            title: 'Enviar solicitação de aprovação?',
+            message: `${LESSON_PAST_EDIT_NEEDS_APPROVAL_MESSAGE} Deseja enviar esta solicitação para um administrador autorizado?`,
+            confirmLabel: 'Sim, enviar',
+            cancelLabel: 'Cancelar',
+          })
+          if (!sendRequest) return
+
+          const reqRes = await fetch('/api/admin/lesson-past-edit-requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              lessonId: editingLesson.id,
+              payload: {
+                enrollmentId: lessonForm.enrollmentId,
+                teacherId: lessonForm.teacherId,
+                status: lessonForm.status,
+                startAt: startAt.toISOString(),
+                durationMinutes: lessonForm.durationMinutes,
+                notes: lessonForm.notes || null,
+                createdByName: lessonForm.createdByName?.trim() || null,
+                applyToFuture,
+              },
+            }),
+          })
+          const reqJson = await reqRes.json()
+          if (!reqRes.ok || !reqJson.ok) {
+            setToast({ message: reqJson.message || 'Erro ao enviar solicitação', type: 'error' })
+            return
+          }
+          setLessonModalOpen(false)
+          setEditingLesson(null)
+          setAgendarReposicao(false)
+          await fetchPendingPastEditLessons()
+          setToast({
+            message: 'Solicitação enviada. A aula ficará piscando até um administrador autorizado aprovar.',
+            type: 'success',
+          })
+          return
         }
 
         const res = await fetch(`/api/admin/lessons/${editingLesson.id}`, {
@@ -1533,37 +1778,6 @@ export default function AdminCalendarioPage() {
           }, 500)
         }
       } else {
-        const repeatWeeks = lessonForm.repeatEnabled ? Math.min(52, Math.max(1, lessonForm.repeatWeeks)) : 1
-        const repeatFrequencyWeeks = lessonForm.repeatFrequencyEnabled ? Math.min(52, Math.max(1, lessonForm.repeatFrequencyWeeks)) : 0
-        
-        // Validar repetição na mesma semana
-        if (lessonForm.repeatSameWeek && !lessonForm.repeatSameWeekStartAt?.trim()) {
-          setToast({ message: 'Preencha a data e hora para repetir na mesma semana', type: 'error' })
-          return
-        }
-        
-        let repeatSameWeekStartAt: string | null = null
-        if (lessonForm.repeatSameWeek && lessonForm.repeatSameWeekStartAt) {
-          const sameWeekDate = new Date(lessonForm.repeatSameWeekStartAt + ':00')
-          if (Number.isNaN(sameWeekDate.getTime())) {
-            setToast({ message: 'Data/hora da repetição na mesma semana inválida', type: 'error' })
-            return
-          }
-          // Verificar se está na mesma semana da aula inicial
-          const weekStart = new Date(startAt)
-          weekStart.setDate(weekStart.getDate() - weekStart.getDay()) // Domingo da semana
-          weekStart.setHours(0, 0, 0, 0)
-          const weekEnd = new Date(weekStart)
-          weekEnd.setDate(weekEnd.getDate() + 6) // Sábado da semana
-          weekEnd.setHours(23, 59, 59, 999)
-          
-          if (sameWeekDate < weekStart || sameWeekDate > weekEnd) {
-            setToast({ message: 'A repetição na mesma semana deve estar na mesma semana da aula inicial', type: 'error' })
-            return
-          }
-          repeatSameWeekStartAt = sameWeekDate.toISOString()
-        }
-        
         const res = await fetch('/api/admin/lessons', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1575,11 +1789,7 @@ export default function AdminCalendarioPage() {
             startAt: startAt.toISOString(),
             durationMinutes: lessonForm.durationMinutes,
             notes: lessonForm.notes || null,
-            repeatWeeks,
-            repeatSameWeek: lessonForm.repeatSameWeek,
-            repeatSameWeekStartAt,
-            repeatFrequencyEnabled: lessonForm.repeatFrequencyEnabled,
-            repeatFrequencyWeeks: repeatFrequencyWeeks,
+            repeatWeeks: DEFAULT_LESSON_REPEAT_WEEKS,
           }),
         })
         const json = await res.json()
@@ -1601,6 +1811,112 @@ export default function AdminCalendarioPage() {
     } finally {
       setSavingLesson(false)
     }
+  }
+
+  const cancelConfirmedLesson = useCallback(
+    async (lesson: Lesson, fromModal: boolean) => {
+      if (!canDirectEditLesson(lesson)) {
+        setToast({ message: LESSON_PAST_EDIT_DENIED_MESSAGE, type: 'error' })
+        return
+      }
+      if (lesson.status !== 'CONFIRMED') return
+
+      const doCancel = await confirm({
+        title: 'Cancelar aula',
+        message:
+          'Deseja cancelar esta aula confirmada? O status será alterado para "Cancelada" e o aluno pode receber notificação por e-mail.',
+        confirmLabel: 'Sim, cancelar',
+        cancelLabel: 'Não',
+        variant: 'danger',
+      })
+      if (!doCancel) return
+
+      const applyToFuture = await confirm({
+        title: 'Cancelar só esta semana?',
+        message:
+          'Esta aula faz parte de uma série semanal (mesmo dia e horário). Deseja cancelar apenas nesta semana ou em todas as aulas futuras desta série, a partir desta data?',
+        confirmLabel: 'Todas dali pra frente',
+        cancelLabel: 'Só esta semana',
+      })
+
+      const scheduleReposicao = await confirm({
+        title: 'Agendar reposição?',
+        message: 'Deseja agendar uma aula de reposição após o cancelamento?',
+        confirmLabel: 'Sim, agendar',
+        cancelLabel: 'Não',
+      })
+
+      if (scheduleReposicao) {
+        if (fromModal && editingLesson?.id === lesson.id) {
+          setLessonForm((f) => ({ ...f, status: 'CANCELLED' }))
+          setAgendarReposicao(true)
+        } else {
+          openEditLesson(lesson, { status: 'CANCELLED', agendarReposicao: true })
+        }
+        setReposicaoForm((f) => ({
+          ...f,
+          teacherId: f.teacherId || lesson.teacherId,
+          durationMinutes: lesson.durationMinutes,
+        }))
+        setToast({
+          message: 'Preencha a data e o professor da reposição e clique em Salvar.',
+          type: 'success',
+        })
+        return
+      }
+
+      const startAt = fromModal && editingLesson?.id === lesson.id && lessonForm.startAt
+        ? new Date(lessonForm.startAt + ':00')
+        : new Date(lesson.startAt)
+      if (Number.isNaN(startAt.getTime())) {
+        setToast({ message: 'Data/hora inválida', type: 'error' })
+        return
+      }
+
+      setCancellingLessonId(lesson.id)
+      try {
+        const res = await fetch(`/api/admin/lessons/${lesson.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            enrollmentId: lesson.enrollmentId,
+            teacherId: lesson.teacherId,
+            status: 'CANCELLED',
+            startAt: startAt.toISOString(),
+            durationMinutes: lesson.durationMinutes,
+            notes: lesson.notes || null,
+            ...(applyToFuture ? { applyToFuture: true } : {}),
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao cancelar aula', type: 'error' })
+          return
+        }
+        if (fromModal) {
+          setLessonModalOpen(false)
+          setLessonProfessorDropdownOpen(false)
+          setLessonAlunoDropdownOpen(false)
+          setLessonStatusDropdownOpen(false)
+          setAgendarReposicao(false)
+          setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: 30 })
+          setEditingLesson(null)
+        }
+        setToast({ message: 'Aula cancelada', type: 'success' })
+        fetchLessons()
+        fetchStats()
+      } catch {
+        setToast({ message: 'Erro ao cancelar aula', type: 'error' })
+      } finally {
+        setCancellingLessonId(null)
+      }
+    },
+    [canDirectEditLesson, confirm, editingLesson, lessonForm.startAt, fetchLessons, fetchStats]
+  )
+
+  const handleCancelLesson = () => {
+    if (editingLesson) void cancelConfirmedLesson(editingLesson, true)
   }
 
   const openDeleteLessonModal = () => {
@@ -1806,6 +2122,161 @@ export default function AdminCalendarioPage() {
       : isLessonCancelledFamily(s)
         ? 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
         : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+  }
+
+  type LessonBlockSize = 'month' | 'week' | 'day'
+
+  const renderLessonCalendarBlock = (l: Lesson, size: LessonBlockSize) => {
+    const isCancelled = isLessonCancelledFamily(l.status)
+    const isReposicao = l.status === 'REPOSICAO'
+    const rescheduledAt = isCancelled ? rescheduledAtByCancelledLessonId.get(l.id) : undefined
+    const isCancelledWithReposicao = Boolean(rescheduledAt)
+    const cancelledAt = isCancelled && !isCancelledWithReposicao ? extractCancelledAtFromNotes(l.notes) : null
+    const originalLessonAt = isReposicao ? originalAtByReposicaoId.get(l.id) : undefined
+
+    const inactiveAt = l.enrollment.inactiveAt ?? null
+    const inactivationWarning =
+      Boolean(inactiveAt) && isLessonInInactivationWarningWindow(l.startAt, inactiveAt)
+    const inactiveDateLabel = inactiveAt ? formatInactiveDateLabel(inactiveAt) : null
+
+    const showCancelledBadge = isCancelled
+    const showReposicaoBadge = isReposicao && Boolean(originalLessonAt)
+    const showInactiveBadge = inactivationWarning
+    const showBadge = showCancelledBadge || showReposicaoBadge || showInactiveBadge
+    const badgeHasSecondLine =
+      isCancelledWithReposicao ||
+      Boolean(cancelledAt) ||
+      showReposicaoBadge ||
+      showInactiveBadge
+
+    const canCancel = l.status === 'CONFIRMED' && canDirectEditLesson(l)
+    const isCancelling = cancellingLessonId === l.id
+    const hasPendingPastEdit = pendingPastEditLessonIds.has(l.id)
+
+    const cardColorClass = inactivationWarning
+      ? 'bg-violet-50 text-violet-900 border-violet-300 hover:bg-violet-100'
+      : statusColor(l.status, l)
+
+    const cfg =
+      size === 'month'
+        ? {
+            btn: 'block w-full text-left text-xs px-2 py-1 rounded-lg border shadow-sm break-words relative',
+            contentPad: showBadge ? (badgeHasSecondLine ? 'pt-7 pr-8 pb-3' : 'pt-4 pr-8 pb-3') : 'pr-8 pb-3',
+            curso: 'text-[9px]',
+            paused: 'text-[10px]',
+            admin: 'text-[9px]',
+            icon: 'w-3 h-3',
+            cancelBtn: 'top-0.5 right-0.5',
+            badge: 'text-[8px] py-0.5',
+          }
+        : size === 'week'
+          ? {
+              btn: 'text-[10px] text-left px-1.5 py-1 rounded-lg border shadow-sm break-words relative w-full',
+              contentPad: showBadge ? (badgeHasSecondLine ? 'pt-7 pr-8 pb-3' : 'pt-4 pr-8 pb-3') : 'pr-8 pb-3',
+              curso: 'text-[8px]',
+              paused: 'text-[9px]',
+              admin: 'text-[8px]',
+              icon: 'w-2.5 h-2.5',
+              cancelBtn: 'top-0 right-0',
+              badge: 'text-[7px] py-px',
+            }
+          : {
+              btn: 'text-sm text-left px-3 py-1.5 rounded-lg border shadow-sm w-fit max-w-full break-words relative',
+              contentPad: showBadge ? (badgeHasSecondLine ? 'pt-9 pr-12 pb-4' : 'pt-5 pr-12 pb-4') : 'pr-12 pb-4',
+              curso: 'text-[10px]',
+              paused: '',
+              admin: 'text-[10px]',
+              icon: 'w-3.5 h-3.5',
+              cancelBtn: 'top-1 right-1',
+              badge: 'text-[9px] py-0.5',
+            }
+
+    const titleExtra =
+      `${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`
+
+    return (
+      <div key={l.id} className="relative w-full">
+        {canCancel && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              void cancelConfirmedLesson(l, false)
+            }}
+            disabled={isCancelling || savingLesson}
+            className={`absolute ${cfg.cancelBtn} z-20 p-0.5 rounded text-rose-600 hover:bg-rose-100 disabled:opacity-50`}
+            title="Cancelar aula"
+          >
+            {isCancelling ? (
+              <Loader2 className={`${cfg.icon} animate-spin`} />
+            ) : (
+              <XCircle className={cfg.icon} />
+            )}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => openEditLesson(l)}
+          className={`${cfg.btn} ${cardColorClass} ${hasPendingPastEdit ? 'animate-blink-alert ring-2 ring-amber-400' : ''} ${size === 'month' ? 'hover:shadow transition-shadow' : 'hover:shadow'}`}
+          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${titleExtra}${hasPendingPastEdit ? ' (Alteração pendente de aprovação)' : ''}${inactivationWarning && inactiveDateLabel ? ` (Aluno inativado em ${inactiveDateLabel})` : ''}`}
+        >
+          {showBadge && (
+            showCancelledBadge ? (
+              isCancelledWithReposicao && rescheduledAt ? (
+                <span
+                  className={`absolute inset-x-0 top-0 z-10 text-center ${cfg.badge} font-bold uppercase tracking-wider bg-amber-600 text-white rounded-t-md leading-tight px-0.5`}
+                >
+                  <span className="block">Reagendada</span>
+                  <span className="block font-medium normal-case tracking-normal">
+                    para {formatRescheduledBadgeDate(rescheduledAt)}
+                  </span>
+                </span>
+              ) : (
+                <span
+                  className={`absolute inset-x-0 top-0 z-10 text-center ${cfg.badge} font-bold uppercase tracking-wider bg-rose-600 text-white rounded-t-md leading-tight px-0.5`}
+                >
+                  <span className="block">Cancelado</span>
+                  {cancelledAt && (
+                    <span className="block font-medium normal-case tracking-normal">em {cancelledAt}</span>
+                  )}
+                </span>
+              )
+            ) : showReposicaoBadge && originalLessonAt ? (
+              <span
+                className={`absolute inset-x-0 top-0 z-10 text-center ${cfg.badge} font-bold uppercase tracking-wider bg-amber-600 text-white rounded-t-md leading-tight px-0.5`}
+              >
+                <span className="block normal-case font-semibold">Aula reagendada</span>
+                <span className="block font-medium normal-case tracking-normal">
+                  referente ao dia {formatOriginalLessonBadgeDate(originalLessonAt)}
+                </span>
+              </span>
+            ) : showInactiveBadge && inactiveDateLabel ? (
+              <span
+                className={`absolute inset-x-0 top-0 z-10 text-center ${cfg.badge} font-bold uppercase tracking-wider bg-violet-700 text-white rounded-t-md leading-tight px-0.5`}
+              >
+                <span className="block normal-case font-semibold">Aluno inativado</span>
+                <span className="block font-medium normal-case tracking-normal">
+                  no dia {inactiveDateLabel}
+                </span>
+              </span>
+            ) : null
+          )}
+          <div className={`line-clamp-2 ${cfg.contentPad}`}>
+            {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'}
+            {size === 'day' ? ` – ${statusLabel(l.status)} (${formatTime(l.startAt)})` : ` ${formatTime(l.startAt)}`}
+            {l.enrollment.curso && (
+              <span className={`ml-1 ${cfg.curso} font-semibold text-gray-600`}>
+                ({getCursoLabel(l.enrollment.curso)})
+              </span>
+            )}
+            {isPaused(l) && <span className={`ml-1 ${cfg.paused}`}>⏸️</span>}
+          </div>
+          <div className={`absolute bottom-0.5 right-1 ${cfg.admin} text-gray-500 opacity-60 leading-tight`}>
+            {getLastUpdateInfo(l.notes, l.createdByName)}
+          </div>
+        </button>
+      </div>
+    )
   }
 
   // Estado para horários
@@ -2066,6 +2537,13 @@ export default function AdminCalendarioPage() {
           </div>
         </div>
 
+        {canApprovePastLessonEdits && pendingPastEditLessonIds.size > 0 ? (
+          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <strong>{pendingPastEditLessonIds.size}</strong> aula(s) com alteração tardia pendente de
+            aprovação — clique na aula <strong>piscando</strong> no calendário para aprovar ou rejeitar.
+          </div>
+        ) : null}
+
         {/* Cubos: semana segunda a sábado + novos matriculados (estilo financeiro) */}
         <div className="mb-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <div
@@ -2267,26 +2745,7 @@ export default function AdminCalendarioPage() {
                         </div>
                       )}
                       <div className="mt-1.5 space-y-1">
-                        {dayLessons.slice(0, 3).map((l) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onClick={() => openEditLesson(l)}
-                            className={`block w-full text-left text-xs px-2 py-1 rounded-lg border shadow-sm hover:shadow transition-shadow break-words relative ${statusColor(l.status, l)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
-                          >
-                            <div className="line-clamp-2 pr-8 pb-3">
-                              {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'} {formatTime(l.startAt)}
-                              {l.enrollment.curso && (
-                                <span className="ml-1 text-[9px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
-                              )}
-                              {isPaused(l) && <span className="ml-1 text-[10px]">⏸️</span>}
-                            </div>
-                            <div className="absolute bottom-0.5 right-1 text-[9px] text-gray-500 opacity-60 leading-tight">
-                              {getLastUpdateInfo(l.notes, l.createdByName)}
-                            </div>
-                          </button>
-                        ))}
+                        {dayLessons.slice(0, 3).map((l) => renderLessonCalendarBlock(l, 'month'))}
                         {dayLessons.length > 3 && (
                           <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">+{dayLessons.length - 3}</span>
                         )}
@@ -2391,26 +2850,7 @@ export default function AdminCalendarioPage() {
                             )}
                           </>
                         )}
-                        {slotLessons.map((l) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onClick={() => openEditLesson(l)}
-                            className={`text-[10px] text-left px-1.5 py-1 rounded-lg border shadow-sm hover:shadow break-words relative ${statusColor(l.status, l)}`}
-                            title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${l.requests && l.requests.length > 0 ? ' (Em processo de troca)' : ''}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
-                          >
-                            <div className="line-clamp-2 pr-8 pb-3">
-                              {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'}
-                              {l.enrollment.curso && (
-                                <span className="ml-1 text-[8px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
-                              )}
-                              {isPaused(l) && <span className="ml-1 text-[9px]">⏸️</span>}
-                            </div>
-                            <div className="absolute bottom-0.5 right-1 text-[8px] text-gray-500 opacity-60 leading-tight">
-                              {getLastUpdateInfo(l.notes, l.createdByName)}
-                            </div>
-                          </button>
-                        ))}
+                        {slotLessons.map((l) => renderLessonCalendarBlock(l, 'week'))}
                       </div>
                     )
                   })}
@@ -2532,26 +2972,7 @@ export default function AdminCalendarioPage() {
                           )}
                         </>
                       )}
-                      {slotLessons.map((l) => (
-                        <button
-                          key={l.id}
-                          type="button"
-                          onClick={() => openEditLesson(l)}
-                          className={`text-sm text-left px-3 py-1.5 rounded-lg border shadow-sm hover:shadow w-fit max-w-full break-words relative ${statusColor(l.status, l)}`}
-                          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${isPaused(l) ? ' (Aluno Pausado)' : ''}`}
-                        >
-                          <div className="line-clamp-2 pr-12 pb-4">
-                            {getLessonStudentLabel(l, enrollments)} – {l.teacher?.nome ?? 'Sem professor'} – {statusLabel(l.status)} ({formatTime(l.startAt)})
-                            {l.enrollment.curso && (
-                              <span className="ml-1 text-[10px] font-semibold text-gray-600">({getCursoLabel(l.enrollment.curso)})</span>
-                            )}
-                            {isPaused(l) && <span className="ml-1">⏸️</span>}
-                          </div>
-                          <div className="absolute bottom-1 right-1 text-[10px] text-gray-500 opacity-60 leading-tight">
-                            {getLastUpdateInfo(l.notes, l.createdByName)}
-                          </div>
-                        </button>
-                      ))}
+                      {slotLessons.map((l) => renderLessonCalendarBlock(l, 'day'))}
                     </div>
                   </div>
                 )
@@ -2581,15 +3002,28 @@ export default function AdminCalendarioPage() {
           footer={
             <>
               {editingLesson && (
-                <Button
-                  variant="outline"
-                  onClick={openDeleteLessonModal}
-                  className="mr-auto text-red-600 border-red-200 hover:bg-red-50"
-                  disabled={savingLesson}
-                >
-                  <Trash2 className="w-4 h-4 mr-1" />
-                  Excluir aula
-                </Button>
+                <div className="mr-auto flex flex-wrap items-center gap-2">
+                  {editingLesson.status === 'CONFIRMED' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => void handleCancelLesson()}
+                      className="text-red-600 border-red-200 hover:bg-red-50"
+                      disabled={savingLesson || deletingLesson}
+                    >
+                      <XCircle className="w-4 h-4 mr-1" />
+                      Cancelar aula
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    onClick={openDeleteLessonModal}
+                    className="text-red-600 border-red-200 hover:bg-red-50"
+                    disabled={savingLesson || deletingLesson}
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Excluir aula
+                  </Button>
+                </div>
               )}
               <Button
                 variant="outline"
@@ -2622,6 +3056,12 @@ export default function AdminCalendarioPage() {
             </>
           }
         >
+          {editingLesson && needsPastEditRequest(editingLesson) ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Esta aula é de um dia anterior. Ao salvar, será enviada uma{' '}
+              <strong>solicitação de aprovação</strong> para um administrador autorizado.
+            </div>
+          ) : null}
           <form onSubmit={handleSaveLesson} className="space-y-4">
             {/* Aluno – combobox (digitar + lista) */}
             <div>
@@ -3121,86 +3561,10 @@ export default function AdminCalendarioPage() {
               </div>
             )}
             {!editingLesson && (
-              <div className="space-y-4 pt-2 border-t border-gray-200">
-                {/* Opção 1: Repetir nas próximas semanas (mesmo dia e hora) */}
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={lessonForm.repeatEnabled}
-                      onChange={(e) => setLessonForm({ ...lessonForm, repeatEnabled: e.target.checked })}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Repetir nas próximas semanas (mesmo dia e hora)</span>
-                  </label>
-                  {lessonForm.repeatEnabled && (
-                    <div className="pl-6">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Quantas semanas?</label>
-                      <select
-                        value={lessonForm.repeatWeeks}
-                        onChange={(e) => setLessonForm({ ...lessonForm, repeatWeeks: Number(e.target.value) })}
-                        className="input w-full max-w-[120px]"
-                      >
-                        <option value={4}>4 semanas</option>
-                        <option value={8}>8 semanas</option>
-                        <option value={12}>12 semanas</option>
-                        <option value={52}>52 semanas (1 ano)</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Opção 2: Repetir nesta semana */}
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={lessonForm.repeatSameWeek}
-                      onChange={(e) => setLessonForm({ ...lessonForm, repeatSameWeek: e.target.checked })}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Repetir nesta mesma semana</span>
-                  </label>
-                  {lessonForm.repeatSameWeek && (
-                    <div className="pl-6 space-y-2">
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Data e hora na mesma semana *</label>
-                        <input
-                          type="datetime-local"
-                          value={lessonForm.repeatSameWeekStartAt}
-                          onChange={(e) => setLessonForm({ ...lessonForm, repeatSameWeekStartAt: e.target.value })}
-                          className="input w-full"
-                          required
-                        />
-                      </div>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={lessonForm.repeatFrequencyEnabled}
-                          onChange={(e) => setLessonForm({ ...lessonForm, repeatFrequencyEnabled: e.target.checked })}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-sm font-medium text-gray-700">Repetir frequência em todas as semanas seguintes</span>
-                      </label>
-                      {lessonForm.repeatFrequencyEnabled && (
-                        <div className="pl-6">
-                          <label className="block text-sm font-semibold text-gray-700 mb-1">Quantas semanas?</label>
-                          <select
-                            value={lessonForm.repeatFrequencyWeeks}
-                            onChange={(e) => setLessonForm({ ...lessonForm, repeatFrequencyWeeks: Number(e.target.value) })}
-                            className="input w-full max-w-[120px]"
-                          >
-                            <option value={4}>4 semanas</option>
-                            <option value={8}>8 semanas</option>
-                            <option value={12}>12 semanas</option>
-                            <option value={52}>52 semanas (1 ano)</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <p className="pt-2 border-t border-gray-200 text-xs text-gray-500">
+                A aula será repetida automaticamente toda semana no mesmo dia e horário ({DEFAULT_LESSON_REPEAT_WEEKS}{' '}
+                semanas).
+              </p>
             )}
           </form>
         </Modal>
@@ -3236,7 +3600,7 @@ export default function AdminCalendarioPage() {
                     Excluindo...
                   </>
                 ) : (
-                  'Apenas esta aula'
+                  'Só esta semana'
                 )}
               </Button>
               <Button variant="primary" className="bg-red-600 hover:bg-red-700" onClick={() => handleDeleteLesson(true)} disabled={deletingLesson}>
@@ -3246,14 +3610,15 @@ export default function AdminCalendarioPage() {
                     Excluindo...
                   </>
                 ) : (
-                  'Esta e todas as aulas futuras (mesmo dia e hora)'
+                  'Todas dali pra frente'
                 )}
               </Button>
             </>
           }
         >
           <p className="text-sm text-gray-700">
-            Deseja excluir apenas esta aula ou esta aula e todas as futuras no mesmo dia da semana e horário? A exclusão em lote remove somente a partir do dia desta aula para frente; aulas anteriores não são excluídas.
+            Esta aula faz parte de uma série semanal. Deseja excluir só esta semana ou todas as ocorrências futuras no
+            mesmo dia e horário, a partir desta data?
           </p>
         </Modal>
 
@@ -3275,7 +3640,7 @@ export default function AdminCalendarioPage() {
               ) : novosMatriculadosList.length === 0 ? (
                 <p className="text-gray-500">Nenhum novo aluno matriculado pendente.</p>
               ) : (
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -3327,7 +3692,7 @@ export default function AdminCalendarioPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               )}
             </div>
           ) : listModal?.type === 'alunosParaRedirecionar' ? (
@@ -3340,7 +3705,7 @@ export default function AdminCalendarioPage() {
               ) : alunosParaRedirecionarList.length === 0 ? (
                 <p className="text-gray-500">Nenhum aluno para redirecionar.</p>
               ) : (
-                <div className="overflow-x-auto">
+                <TableScrollArea>
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -3380,7 +3745,7 @@ export default function AdminCalendarioPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </TableScrollArea>
               )}
             </div>
           ) : listModal && stats ? (
@@ -3480,10 +3845,14 @@ export default function AdminCalendarioPage() {
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() => excluirAulaWrongFrequency(lesson.id)}
-                                  disabled={excluindoAulaId === lesson.id}
+                                  onClick={() => excluirAulaWrongFrequency(lesson)}
+                                  disabled={excluindoAulaId === lesson.id || !canDirectEditLesson(lesson)}
                                   className="flex-shrink-0 p-1 rounded text-red-600 hover:bg-red-100 hover:text-red-800 disabled:opacity-50"
-                                  title="Excluir esta aula"
+                                  title={
+                                    canDirectEditLesson(lesson)
+                                      ? 'Excluir esta aula'
+                                      : 'Aulas de dias anteriores só podem ser excluídas pelo administrador principal'
+                                  }
                                 >
                                   <X className="w-4 h-4" />
                                 </button>
@@ -3786,6 +4155,51 @@ export default function AdminCalendarioPage() {
             }
           }}
         />
+
+        <Modal
+          isOpen={!!pastEditApprovalRequest}
+          onClose={() => setPastEditApprovalRequest(null)}
+          title="Aprovar alteração tardia de aula"
+          size="md"
+          footer={
+            <div className="flex flex-wrap gap-2 justify-end w-full">
+              <Button
+                variant="outline"
+                onClick={() => void processPastEditApproval('REJECT')}
+                disabled={pastEditActionLoading}
+                className="text-red-700 border-red-200"
+              >
+                Rejeitar
+              </Button>
+              <Button
+                onClick={() => void processPastEditApproval('APPROVE')}
+                disabled={pastEditActionLoading}
+              >
+                {pastEditActionLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                ) : null}
+                Aprovar alteração
+              </Button>
+            </div>
+          }
+        >
+          {pastEditApprovalRequest ? (
+            <div className="space-y-3 text-sm text-gray-700">
+              <p>
+                <strong>{pastEditApprovalRequest.requestedByName}</strong> solicitou alterar a aula
+                de <strong>{pastEditApprovalRequest.studentName}</strong> com{' '}
+                <strong>{pastEditApprovalRequest.teacherName}</strong>.
+              </p>
+              <p className="text-gray-600">
+                Horário original:{' '}
+                {new Date(pastEditApprovalRequest.lessonStartAt).toLocaleString('pt-BR')}
+              </p>
+              <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(pastEditApprovalRequest.payload, null, 2)}
+              </pre>
+            </div>
+          ) : null}
+        </Modal>
 
         {toast && (
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />

@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
@@ -261,7 +262,7 @@ export default function FinanceiroCobrancasPage() {
                 Limpar lista
               </button>
             </div>
-            <div className="mt-3 overflow-x-auto">
+            <TableScrollArea className="mt-3">
               <table className="w-full min-w-[480px] text-sm">
                 <thead>
                   <tr className="border-b border-red-200 text-xs uppercase text-red-800">
@@ -296,7 +297,7 @@ export default function FinanceiroCobrancasPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           </section>
         )}
 
@@ -427,7 +428,7 @@ export default function FinanceiroCobrancasPage() {
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
+              <TableScrollArea>
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
@@ -515,7 +516,7 @@ export default function FinanceiroCobrancasPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             </div>
           </>
         )}

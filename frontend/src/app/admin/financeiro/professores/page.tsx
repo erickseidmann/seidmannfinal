@@ -97,6 +97,21 @@ function isAtrasado(diaPagamento: number): boolean {
   return thisMonthDue.getTime() < hoje.getTime()
 }
 
+/** Horas agendadas no período que ainda não foram registradas pelo professor. */
+function horasSemRegistro(p: ProfessorFinanceiro): number {
+  const diff = (p.totalHorasEstimadas ?? 0) - (p.totalHorasRegistradas ?? 0)
+  return Math.round(Math.max(0, diff) * 100) / 100
+}
+
+/** Aulas agendadas mas nenhuma hora registrada — destaque na tabela. */
+function semNenhumRegistroComAulasAgendadas(p: ProfessorFinanceiro): boolean {
+  return (p.totalHorasEstimadas ?? 0) > 0 && (p.totalHorasRegistradas ?? 0) < 0.001
+}
+
+function temHorasSemRegistro(p: ProfessorFinanceiro): boolean {
+  return horasSemRegistro(p) > 0.001
+}
+
 function CellWithCopy({
   value,
   onCopy,
@@ -186,10 +201,10 @@ export default function FinanceiroProfessoresPage() {
     'valorPorHoras', 'totalRegistrosEsperados', 'valorPorPeriodo', 'valorExtra', 'valorAPagar',
     'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
   ] as const
-  // Por padrão ocultar: Registros esperados, Valor por período, Valores extras (podem ser exibidas em Colunas)
   const DEFAULT_VISIBLE_FINANCEIRO_PROF = [
     'select', 'nome', 'valorPorHora', 'diaPagamento', 'totalHorasEstimadas', 'totalHorasRegistradas',
-    'valorAPagar', 'pagamentoProntoParaFazer', 'metodoPagamento', 'infosPagamento', 'statusPagamento', 'acoes',
+    'valorPorPeriodo', 'valorExtra', 'valorAPagar', 'pagamentoProntoParaFazer', 'metodoPagamento',
+    'infosPagamento', 'statusPagamento', 'acoes',
   ]
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => [...DEFAULT_VISIBLE_FINANCEIRO_PROF])
 
@@ -268,6 +283,18 @@ export default function FinanceiroProfessoresPage() {
     () => professores.filter((p) => p.statusPagamento !== 'PAGO').length,
     [professores]
   )
+
+  const alertasRegistro = useMemo(() => {
+    const comPendencia = professores.filter(temHorasSemRegistro)
+    const horasPendentes = comPendencia.reduce((s, p) => s + horasSemRegistro(p), 0)
+    const semRegistro = professores.filter(semNenhumRegistroComAulasAgendadas)
+    return {
+      totalProfessores: comPendencia.length,
+      horasPendentes: Math.round(horasPendentes * 100) / 100,
+      semRegistroAlgum: semRegistro.length,
+      listaSemRegistro: semRegistro,
+    }
+  }, [professores])
 
   /** Próxima data de vencimento (data término) entre os em aberto, e valor estimado nessa data */
   const { proximaDataPagamento, valorEstimadoProximoPagamento, listaProximaData } = useMemo(() => {
@@ -738,15 +765,39 @@ Equipe Seidmann Institute`
     {
       key: 'totalHorasEstimadas',
       label: 'Horas estimadas',
-      render: (row) => (
-        <CellWithCopy value={row.totalHorasEstimadas.toFixed(2)} onCopy={handleCopy} />
-      ),
+      render: (row) => {
+        const pendente = horasSemRegistro(row)
+        return (
+          <span className="inline-flex flex-col gap-0.5 min-w-[4.5rem]">
+            <CellWithCopy value={row.totalHorasEstimadas.toFixed(2)} onCopy={handleCopy} />
+            {pendente > 0 ? (
+              <span
+                className="text-[10px] font-medium text-amber-700 leading-tight"
+                title="Aulas agendadas no período sem registro do professor"
+              >
+                {pendente.toFixed(2)} h sem registro
+              </span>
+            ) : null}
+          </span>
+        )
+      },
     },
     {
       key: 'totalHorasRegistradas',
       label: 'Horas registradas',
       render: (row) => (
-        <CellWithCopy value={row.totalHorasRegistradas.toFixed(2)} onCopy={handleCopy} />
+        <span className="inline-flex flex-col gap-0.5">
+          <CellWithCopy
+            value={row.totalHorasRegistradas.toFixed(2)}
+            onCopy={handleCopy}
+            className={
+              semNenhumRegistroComAulasAgendadas(row) ? 'text-amber-800 font-semibold' : ''
+            }
+          />
+          {semNenhumRegistroComAulasAgendadas(row) ? (
+            <span className="text-[10px] font-medium text-amber-700">Nenhum registro</span>
+          ) : null}
+        </span>
       ),
     },
     {
@@ -1108,9 +1159,13 @@ Equipe Seidmann Institute`
           <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo do mês</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
             <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
-              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Total a pagar (estimado)</p>
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                Estimado (só agendadas)
+              </p>
               <p className="mt-1 text-xl font-bold text-amber-900">{loading ? '—' : formatMoney(cubos.valorEstimado)}</p>
-              <p className="mt-1 text-xs text-amber-700">Valor/hora × horas estimadas</p>
+              <p className="mt-1 text-xs text-amber-700">
+                Referência: valor/hora × aulas no calendário. Não é o valor a pagar.
+              </p>
             </div>
             <button
               type="button"
@@ -1120,9 +1175,13 @@ Equipe Seidmann Institute`
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">Valor real de horas preenchidas</p>
+                  <p className="text-xs font-semibold text-sky-800 uppercase tracking-wide">
+                    A pagar (registradas + fixos)
+                  </p>
                   <p className="mt-1 text-xl font-bold text-sky-900">{loading ? '—' : formatMoney(cubos.valorRealTotal)}</p>
-                  <p className="mt-1 text-xs text-sky-700">Somatório: horas + período + extras</p>
+                  <p className="mt-1 text-xs text-sky-700">
+                    Soma real: horas registradas × valor/hora + período + extras
+                  </p>
                   {!valorRealBreakdownOpen ? (
                     <p className="mt-2 text-[10px] text-sky-600">Clique para ver o detalhamento</p>
                   ) : null}
@@ -1213,6 +1272,34 @@ Equipe Seidmann Institute`
               <p className="mt-1 text-xs text-blue-700">Venc. mais próximo em aberto • clique para ver lista</p>
             </button>
           </div>
+          {!loading && alertasRegistro.totalProfessores > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-wrap items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden />
+              <div className="min-w-0 flex-1 text-sm text-amber-900">
+                <p className="font-semibold">
+                  {alertasRegistro.totalProfessores} professor(es) com aulas agendadas sem registro completo
+                </p>
+                <p className="mt-1 text-amber-800">
+                  Faltam registrar aproximadamente{' '}
+                  <strong>{alertasRegistro.horasPendentes.toFixed(2)} h</strong> no período. O pagamento usa
+                  apenas <strong>horas registradas</strong> (+ valor por período e extras).
+                  {alertasRegistro.semRegistroAlgum > 0 ? (
+                    <>
+                      {' '}
+                      <strong>{alertasRegistro.semRegistroAlgum}</strong> com aulas no calendário e{' '}
+                      <strong>0 h registradas</strong> estão destacados na tabela.
+                    </>
+                  ) : null}
+                </p>
+                {alertasRegistro.listaSemRegistro.length > 0 && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Sem nenhum registro:{' '}
+                    {alertasRegistro.listaSemRegistro.map((p) => p.nome).join(', ')}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         {loading ? (
@@ -1379,7 +1466,18 @@ Equipe Seidmann Institute`
                   loading={false}
                   visibleColumnKeys={visibleColumnKeys}
                   onVisibleColumnsChange={setVisibleColumnKeys}
-                  getRowClassName={(row) => (row.hasFinanceObservations ? 'bg-red-50 border-l-4 border-l-red-500' : '')}
+                  getRowClassName={(row) => {
+                    if (row.hasFinanceObservations) {
+                      return 'bg-red-50 border-l-4 border-l-red-500'
+                    }
+                    if (semNenhumRegistroComAulasAgendadas(row)) {
+                      return 'bg-amber-50/80 border-l-4 border-l-amber-400'
+                    }
+                    if (temHorasSemRegistro(row)) {
+                      return 'bg-amber-50/40 border-l-4 border-l-amber-300'
+                    }
+                    return ''
+                  }}
                   scrollBodyHeightClass="h-[calc(7*6.25rem)] max-h-[calc(7*6.25rem)]"
                   emptyMessage={
                     filterAlerta === 'proximo'

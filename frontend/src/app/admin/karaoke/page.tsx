@@ -5,6 +5,7 @@ import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Loader2, Music, Pencil, Plus, Trash2 } from 'lucide-react'
 
 type KaraokeSongRow = {
@@ -142,7 +143,7 @@ export default function AdminKaraokeListPage() {
         ) : songs.length === 0 ? (
           <p className="text-slate-600">Nenhuma música cadastrada.</p>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-md">
+          <TableScrollArea className="rounded-2xl border border-slate-200 bg-white shadow-md">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-600">
@@ -211,7 +212,7 @@ export default function AdminKaraokeListPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScrollArea>
         )}
       </div>
       {toast && (

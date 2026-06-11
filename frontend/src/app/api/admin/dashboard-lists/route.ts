@@ -8,9 +8,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { EnrollmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { INACTIVE_REASON_LABELS } from '@/lib/inactive-reason'
+import { formatInactiveReasonLabel } from '@/lib/inactive-reason'
 import { findLessonsPendingRecord, PENDING_RECORD_LOOKBACK_DAYS } from '@/lib/lesson-pending-record'
 import { isLessonScheduledStatus, LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { computeBookAdvancesFromRecords } from '@/lib/enrollment-book-advances'
+import { teacherAbsenceReportTypeLabel } from '@/lib/teacher-absence-report'
+import {
+  TEACHER_ABSENCE_REPLACEMENT_RULE,
+  teacherAbsenceReportEntitlesReplacement,
+} from '@/lib/teacher-absence-policy'
+import { syncTeacherAttendanceAbsenceReports } from '@/lib/teacher-attendance-absence-alerts'
 
 const NOW = new Date()
 
@@ -320,13 +327,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         data: enrollments.map((e) => {
-          const reasonKey = e.inactiveReason as keyof typeof INACTIVE_REASON_LABELS | null
-          const motivoLabel =
-            reasonKey && INACTIVE_REASON_LABELS[reasonKey]
-              ? reasonKey === 'OUTRO' && e.inactiveReasonOther?.trim()
-                ? `Outro: ${e.inactiveReasonOther.trim()}`
-                : INACTIVE_REASON_LABELS[reasonKey]
-              : null
+          const motivoLabel = formatInactiveReasonLabel(e.inactiveReason, e.inactiveReasonOther)
           return {
             id: e.id,
             nome: e.nome,
@@ -1025,6 +1026,70 @@ export async function GET(request: NextRequest) {
       })
 
       return NextResponse.json({ ok: true, data: result })
+    }
+
+    if (type === 'bookAdvances') {
+      const records = await prisma.lessonRecord.findMany({
+        where: {
+          AND: [{ book: { not: null } }, { NOT: { book: '' } }],
+        },
+        select: {
+          id: true,
+          book: true,
+          lesson: {
+            select: {
+              startAt: true,
+              enrollmentId: true,
+              enrollment: { select: { nome: true } },
+              teacher: { select: { nome: true, nomePreferido: true } },
+            },
+          },
+        },
+        orderBy: { lesson: { startAt: 'asc' } },
+      })
+
+      const advances = computeBookAdvancesFromRecords(records)
+      return NextResponse.json({ ok: true, data: advances })
+    }
+
+    if (type === 'teacherAbsenceReports') {
+      await syncTeacherAttendanceAbsenceReports()
+      const reports = await prisma.teacherAbsenceReport.findMany({
+        where: { status: { in: ['OPEN', 'VERIFYING'] } },
+        orderBy: { criadoEm: 'desc' },
+        include: {
+          enrollment: { select: { nome: true } },
+          teacher: { select: { nome: true } },
+          verifyingBy: { select: { nome: true } },
+          resolvedBy: { select: { nome: true } },
+          lesson: { select: { startAt: true } },
+          todo: { select: { text: true } },
+        },
+      })
+
+      return NextResponse.json({
+        ok: true,
+        data: reports.map((r) => ({
+          id: r.id,
+          lessonId: r.lessonId,
+          nome: r.enrollment.nome,
+          studentName: r.enrollment.nome,
+          teacherName: r.teacher.nome,
+          reportType: r.reportType,
+          reportTypeLabel: teacherAbsenceReportTypeLabel(r.reportType),
+          entitlesReplacement: teacherAbsenceReportEntitlesReplacement(r.reportType),
+          status: r.status,
+          lessonStartAt: r.lesson.startAt.toISOString(),
+          verifyingByName: r.verifyingBy?.nome ?? null,
+          resolvedByName: r.resolvedBy?.nome ?? null,
+          message:
+            r.todo?.text ??
+            (r.reportType === 'LATE'
+              ? `${r.enrollment.nome} declarou atraso do professor ${r.teacher.nome}`
+              : `${r.enrollment.nome} declarou que o professor ${r.teacher.nome} estava ausente na aula`),
+          replacementRule: TEACHER_ABSENCE_REPLACEMENT_RULE,
+        })),
+      })
     }
 
     return NextResponse.json({ ok: false, message: 'Tipo de lista inválido' }, { status: 400 })

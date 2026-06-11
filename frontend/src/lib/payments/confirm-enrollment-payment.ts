@@ -39,6 +39,8 @@ export interface ConfirmEnrollmentPaymentParams {
   cancelCoraIfOpen?: boolean
   /** Não enviar NF/e-mail/acesso (ex.: reprocessamento). */
   skipSideEffects?: boolean
+  /** Comprovante manual anexado pelo financeiro. */
+  receiptUrl?: string | null
 }
 
 export interface ConfirmEnrollmentPaymentResult {
@@ -73,7 +75,13 @@ export async function applyEnrollmentPaymentConfirmation(
     performedBy,
     paidAmountCents,
     coraInvoiceExternalId,
+    receiptUrl,
   } = params
+
+  const receiptUrlVal =
+    typeof receiptUrl === 'string' && receiptUrl.trim().startsWith('/uploads/')
+      ? receiptUrl.trim()
+      : null
 
   const existingMonth = await tx.enrollmentPaymentMonth.findUnique({
     where: { enrollmentId_year_month: { enrollmentId, year, month } },
@@ -89,10 +97,12 @@ export async function applyEnrollmentPaymentConfirmation(
       month,
       paymentStatus: 'PAGO',
       paidAt,
+      receiptUrl: receiptUrlVal,
     },
     update: {
       paymentStatus: 'PAGO',
       paidAt,
+      ...(receiptUrlVal ? { receiptUrl: receiptUrlVal } : {}),
     },
   })
 

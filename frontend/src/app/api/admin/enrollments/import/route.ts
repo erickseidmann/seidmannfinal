@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { auditFieldsForCreate, resolveAdminActor } from '@/lib/record-audit'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -182,6 +183,7 @@ export async function POST(request: NextRequest) {
 
     const created: { id: string; nome: string; email: string }[] = []
     const errors: { row: number; message: string }[] = []
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
 
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r]
@@ -290,6 +292,7 @@ export async function POST(request: NextRequest) {
       try {
         const enrollment = await prisma.enrollment.create({
           data: {
+            ...auditFieldsForCreate(adminActor),
             nome,
             email: normalizedEmail,
             whatsapp,

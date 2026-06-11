@@ -69,6 +69,7 @@ export default function AdminAlertasPage() {
     total: number | null
     percent: number
   } | null>(null)
+  const [clearingAnnouncements, setClearingAnnouncements] = useState(false)
   const [clearingTeachers, setClearingTeachers] = useState(false)
   const [clearingStudents, setClearingStudents] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -135,6 +136,35 @@ export default function AdminAlertasPage() {
           } else setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
         } catch (err) {
           setToast({ message: 'Erro ao excluir alerta', type: 'error' })
+        }
+      },
+    })
+  }
+
+  const handleClearAnnouncements = () => {
+    setConfirmModal({
+      title: 'Limpar anúncios',
+      message: `Deseja excluir todos os ${announcements.length} anúncio(s) da lista? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Excluir todos',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        setClearingAnnouncements(true)
+        try {
+          const res = await fetch('/api/admin/announcements/clear', {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          const json = await res.json()
+          if (json.ok) {
+            setAnnouncements([])
+            setToast({ message: json.message || 'Anúncios excluídos', type: 'success' })
+          } else {
+            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
+          }
+        } catch (err) {
+          setToast({ message: 'Erro ao excluir anúncios', type: 'error' })
+        } finally {
+          setClearingAnnouncements(false)
         }
       },
     })
@@ -500,10 +530,26 @@ export default function AdminAlertasPage() {
               Anúncios e notificações ficam visíveis por <strong>30 dias</strong> após a criação. Após esse prazo somem das listas automaticamente.
             </p>
           </div>
-          <Button onClick={handleCreate} variant="primary" size="md" className="flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            Novo Anúncio
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="md"
+              onClick={handleClearAnnouncements}
+              disabled={announcements.length === 0 || clearingAnnouncements || !!sendProgress}
+              className="flex items-center gap-2"
+            >
+              {clearingAnnouncements ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Eraser className="w-4 h-4" />
+              )}
+              Limpar anúncios
+            </Button>
+            <Button onClick={handleCreate} variant="primary" size="md" className="flex items-center gap-2">
+              <Plus className="w-4 h-4" />
+              Novo Anúncio
+            </Button>
+          </div>
         </div>
 
         {error && (

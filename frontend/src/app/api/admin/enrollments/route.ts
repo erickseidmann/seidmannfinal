@@ -10,9 +10,14 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import type { InactiveReason } from '@prisma/client'
-import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
+import { formatInactiveReasonLabel, validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { ENROLLMENT_STATUSES_PRE_SCHEDULING } from '@/lib/enrollment-scheduling'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { auditFieldsForCreate, resolveAdminActor, resolveAuditNames } from '@/lib/record-audit'
+import {
+  cefrLevelFromBookName,
+  pickHighestBookName,
+} from '@/lib/student-book-level'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -32,6 +37,36 @@ function getSaturdayEnd(monday: Date): Date {
   sat.setHours(23, 59, 59, 999)
   return sat
 }
+
+/** Formato da coluna Tipo na UI: "Grupo/GRUPO 1105" → "GRUPO 1105" */
+function parseGroupSearchTerm(search: string): string | null {
+  const trimmed = search.trim()
+  const prefixed = trimmed.match(/^grupo\s*\/\s*(.+)$/i)
+  if (prefixed?.[1]?.trim()) return prefixed[1].trim()
+  return null
+}
+
+const enrollmentListInclude = {
+  user: {
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      whatsapp: true,
+    },
+  },
+  paymentInfo: true,
+  alerts: {
+    select: { id: true, message: true, level: true },
+    orderBy: { criadoEm: 'desc' as const },
+  },
+  _count: {
+    select: { alerts: true },
+  },
+  createdBy: { select: { nome: true } },
+  updatedBy: { select: { nome: true } },
+  inactiveByUser: { select: { nome: true } },
+} as const
 
 export async function GET(request: NextRequest) {
   try {
@@ -55,18 +90,20 @@ export async function GET(request: NextRequest) {
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
     const schedulingEligible = searchParams.get('schedulingEligible') === '1'
 
-    // Construir filtro de status
+    // Construir filtro de status (lista operacional exclui INACTIVE por padrão)
     const statusFilter: any = statusParam
       ? { status: statusParam }
       : schedulingEligible
-        ? { status: { notIn: ENROLLMENT_STATUSES_PRE_SCHEDULING } }
-        : {} // Se não especificado, busca todos
+        ? { status: { notIn: [...ENROLLMENT_STATUSES_PRE_SCHEDULING, 'INACTIVE'] } }
+        : { status: { not: 'INACTIVE' } }
 
     // Construir filtro de busca em todos os campos relevantes da matrícula.
     // Ao informar números (CPF, CNPJ, telefone, CEP), normalizamos removendo
     // caracteres não-dígitos para casar com o que está salvo (ex.: "12345678901").
     // MySQL não suporta mode: 'insensitive', mas `contains` é case-insensitive
     // por padrão para colunas com collation utf8mb4_*_ci.
+    const groupSearchTerm = searchParam ? parseGroupSearchTerm(searchParam) : null
+
     const searchFilter: any = (() => {
       if (!searchParam) return {}
       const onlyDigits = searchParam.replace(/\D/g, '')
@@ -112,14 +149,25 @@ export async function GET(request: NextRequest) {
           { cep: { contains: onlyDigits } },
         )
       }
+      if (groupSearchTerm && groupSearchTerm !== searchParam) {
+        ors.push(
+          { tipoAula: 'GRUPO', nomeGrupo: { contains: groupSearchTerm } },
+        )
+      }
       return { OR: ors }
     })()
 
-    // Combinar filtros
-    const whereClause: any = {
-      ...statusFilter,
-      ...searchFilter,
-    }
+    // Busca "Grupo/NOME" → somente integrantes desse grupo (evita falso positivo em outros campos)
+    const whereClause: any = groupSearchTerm
+      ? {
+          ...statusFilter,
+          tipoAula: 'GRUPO',
+          nomeGrupo: { contains: groupSearchTerm },
+        }
+      : {
+          ...statusFilter,
+          ...searchFilter,
+        }
 
     // Verificar e atualizar automaticamente alunos pausados cuja data de ativação chegou
     const hoje = new Date()
@@ -137,34 +185,74 @@ export async function GET(request: NextRequest) {
     })
 
     // Buscar enrollments
-    const enrollments = await prisma.enrollment.findMany({
+    let enrollments = await prisma.enrollment.findMany({
       where: whereClause,
       ...(limit ? { take: limit } : {}),
-      include: {
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            whatsapp: true,
-          },
-        },
-        paymentInfo: true,
-        alerts: {
-          select: { id: true, message: true, level: true },
-          orderBy: { criadoEm: 'desc' },
-        },
-        _count: {
-          select: { alerts: true },
-        },
-      },
+      include: enrollmentListInclude,
       orderBy: {
         criadoEm: 'desc',
       },
     })
 
+    // Incluir todos os integrantes quando a busca encontrou um grupo (ex.: por nomeGrupo parcial)
+    if (searchParam && !groupSearchTerm) {
+      const groupNames = [
+        ...new Set(
+          enrollments
+            .map((e) => {
+              const tipo = ((e as { tipoAula?: string | null }).tipoAula ?? '').trim()
+              const nome = (e as { nomeGrupo?: string | null }).nomeGrupo?.trim()
+              return tipo === 'GRUPO' && nome ? nome : null
+            })
+            .filter((n): n is string => !!n)
+        ),
+      ]
+      if (groupNames.length > 0) {
+        const existingIds = new Set(enrollments.map((e) => e.id))
+        const siblings = await prisma.enrollment.findMany({
+          where: {
+            ...statusFilter,
+            tipoAula: 'GRUPO',
+            nomeGrupo: { in: groupNames },
+            id: { notIn: [...existingIds] },
+          },
+          include: enrollmentListInclude,
+          orderBy: { criadoEm: 'desc' },
+        })
+        if (siblings.length > 0) {
+          enrollments = [...enrollments, ...siblings]
+        }
+      }
+    }
+
     // Agenda (dias/horários) e todos os professores por matrícula: aulas a partir de hoje nas próximas 12 semanas
-    const enrollmentIds = enrollments.map((e) => e.id)
+    const groupByNomeGrupo: Record<string, string[]> = {}
+    for (const e of enrollments) {
+      const tipoAula = (e as { tipoAula?: string | null }).tipoAula
+      const nomeGrupo = (e as { nomeGrupo?: string | null }).nomeGrupo?.trim()
+      if (tipoAula === 'GRUPO' && nomeGrupo) {
+        if (!groupByNomeGrupo[nomeGrupo]) groupByNomeGrupo[nomeGrupo] = []
+        groupByNomeGrupo[nomeGrupo].push(e.id)
+      }
+    }
+
+    const lessonEnrollmentIds = new Set(enrollments.map((e) => e.id))
+    const uniqueGroupNames = Object.keys(groupByNomeGrupo)
+    if (uniqueGroupNames.length > 0) {
+      const allGroupMembers = await prisma.enrollment.findMany({
+        where: { tipoAula: 'GRUPO', nomeGrupo: { in: uniqueGroupNames } },
+        select: { id: true, nomeGrupo: true },
+      })
+      for (const m of allGroupMembers) {
+        const g = m.nomeGrupo?.trim()
+        if (!g) continue
+        lessonEnrollmentIds.add(m.id)
+        if (!groupByNomeGrupo[g]) groupByNomeGrupo[g] = []
+        if (!groupByNomeGrupo[g].includes(m.id)) groupByNomeGrupo[g].push(m.id)
+      }
+    }
+
+    const enrollmentIds = [...lessonEnrollmentIds]
     const agendaByEnrollment: Record<string, string> = {}
     const teacherNamesByEnrollment: Record<string, string> = {}
     const DAY_NAMES = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -220,15 +308,6 @@ export async function GET(request: NextRequest) {
           }
         }
         // Replicar agenda e professores para integrantes do mesmo grupo (grupo compartilha a mesma agenda)
-        const groupByNomeGrupo: Record<string, string[]> = {}
-        for (const e of enrollments) {
-          const tipoAula = (e as any).tipoAula
-          const nomeGrupo = (e as any).nomeGrupo?.trim()
-          if (tipoAula === 'GRUPO' && nomeGrupo) {
-            if (!groupByNomeGrupo[nomeGrupo]) groupByNomeGrupo[nomeGrupo] = []
-            groupByNomeGrupo[nomeGrupo].push(e.id)
-          }
-        }
         for (const ids of Object.values(groupByNomeGrupo)) {
           const agendaVal = ids.map((id) => agendaByEnrollment[id]).find(Boolean)
           const teachersVal = ids.map((id) => teacherNamesByEnrollment[id]).find(Boolean)
@@ -244,17 +323,80 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const bookByEnrollment: Record<string, string> = {}
+    const bookByUserId: Record<string, string> = {}
+
+    if (enrollmentIds.length > 0) {
+      try {
+        const lessonRecords = await prisma.lessonRecord.findMany({
+          where: {
+            lesson: { enrollmentId: { in: enrollmentIds } },
+            book: { not: null },
+          },
+          select: {
+            book: true,
+            lesson: { select: { enrollmentId: true, startAt: true } },
+          },
+          orderBy: { lesson: { startAt: 'desc' } },
+          take: 5000,
+        })
+        for (const r of lessonRecords) {
+          const eid = r.lesson.enrollmentId
+          const book = r.book?.trim()
+          if (!book || bookByEnrollment[eid]) continue
+          bookByEnrollment[eid] = book
+        }
+      } catch (_) {
+        // ignora erro
+      }
+    }
+
+    const userIds = [
+      ...new Set(
+        enrollments
+          .map((e) => e.userId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      ),
+    ]
+    if (userIds.length > 0 && prisma.bookRelease) {
+      try {
+        const releases = await prisma.bookRelease.findMany({
+          where: { userId: { in: userIds } },
+          include: { book: { select: { nome: true } } },
+        })
+        const namesByUser: Record<string, string[]> = {}
+        for (const r of releases) {
+          const name = r.book?.nome?.trim() || r.bookCode?.trim()
+          if (!name) continue
+          if (!namesByUser[r.userId]) namesByUser[r.userId] = []
+          namesByUser[r.userId].push(name)
+        }
+        for (const [uid, names] of Object.entries(namesByUser)) {
+          const picked = pickHighestBookName(names)
+          if (picked) bookByUserId[uid] = picked
+        }
+      } catch (_) {
+        // ignora erro
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
         data: {
-          enrollments: enrollments.map((e) => ({
+          enrollments: enrollments.map((e) => {
+            const livroAtual =
+              bookByEnrollment[e.id] ?? (e.userId ? bookByUserId[e.userId] : null) ?? null
+            const nivelLivro = cefrLevelFromBookName(livroAtual)
+            return {
             id: e.id,
             nome: e.nome,
             email: e.email,
             whatsapp: e.whatsapp,
             idioma: e.idioma,
             nivel: e.nivel,
+            livroAtual,
+            nivelLivro,
             objetivo: e.objetivo,
             disponibilidade: e.disponibilidade,
             status: e.status,
@@ -264,6 +406,13 @@ export async function GET(request: NextRequest) {
             dataInicio: (e as any).dataInicio?.toISOString?.() ?? null,
             criadoEm: e.criadoEm.toISOString(),
             atualizadoEm: e.atualizadoEm.toISOString(),
+            ...resolveAuditNames({
+              createdByName: (e as { createdByName?: string | null }).createdByName,
+              updatedByName: (e as { updatedByName?: string | null }).updatedByName,
+              createdBy: (e as { createdBy?: { nome: string } | null }).createdBy,
+              updatedBy: (e as { updatedBy?: { nome: string } | null }).updatedBy,
+              cadastroViaImportacaoLista: (e as { cadastroViaImportacaoLista?: boolean }).cadastroViaImportacaoLista,
+            }),
             user: e.user,
             dataNascimento: (e as any).dataNascimento?.toISOString?.() ?? null,
             nomeResponsavel: (e as any).nomeResponsavel ?? null,
@@ -309,8 +458,14 @@ export async function GET(request: NextRequest) {
             bolsista: (e as any).bolsista ?? false,
             observacoes: (e as any).observacoes ?? null,
             activationDate: (e as any).activationDate?.toISOString?.() ?? null,
+            inactiveAt: (e as { inactiveAt?: Date | null }).inactiveAt?.toISOString?.() ?? null,
             inactiveReason: (e as any).inactiveReason ?? null,
             inactiveReasonOther: (e as any).inactiveReasonOther ?? null,
+            inativadoPorNome: (e as { inactiveByUser?: { nome: string } | null }).inactiveByUser?.nome ?? null,
+            motivoInativacao: formatInactiveReasonLabel(
+              (e as { inactiveReason?: string | null }).inactiveReason,
+              (e as { inactiveReasonOther?: string | null }).inactiveReasonOther
+            ),
             alertsCount: (e as any)._count?.alerts ?? 0,
             alerts: Array.isArray((e as any).alerts) ? (e as any).alerts.map((a: { id: string; message: string; level: string | null }) => ({ id: a.id, message: a.message, level: a.level })) : [],
             paymentInfo: e.paymentInfo ? {
@@ -325,7 +480,8 @@ export async function GET(request: NextRequest) {
               paidAt: e.paymentInfo.paidAt?.toISOString(),
               transactionRef: e.paymentInfo.transactionRef,
             } : null,
-          })),
+          }
+          }),
         },
       },
       { status: 200 }
@@ -475,8 +631,11 @@ export async function POST(request: NextRequest) {
       inactiveReasonOtherCreate = v.inactiveReasonOther
     }
 
+    const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
+
     const enrollment = await prisma.enrollment.create({
       data: {
+        ...auditFieldsForCreate(adminActor),
         nome: String(nome).trim(),
         email: normalizedEmail,
         whatsapp: String(whatsapp).trim(),

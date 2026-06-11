@@ -6,7 +6,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
@@ -18,6 +20,7 @@ import {
   Trash2,
   FileDown,
   AlertCircle,
+  ArrowLeft,
   CheckCircle2,
   Clock,
   XCircle,
@@ -574,6 +577,13 @@ export default function FinanceiroNfsePage() {
       <div className="space-y-6">
         {/* Cabeçalho */}
         <div>
+          <Link
+            href="/admin/financeiro/alunos"
+            className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-orange mb-3"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Voltar para Financeiro – Alunos
+          </Link>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Financeiro – Notas Fiscais</h1>
           <p className="text-gray-600 mt-1 text-sm md:text-base">
             Gerenciar emissão, consulta e cancelamento de Notas Fiscais de Serviço (NFSe). A tabela e os totais seguem o{' '}
@@ -604,7 +614,7 @@ export default function FinanceiroNfsePage() {
           </p>
           <p className="text-xs text-gray-500 mb-3">
             O status das NF em <strong>processamento</strong> ou <strong>erro</strong> é consultado na prefeitura{' '}
-            <strong>automaticamente a cada 5 minutos</strong>. O botão &quot;Atualizar status de todas&quot; força a consulta
+            <strong>automaticamente a cada 30 minutos</strong>. O botão &quot;Atualizar status de todas&quot; força a consulta
             agora para <strong>todas as notas, exceto as já autorizadas</strong> (até 500 por clique; se houver mais, clique de
             novo).
           </p>
@@ -901,7 +911,7 @@ export default function FinanceiroNfsePage() {
                 </button>
               </div>
             )}
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
@@ -1013,7 +1023,7 @@ export default function FinanceiroNfsePage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           </div>
         )}
 

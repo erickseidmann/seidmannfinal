@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, FileText, ClipboardList, Loader2, ArrowLeft, Video, UserMinus } from 'lucide-react'
@@ -40,6 +40,30 @@ import {
   LESSON_STATUS_LABELS,
   type LessonStatusUi,
 } from '@/lib/lesson-status'
+import { buildRescheduleLinks } from '@/lib/lesson-reschedule'
+import LessonCalendarBlock from '@/components/calendar/LessonCalendarBlock'
+import {
+  isLessonStartNotYetRegisterable,
+  isTeacherLessonRecordDeadlineExpired,
+  TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE,
+  canTeacherRegisterLessonConsideringUnlock,
+} from '@/lib/teacher-lesson-record-deadline'
+import {
+  isLessonRecordUnlockApproved,
+  isLessonRecordUnlockPending,
+} from '@/lib/lesson-record-unlock'
+import TeacherRecordDeadlineAlert from '@/components/professor/TeacherRecordDeadlineAlert'
+import {
+  bookAdvanceConfirmMessage,
+  checkBookProgression,
+  isBookOptionBelowReference,
+  resolveBookProgressionReference,
+} from '@/lib/lesson-record-book-progression'
+import {
+  assertLessonRecordDiffersFromPrevious,
+  lessonRecordCompareFromProfessorForm,
+  lessonRecordCompareFromUltimaRecord,
+} from '@/lib/lesson-record-diff-from-previous'
 
 type ViewType = 'month' | 'week' | 'day'
 type ModalStep = 'choose' | 'ver-ultima' | 'registrar'
@@ -52,6 +76,7 @@ interface Lesson {
   startAt: string
   durationMinutes: number
   notes: string | null
+  createdByName?: string | null
   enrollment: {
     id: string
     nome: string
@@ -59,10 +84,17 @@ interface Lesson {
     nomeGrupo: string | null
     curso?: string | null
     groupMemberNames?: string[]
+    inactiveAt?: string | null
   }
   teacher: { id: string; nome: string }
   record?: { id: string } | null
   requests?: Array<{ id: string; type: string; status: string }>
+  recordUnlockRequest?: {
+    id: string
+    status: 'PENDING' | 'APPROVED' | 'DENIED'
+    criadoEm: string
+    adminNotes?: string | null
+  } | null
 }
 
 interface UltimaRecord {
@@ -107,6 +139,13 @@ function isToday(d: Date): boolean {
   return isSameDayInTZ(d, new Date())
 }
 
+const statusColor = (s: string, hasPendingRequest?: boolean, hasRecord?: boolean) => {
+  if (hasPendingRequest) return 'text-purple-800'
+  if (s === 'CONFIRMED' && hasRecord) return 'text-orange-800'
+  if (isLessonCancelledFamily(s)) return 'text-red-800'
+  return s === 'CONFIRMED' ? 'text-green-800' : 'text-amber-800'
+}
+
 function getLessonStudentLabel(l: Lesson): string {
   const enr = l.enrollment
   if (enr?.tipoAula === 'GRUPO' && enr?.nomeGrupo?.trim()) {
@@ -115,18 +154,6 @@ function getLessonStudentLabel(l: Lesson): string {
     return members ? `${groupName} — ${members}` : groupName
   }
   return l.enrollment.nome
-}
-
-const statusColor = (s: string, hasPendingRequest?: boolean, hasRecord?: boolean) => {
-  if (hasPendingRequest) {
-    return 'bg-purple-100 text-purple-800 border-purple-200'
-  }
-  // Aula já registrada (tem registro de aula): laranjinha
-  if (s === 'CONFIRMED' && hasRecord) {
-    return 'bg-orange-100 text-orange-800 border-orange-200'
-  }
-  if (isLessonCancelledFamily(s)) return 'bg-red-100 text-red-800 border-red-200'
-  return s === 'CONFIRMED' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-amber-100 text-amber-800 border-amber-200'
 }
 
 export default function CalendarioProfessorPage() {
@@ -170,6 +197,7 @@ export default function CalendarioProfessorPage() {
   const [ultimaRecord, setUltimaRecord] = useState<UltimaRecord | null>(null)
   const [ultimaLoading, setUltimaLoading] = useState(false)
   const [ultimaPorOutroProfessor, setUltimaPorOutroProfessor] = useState(false)
+  const [bookAdvanceConfirm, setBookAdvanceConfirm] = useState<{ referenceBook: string; newBook: string } | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   type FormStatus = 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
@@ -209,6 +237,7 @@ export default function CalendarioProfessorPage() {
     setSelectedLesson(null)
     setModalStep('choose')
     setUltimaRecord(null)
+    setBookAdvanceConfirm(null)
     setForm(emptyForm)
     setStudentsPresence([])
     setGroupMembers([])
@@ -325,12 +354,14 @@ export default function CalendarioProfessorPage() {
           startAt: raw.startAt,
           durationMinutes: raw.durationMinutes ?? 60,
           notes: raw.notes ?? null,
+          createdByName: raw.createdByName ?? null,
           enrollment: {
             id: raw.enrollment?.id ?? '',
             nome: raw.enrollment?.nome ?? '',
             tipoAula: raw.enrollment?.tipoAula ?? null,
             nomeGrupo: raw.enrollment?.nomeGrupo ?? null,
             curso: raw.enrollment?.curso ?? null,
+            inactiveAt: raw.enrollment?.inactiveAt ?? null,
             groupMemberNames: raw.enrollment?.groupMemberNames,
           },
           teacher: { id: raw.teacher?.id ?? '', nome: raw.teacher?.nome ?? '' },
@@ -434,23 +465,83 @@ export default function CalendarioProfessorPage() {
     return catalogNomes.has(t) ? null : t
   }, [form.book, catalogNomes])
 
+  const bookProgressionReference = useMemo(
+    () =>
+      resolveBookProgressionReference({
+        latestRecordBook: ultimaRecord?.book,
+        latestRecordId: ultimaRecord?.id,
+      }),
+    [ultimaRecord?.book, ultimaRecord?.id]
+  )
+
   const selectedLessonIsHoliday = useMemo(() => {
     if (!selectedLesson) return false
     return holidays.has(toDateKeyInTZ(selectedLesson.startAt))
   }, [selectedLesson, holidays])
 
-  // Aula futura = dia futuro OU (hoje e horário ainda não chegou) — horário São Paulo
   const selectedLessonIsFuture = useMemo(() => {
     if (!selectedLesson) return false
-    const lessonDay = ymdInTZ(selectedLesson.startAt)
-    const today = ymdInTZ(new Date())
-    if (lessonDay > today) return true
-    if (lessonDay < today) return false
-    const lessonTime = getTimeInTZ(selectedLesson.startAt)
-    const nowTime = getTimeInTZ(new Date().toISOString())
-    // Só permitir a partir de 1 minuto após o início (ex.: aula 17:00 → a partir de 17:01)
-    return nowTime.hour < lessonTime.hour || (nowTime.hour === lessonTime.hour && nowTime.minute <= lessonTime.minute)
+    return isLessonStartNotYetRegisterable(selectedLesson.startAt)
   }, [selectedLesson])
+
+  const selectedLessonDeadlineExpired = useMemo(() => {
+    if (!selectedLesson) return false
+    return (
+      isTeacherLessonRecordDeadlineExpired(selectedLesson.startAt) &&
+      !isLessonRecordUnlockApproved(selectedLesson.recordUnlockRequest)
+    )
+  }, [selectedLesson])
+
+  const [requestingUnlockLessonId, setRequestingUnlockLessonId] = useState<string | null>(null)
+
+  const registerablePendingLessons = useMemo(() => {
+    return lessons.filter((l) => {
+      if (l.record?.id) return false
+      if (!canRegisterLesson(l.status)) return false
+      if (holidays.has(toDateKeyInTZ(l.startAt))) return false
+      return canTeacherRegisterLessonConsideringUnlock(
+        l.startAt,
+        isLessonRecordUnlockApproved(l.recordUnlockRequest)
+      )
+    })
+  }, [lessons, holidays])
+
+  const expiredPendingLessons = useMemo(() => {
+    return lessons.filter((l) => {
+      if (l.record?.id) return false
+      if (!canRegisterLesson(l.status)) return false
+      if (holidays.has(toDateKeyInTZ(l.startAt))) return false
+      if (isLessonStartNotYetRegisterable(l.startAt)) return false
+      if (!isTeacherLessonRecordDeadlineExpired(l.startAt)) return false
+      if (isLessonRecordUnlockPending(l.recordUnlockRequest)) return false
+      if (isLessonRecordUnlockApproved(l.recordUnlockRequest)) return false
+      return true
+    })
+  }, [lessons, holidays])
+
+  const handleRequestUnlock = async (lesson: Lesson) => {
+    if (requestingUnlockLessonId) return
+    setRequestingUnlockLessonId(lesson.id)
+    try {
+      const res = await fetch('/api/professor/lesson-record-unlock-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ lessonId: lesson.id }),
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        setToast({ message: json.message || 'Erro ao solicitar liberação', type: 'error' })
+        return
+      }
+      setToast({ message: json.message || 'Solicitação enviada', type: 'success' })
+      fetchLessons()
+    } catch {
+      setToast({ message: 'Erro ao solicitar liberação', type: 'error' })
+    } finally {
+      setRequestingUnlockLessonId(null)
+    }
+  }
 
   const selectedLessonBlocked = useMemo(() => {
     if (!selectedLesson) return false
@@ -518,6 +609,7 @@ export default function CalendarioProfessorPage() {
   const handleVerUltima = () => setModalStep('ver-ultima')
   const handleRegistrar = () => {
     if (!selectedLesson || !canRegisterLesson(selectedLesson.status)) return
+    if (selectedLessonDeadlineExpired || selectedLessonIsFuture) return
     setModalStep('registrar')
     setForm({
       ...emptyForm,
@@ -553,43 +645,23 @@ export default function CalendarioProfessorPage() {
         ultimaRecord.studentPresences.map((s) => ({ enrollmentId: s.enrollmentId, presence: s.presence }))
       )
     }
-    setToast({ message: 'Formulário preenchido com os dados da última aula', type: 'success' })
+    setToast({
+      message: 'Formulário preenchido com os dados da última aula. Altere pelo menos um campo antes de salvar.',
+      type: 'success',
+    })
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleBookChange = (nextBook: string) => {
+    const check = checkBookProgression(nextBook, bookProgressionReference)
+    if (!check.ok && check.code === 'RETROGRADE') {
+      setToast({ message: check.message, type: 'error' })
+      return
+    }
+    setForm((prev) => ({ ...prev, book: nextBook }))
+  }
+
+  const submitRecord = async (confirmBookAdvance = false) => {
     if (!selectedLesson) return
-    if (!canRegisterLesson(selectedLesson.status)) {
-      setToast({
-        message:
-          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
-        type: 'error',
-      })
-      return
-    }
-    if (selectedLessonIsHoliday) {
-      setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
-      return
-    }
-    if (selectedLessonIsFuture) {
-      setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
-      return
-    }
-    if (!form.book?.trim()) {
-      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
-      return
-    }
-    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
-      setToast({
-        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
-        type: 'error',
-      })
-      return
-    }
-    if (!form.lastPage?.trim()) {
-      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
-      return
-    }
     setSaving(true)
     try {
       const payload = {
@@ -612,6 +684,7 @@ export default function CalendarioProfessorPage() {
         gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
         gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
         gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
+        ...(confirmBookAdvance ? { confirmBookAdvance: true } : {}),
       }
       const res = await fetch('/api/professor/lesson-records', {
         method: 'POST',
@@ -621,9 +694,17 @@ export default function CalendarioProfessorPage() {
       })
       const json = await res.json()
       if (!res.ok || !json.ok) {
+        if (json.code === 'ADVANCE_NEEDS_CONFIRM') {
+          setBookAdvanceConfirm({
+            referenceBook: bookProgressionReference || '',
+            newBook: form.book.trim(),
+          })
+          return
+        }
         setToast({ message: json.message || 'Erro ao salvar', type: 'error' })
         return
       }
+      setBookAdvanceConfirm(null)
       setToast({ message: 'Registro de aula criado', type: 'success' })
       closeModal()
       fetchLessons()
@@ -632,6 +713,74 @@ export default function CalendarioProfessorPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedLesson) return
+    if (!canRegisterLesson(selectedLesson.status)) {
+      setToast({
+        message:
+          'Esta aula está cancelada e não pode ser registrada. Se a aula realmente aconteceu, peça à administração para reverter o cancelamento ou criar uma aula de reposição.',
+        type: 'error',
+      })
+      return
+    }
+    if (selectedLessonIsHoliday) {
+      setToast({ message: t('professor.calendar.noWorkOnHolidays'), type: 'error' })
+      return
+    }
+    if (selectedLessonIsFuture) {
+      setToast({ message: t('professor.calendar.noFutureLessonRecord'), type: 'error' })
+      return
+    }
+    if (selectedLessonDeadlineExpired) {
+      setToast({ message: TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE, type: 'error' })
+      return
+    }
+    if (!form.book?.trim()) {
+      setToast({ message: 'Selecione o livro do aluno.', type: 'error' })
+      return
+    }
+    if (!catalogBooksLoading && catalogBooks.length === 0 && !legacyBookNotInCatalog) {
+      setToast({
+        message: 'Não há livros no catálogo. Peça à administração para cadastrar em Admin → Livros.',
+        type: 'error',
+      })
+      return
+    }
+    if (!form.lastPage?.trim()) {
+      setToast({ message: 'Preencha o campo Última página trabalhada.', type: 'error' })
+      return
+    }
+
+    const bookCheck = checkBookProgression(form.book, bookProgressionReference)
+    if (!bookCheck.ok && bookCheck.code === 'RETROGRADE') {
+      setToast({ message: bookCheck.message, type: 'error' })
+      return
+    }
+    if (!bookCheck.ok && bookCheck.code === 'ADVANCE_NEEDS_CONFIRM') {
+      setBookAdvanceConfirm({
+        referenceBook: bookCheck.referenceBook,
+        newBook: bookCheck.newBook,
+      })
+      return
+    }
+
+    if (ultimaRecord) {
+      const diffCheck = assertLessonRecordDiffersFromPrevious(
+        lessonRecordCompareFromProfessorForm(form, {
+          studentsPresence: isGroupLesson && studentsPresence.length > 0 ? studentsPresence : undefined,
+        }),
+        lessonRecordCompareFromUltimaRecord(ultimaRecord)
+      )
+      if (!diffCheck.ok) {
+        setToast({ message: diffCheck.message, type: 'error' })
+        return
+      }
+    }
+
+    await submitRecord(false)
   }
 
   const titleLabel = useMemo(() => {
@@ -724,12 +873,40 @@ export default function CalendarioProfessorPage() {
     })
   }
 
+  const { rescheduledAtByCancelledId, originalAtByReposicaoId } = useMemo(
+    () => buildRescheduleLinks(lessons),
+    [lessons]
+  )
+
   const stats = useMemo(() => {
     const confirmed = lessons.filter((l) => l.status === 'CONFIRMED').length
     const cancelled = lessons.filter((l) => isLessonCancelledFamily(l.status)).length
     const reposicao = lessons.filter((l) => l.status === 'REPOSICAO').length
     return { confirmed, cancelled, reposicao }
   }, [lessons])
+
+  const renderLessonBlock = (
+    l: Lesson,
+    size: 'month' | 'week' | 'day',
+    label: ReactNode,
+    title?: string
+  ) => (
+    <LessonCalendarBlock
+      key={l.id}
+      lesson={l}
+      rescheduledAt={rescheduledAtByCancelledId.get(l.id)}
+      originalLessonAt={originalAtByReposicaoId.get(l.id)}
+      size={size}
+      hasPendingRequest={Boolean(l.requests?.length)}
+      hasRecord={Boolean(l.record)}
+      onClick={() => openLesson(l)}
+      title={
+        title ??
+        `${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${l.requests?.length ? '(Em processo de troca)' : ''} ${t('professor.calendar.clickToView')}`
+      }
+      label={label}
+    />
+  )
 
   const formatSlotLabel = (slot: { hour: number; minute: number }) =>
     `${slot.hour.toString().padStart(2, '0')}:${slot.minute.toString().padStart(2, '0')}`
@@ -776,6 +953,28 @@ export default function CalendarioProfessorPage() {
           </button>
           <h2 className="text-base sm:text-lg font-semibold text-gray-800 w-full sm:w-auto order-first sm:order-none">{titleLabel}</h2>
         </div>
+      </div>
+
+      <div className="mb-4 sm:mb-6">
+        <TeacherRecordDeadlineAlert
+          registerablePending={registerablePendingLessons}
+          expiredPending={expiredPendingLessons}
+          dateLocale={dateLocale}
+          title={t('professor.registerClasses.deadlineAlert.title')}
+          intro={t('professor.registerClasses.deadlineAlert.intro')}
+          backlogNote={t('professor.registerClasses.deadlineAlert.backlog')}
+          newRuleNote={t('professor.registerClasses.deadlineAlert.newRule')}
+          registerableTitle={t('professor.registerClasses.deadlineAlert.registerable')}
+          expiredTitle={t('professor.registerClasses.deadlineAlert.expired')}
+          expiredNote={t('professor.registerClasses.deadlineAlert.expiredNote')}
+          deadlineUntil={t('professor.registerClasses.deadlineAlert.deadlineUntil')}
+          registerLinkLabel={t('professor.registerClasses.deadlineAlert.goRegister')}
+          onLessonClick={(lesson) => {
+            const full = lessons.find((l) => l.id === lesson.id)
+            if (full) openLesson(full)
+          }}
+          showRegisterLink
+        />
       </div>
 
       {/* Resumo do período */}
@@ -827,17 +1026,15 @@ export default function CalendarioProfessorPage() {
                       {dayNum}
                     </span>
                     <div className="mt-0.5 sm:mt-1 space-y-0.5">
-                      {dayLessons.slice(0, 3).map((l) => (
-                        <button
-                          key={l.id}
-                          type="button"
-                          onClick={() => openLesson(l)}
-                          className={`w-full text-left text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation min-h-[32px] ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
-                          title={`${getLessonStudentLabel(l)} – ${statusLabel(l.status)} ${l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ${t('professor.calendar.clickToView')}`}
-                        >
-                          {getLessonStudentLabel(l)} {formatTimeInTZ(l.startAt, dateLocale)}
-                        </button>
-                      ))}
+                      {dayLessons.slice(0, 3).map((l) =>
+                        renderLessonBlock(
+                          l,
+                          'month',
+                          <>
+                            {getLessonStudentLabel(l)} {formatTimeInTZ(l.startAt, dateLocale)}
+                          </>
+                        )
+                      )}
                       {dayLessons.length > 3 && <span className="text-[10px] sm:text-xs text-gray-400">+{dayLessons.length - 3}</span>}
                     </div>
                   </div>
@@ -880,16 +1077,9 @@ export default function CalendarioProfessorPage() {
                         {!isAvailable && dow !== 0 && (
                           <span className="text-[10px] text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
                         )}
-                        {slotLessons.map((l) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onClick={() => openLesson(l)}
-                            className={`text-[10px] text-left px-1 py-0.5 rounded border break-words line-clamp-2 cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
-                          >
-                            {getLessonStudentLabel(l)}
-                          </button>
-                        ))}
+                        {slotLessons.map((l) =>
+                          renderLessonBlock(l, 'week', getLessonStudentLabel(l))
+                        )}
                       </div>
                     )
                   })}
@@ -916,16 +1106,17 @@ export default function CalendarioProfessorPage() {
                     {!isAvailable && getDayOfWeekInTZ(currentDate) !== 0 && (
                       <span className="text-xs text-gray-400 italic">{t('professor.calendar.notAvailable') || 'Não disponível'}</span>
                     )}
-                    {slotLessons.map((l) => (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => openLesson(l)}
-                        className={`text-sm text-left px-2 py-2 sm:py-1 rounded border w-full max-w-full break-words cursor-pointer hover:ring-2 hover:ring-brand-orange/50 touch-manipulation ${statusColor(l.status, l.requests && l.requests.length > 0, !!l.record)}`}
-                      >
-                        {getLessonStudentLabel(l)} – {statusLabel(l.status)} {l.requests && l.requests.length > 0 ? '(Em processo de troca)' : ''} ({formatTimeInTZ(l.startAt, dateLocale)})
-                      </button>
-                    ))}
+                    {slotLessons.map((l) =>
+                      renderLessonBlock(
+                        l,
+                        'day',
+                        <>
+                          {getLessonStudentLabel(l)} – {statusLabel(l.status)}{' '}
+                          {l.requests?.length ? '(Em processo de troca)' : ''} (
+                          {formatTimeInTZ(l.startAt, dateLocale)})
+                        </>
+                      )
+                    )}
                   </div>
                 </div>
               )
@@ -968,7 +1159,11 @@ export default function CalendarioProfessorPage() {
                 {ultimaLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
                 {t('professor.calendar.viewLastClass')}
               </Button>
-              {!selectedLesson?.record && canRegisterLesson(selectedLesson?.status ?? '') && !selectedLessonIsHoliday && !selectedLessonIsFuture && (
+              {!selectedLesson?.record &&
+                canRegisterLesson(selectedLesson?.status ?? '') &&
+                !selectedLessonIsHoliday &&
+                !selectedLessonIsFuture &&
+                !selectedLessonDeadlineExpired && (
                 <Button variant="primary" onClick={handleRegistrar} className="flex-1">
                   <ClipboardList className="w-4 h-4 mr-2" />
                   {t('professor.calendar.registerClass')}
@@ -977,6 +1172,27 @@ export default function CalendarioProfessorPage() {
             {selectedLessonIsFuture && !selectedLesson?.record && canRegisterLesson(selectedLesson?.status ?? '') && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800 w-full">
                 {t('professor.calendar.noFutureLessonRecord')}
+              </div>
+            )}
+            {isLessonRecordUnlockPending(selectedLesson?.recordUnlockRequest) && (
+              <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm font-semibold text-blue-800 w-full">
+                {t('professor.registerClasses.unlockPending')}
+              </div>
+            )}
+            {selectedLessonDeadlineExpired && !selectedLesson?.record && canRegisterLesson(selectedLesson?.status ?? '') && (
+              <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 w-full space-y-2">
+                <p className="font-semibold">{TEACHER_LESSON_RECORD_DEADLINE_EXPIRED_MESSAGE}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => selectedLesson && void handleRequestUnlock(selectedLesson)}
+                  disabled={requestingUnlockLessonId === selectedLesson?.id}
+                >
+                  {requestingUnlockLessonId === selectedLesson?.id ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : null}
+                  {t('professor.registerClasses.requestUnlock')}
+                </Button>
               </div>
             )}
             </div>
@@ -995,7 +1211,7 @@ export default function CalendarioProfessorPage() {
                   {t('professor.calendar.fillFromLast')}
                 </Button>
               )}
-              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || selectedLessonIsHoliday || selectedLessonIsFuture}>
+              <Button variant="primary" onClick={() => void handleSubmit({ preventDefault: () => {} } as React.FormEvent)} disabled={saving || selectedLessonBlocked || selectedLessonIsHoliday || selectedLessonIsFuture || selectedLessonDeadlineExpired}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 {saving ? t('professor.calendar.saving') : t('professor.calendar.createRecord')}
               </Button>
@@ -1205,7 +1421,7 @@ export default function CalendarioProfessorPage() {
                 <>
                   <select
                     value={form.book}
-                    onChange={(e) => setForm({ ...form, book: e.target.value })}
+                    onChange={(e) => handleBookChange(e.target.value)}
                     className="input w-full"
                     required
                     aria-required="true"
@@ -1218,7 +1434,11 @@ export default function CalendarioProfessorPage() {
                       </option>
                     )}
                     {catalogBooks.map((b) => (
-                      <option key={b.id} value={b.nome}>
+                      <option
+                        key={b.id}
+                        value={b.nome}
+                        disabled={isBookOptionBelowReference(b.nome, bookProgressionReference)}
+                      >
                         {labelProfessorCatalogBook(b)}
                       </option>
                     ))}
@@ -1226,6 +1446,11 @@ export default function CalendarioProfessorPage() {
                   {catalogBooks.length === 0 && (
                     <p className="text-xs text-amber-700 mt-1">
                       Nenhum livro cadastrado. Peça à administração para cadastrar em Admin → Livros.
+                    </p>
+                  )}
+                  {bookProgressionReference && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Livro atual do aluno (última aula): <strong>{bookProgressionReference}</strong>
                     </p>
                   )}
                 </>
@@ -1293,6 +1518,24 @@ export default function CalendarioProfessorPage() {
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
+
+      <ConfirmModal
+        isOpen={bookAdvanceConfirm != null}
+        onClose={() => setBookAdvanceConfirm(null)}
+        onConfirm={() => void submitRecord(true)}
+        title="Atenção"
+        message={
+          bookAdvanceConfirm
+            ? bookAdvanceConfirmMessage(
+                bookAdvanceConfirm.referenceBook,
+                bookAdvanceConfirm.newBook,
+                selectedLesson?.enrollment?.nome
+              )
+            : ''
+        }
+        confirmLabel="Sim, progredir"
+        cancelLabel="Cancelar"
+      />
     </div>
   )
 }

@@ -7,16 +7,19 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table from '@/components/admin/Table'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, FileSpreadsheet, Upload, Undo2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, CircleDollarSign, ClipboardList } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, ClipboardList, BookOpen } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
+import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import {
   INACTIVE_REASON_LABELS,
@@ -24,9 +27,10 @@ import {
   type InactiveReasonValue,
   validateInactiveReasonPayload,
 } from '@/lib/inactive-reason'
-
-/** Limite do cubo «Alunos fora do valor»: valor hora (cadastro) estritamente menor que este valor (R$). */
-const BELOW_HOUR_RATE_MAX_REAIS = 35
+import {
+  cefrDescriptionFromBookName,
+  NIVEL_LIVRO_NAO_DEFINIDO,
+} from '@/lib/student-book-level'
 
 interface StudentAlertItem {
   id: string
@@ -41,11 +45,16 @@ interface Student {
   whatsapp: string
   idioma: string | null
   nivel: string | null
+  livroAtual?: string | null
+  nivelLivro?: string | null
   objetivo?: string | null
   disponibilidade?: string | null
   status: string
   trackingCode: string | null
   criadoEm: string
+  atualizadoEm?: string | null
+  createdByName?: string | null
+  updatedByName?: string | null
   dataInicio?: string | null
   dataNascimento?: string | null
   observacoes?: string | null
@@ -161,8 +170,6 @@ async function buscarCep(cep: string): Promise<{ logradouro: string; bairro: str
   }
 }
 
-const LAST_IMPORTED_IDS_KEY = 'seidmann_admin_last_imported_ids'
-
 const STATUS_LABELS: Record<string, string> = {
   LEAD: 'Lead',
   REGISTERED: 'Matriculado',
@@ -221,7 +228,7 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'nome', label: 'Nome', getValue: (s) => (s.nome ?? '').replace(/;/g, ',') },
   { key: 'idade', label: 'Idade', getValue: (s) => (calcularIdade(s.dataNascimento) ?? '—').toString() },
   { key: 'idioma', label: 'Idioma', getValue: (s) => (s.idioma === 'ENGLISH' ? 'Inglês' : s.idioma === 'SPANISH' ? 'Espanhol' : s.idioma ?? '—').replace(/;/g, ',') },
-  { key: 'nivel', label: 'Nível', getValue: (s) => (s.nivel ?? '—').replace(/;/g, ',') },
+  { key: 'nivelLivro', label: 'Nível', getValue: (s) => (s.nivelLivro ?? NIVEL_LIVRO_NAO_DEFINIDO).replace(/;/g, ',') },
   { key: 'objetivo', label: 'Objetivo', getValue: (s) => (s.objetivo ?? '—').replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'disponibilidade', label: 'Disponibilidade', getValue: (s) => (s.disponibilidade ?? '—').replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'email', label: 'Email', getValue: (s) => (s.email ?? '').replace(/;/g, ',') },
@@ -230,7 +237,7 @@ const REPORT_COLUMNS: { key: string; label: string; getValue: (s: Student) => st
   { key: 'endereco', label: 'Endereço', getValue: (s) => formatEndereco(s).replace(/;/g, ',').replace(/\n/g, ' ') },
   { key: 'valorMensalidade', label: 'Valor', getValue: (s) => (s.valorMensalidade != null ? String(s.valorMensalidade).replace('.', ',') : '—') },
   { key: 'tipoAula', label: 'Tipo', getValue: (s) => ((s.tipoAula?.trim()) || 'PARTICULAR') === 'PARTICULAR' ? 'Particular' : s.nomeGrupo ? `Grupo/${s.nomeGrupo}` : 'Grupo' },
-  { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.status === 'INACTIVE' ? '—' : (s.teacherNameForWeek ?? 's/ professor')).replace(/;/g, ',') },
+  { key: 'teacherNameForWeek', label: 'Professor', getValue: (s) => (s.teacherNameForWeek ?? (s.status === 'INACTIVE' ? '—' : 's/ professor')).replace(/;/g, ',') },
   { key: 'agenda', label: 'Agenda', getValue: (s) => (s.agenda ?? '—').replace(/;/g, ',') },
   { key: 'status', label: 'Status', getValue: (s) => STATUS_LABELS[s.status] ?? s.status ?? '—' },
   { key: 'trackingCode', label: 'Código', getValue: (s) => (s.trackingCode ?? '').replace(/;/g, ',') },
@@ -300,7 +307,7 @@ export default function AdminAlunosPage() {
   const [filters, setFilters] = useState({ status: '', search: '', tipo: '', professor: '', escola: '' })
   // Input local da busca: só atualiza filters.search ao clicar em Buscar / pressionar Enter
   const [searchInput, setSearchInput] = useState('')
-  const [showBuscarFiltros, setShowBuscarFiltros] = useState(true)
+  const [showBuscarFiltros, setShowBuscarFiltros] = useState(false)
   const [sortKey, setSortKey] = useState<string>('criadoEm')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -315,30 +322,6 @@ export default function AdminAlunosPage() {
   const [newAlertForm, setNewAlertForm] = useState({ message: '', level: 'INFO' })
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void; variant?: 'danger'; confirmLabel?: string } | null>(null)
   const [sendAccessLoading, setSendAccessLoading] = useState(false)
-  const [importModalOpen, setImportModalOpen] = useState(false)
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importLoading, setImportLoading] = useState(false)
-  const [importResult, setImportResult] = useState<{
-    created: number
-    enrollments: { id: string; nome: string; email: string }[]
-    errors: { row: number; message: string }[]
-  } | null>(null)
-  const [lastImportedIds, setLastImportedIds] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return []
-    try {
-      const raw = localStorage.getItem(LAST_IMPORTED_IDS_KEY)
-      if (!raw) return []
-      const parsed = JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed.filter((id: unknown) => typeof id === 'string') : []
-    } catch {
-      return []
-    }
-  })
-  const [importValidationErrors, setImportValidationErrors] = useState<{
-    message: string
-    validationErrors: { row: number; message: string }[]
-    totalValidationErrors: number
-  } | null>(null)
   const [passwordModalStudent, setPasswordModalStudent] = useState<Student | null>(null)
   const [inactivateStudentModal, setInactivateStudentModal] = useState<{
     student: Student
@@ -360,7 +343,6 @@ export default function AdminAlunosPage() {
     porStatus: { ativos: number; inativos: number; pausados: number }
     semProfessor: number
     semProfessorProximaSemana: number
-    repetitionEndingSoon?: number
     bolsistas?: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -383,20 +365,6 @@ export default function AdminAlunosPage() {
     count: number
     list: { enrollmentId: string; studentName: string; expected: number; actual: number; lessonTimesThisWeek?: string[] }[]
   }>({ count: 0, list: [] })
-  const [repetitionEndingStats, setRepetitionEndingStats] = useState<{
-    count: number
-    list: { enrollmentId: string; studentName: string; lastLessonAt: string }[]
-  }>({ count: 0, list: [] })
-  const [belowHourRateStats, setBelowHourRateStats] = useState<{
-    count: number
-    list: {
-      enrollmentId: string
-      studentName: string
-      valorHora: number | null
-      tempoAulaMinutos: number | null
-      frequenciaSemanal: number | null
-    }[]
-  }>({ count: 0, list: [] })
   const [missingRequiredStats, setMissingRequiredStats] = useState<{
     count: number
     list: {
@@ -408,7 +376,19 @@ export default function AdminAlunosPage() {
     }[]
   }>({ count: 0, list: [] })
   const [missingRequiredLoading, setMissingRequiredLoading] = useState(true)
-  const [extendingRepetitionId, setExtendingRepetitionId] = useState<string | null>(null)
+  const [bookAdvanceStats, setBookAdvanceStats] = useState<{
+    count: number
+    list: {
+      id: string
+      enrollmentId: string
+      studentName: string
+      teacherName: string
+      previousBook: string
+      newBook: string
+      advancedAt: string
+    }[]
+  }>({ count: 0, list: [] })
+  const [bookAdvanceLoading, setBookAdvanceLoading] = useState(true)
   const [designarAulaCorrectionData, setDesignarAulaCorrectionData] = useState<{
     existingLessonTimes: string[]
     existingLessons?: { startAt: string; teacherName?: string }[]
@@ -417,7 +397,7 @@ export default function AdminAlunosPage() {
   } | null>(null)
   const [agendaAlunoId, setAgendaAlunoId] = useState<string | null>(null)
   // Por padrão ocultas: email, cpf, endereco, valorMensalidade, trackingCode, criadoEm — aparecem só se o usuário selecionar em "Colunas"
-  const defaultVisibleColumnKeys = ['select', 'nome', 'dataInicio', 'idade', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
+  const defaultVisibleColumnKeys = ['select', 'nome', 'dataInicio', 'idade', 'nivelLivro', 'whatsapp', 'tipoAula', 'teacherNameForWeek', 'agenda', 'status', 'actions']
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => defaultVisibleColumnKeys)
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
@@ -426,50 +406,6 @@ export default function AdminAlunosPage() {
   const [reportColumnKeys, setReportColumnKeys] = useState<string[]>(() => REPORT_COLUMNS.map((c) => c.key))
   const [reportFilters, setReportFilters] = useState({ escola: '', status: '', tipo: '', mes: '', ano: '' })
   const isMinor = isMenorDeIdade(formData.dataNascimento || null)
-
-  const fetchBelowHourRateStats = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/admin/enrollments/below-hour-rate?max=${BELOW_HOUR_RATE_MAX_REAIS}`,
-        { credentials: 'include' }
-      )
-      if (res.ok) {
-        const json = await res.json()
-        if (json.ok && json.data?.list) {
-          setBelowHourRateStats({
-            count: json.data.count ?? json.data.list.length,
-            list: json.data.list,
-          })
-        } else {
-          setBelowHourRateStats({ count: 0, list: [] })
-        }
-      } else {
-        setBelowHourRateStats({ count: 0, list: [] })
-      }
-    } catch (e) {
-      console.error(e)
-      setBelowHourRateStats({ count: 0, list: [] })
-    }
-  }, [])
-
-  const fetchRepetitionEndingStats = useCallback(async () => {
-    try {
-      const res = await fetch('/api/admin/enrollments/repetition-ending?withinDays=7', { credentials: 'include' })
-      if (res.ok) {
-        const json = await res.json()
-        if (json.ok && Array.isArray(json.data)) {
-          setRepetitionEndingStats({ count: json.count ?? json.data.length, list: json.data })
-        } else {
-          setRepetitionEndingStats({ count: 0, list: [] })
-        }
-      } else {
-        setRepetitionEndingStats({ count: 0, list: [] })
-      }
-    } catch (e) {
-      console.error(e)
-      setRepetitionEndingStats({ count: 0, list: [] })
-    }
-  }, [])
 
   const fetchMissingRequiredStats = useCallback(async () => {
     setMissingRequiredLoading(true)
@@ -536,6 +472,30 @@ export default function AdminAlunosPage() {
     } catch (e) {
       console.error(e)
       setWrongFrequencyStats({ count: 0, list: [] })
+    }
+  }, [])
+
+  const fetchBookAdvanceStats = useCallback(async () => {
+    setBookAdvanceLoading(true)
+    try {
+      const res = await fetch('/api/admin/dashboard-lists?type=bookAdvances', {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.ok && Array.isArray(json.data)) {
+          setBookAdvanceStats({ count: json.data.length, list: json.data })
+        } else {
+          setBookAdvanceStats({ count: 0, list: [] })
+        }
+      } else {
+        setBookAdvanceStats({ count: 0, list: [] })
+      }
+    } catch (e) {
+      console.error(e)
+      setBookAdvanceStats({ count: 0, list: [] })
+    } finally {
+      setBookAdvanceLoading(false)
     }
   }, [])
 
@@ -637,10 +597,9 @@ export default function AdminAlunosPage() {
     void fetchStats()
     void fetchWrongFrequencyStats()
     void fetchWrongFrequencyStatsProximaSemana()
-    void fetchRepetitionEndingStats()
-    void fetchBelowHourRateStats()
     void fetchMissingRequiredStats()
-  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchRepetitionEndingStats, fetchBelowHourRateStats, fetchMissingRequiredStats])
+    void fetchBookAdvanceStats()
+  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchMissingRequiredStats, fetchBookAdvanceStats])
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
@@ -921,120 +880,6 @@ export default function AdminAlunosPage() {
     }
   }
 
-  const handleDownloadTemplate = async () => {
-    try {
-      const res = await fetch('/api/admin/enrollments/template', { credentials: 'include' })
-      if (!res.ok) {
-        setToast({ message: 'Erro ao baixar modelo', type: 'error' })
-        return
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'alunos-modelo.csv'
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      setToast({ message: 'Erro ao baixar modelo', type: 'error' })
-    }
-  }
-
-  const handleImportSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!importFile) {
-      setToast({ message: 'Selecione um arquivo CSV', type: 'error' })
-      return
-    }
-    setImportLoading(true)
-    setImportResult(null)
-    setImportValidationErrors(null)
-    try {
-      const form = new FormData()
-      form.append('file', importFile)
-      const res = await fetch('/api/admin/enrollments/import', {
-        method: 'POST',
-        credentials: 'include',
-        body: form,
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        if (json.validationErrors && json.totalValidationErrors) {
-          setImportValidationErrors({
-            message: json.message || 'Arquivo com colunas incorretas.',
-            validationErrors: json.validationErrors || [],
-            totalValidationErrors: json.totalValidationErrors || 0,
-          })
-        } else {
-          setToast({ message: json.message || 'Erro ao importar', type: 'error' })
-        }
-        return
-      }
-      if (json.ok && json.data) {
-        setImportResult(json.data)
-        if (json.data.created > 0 && json.data.enrollments?.length) {
-          const ids = json.data.enrollments.map((e: { id: string }) => e.id)
-          setLastImportedIds(ids)
-          try {
-            localStorage.setItem(LAST_IMPORTED_IDS_KEY, JSON.stringify(ids))
-          } catch {}
-          fetchStudents()
-          setToast({
-            message: `${json.data.created} aluno(s) adicionado(s) com sucesso!`,
-            type: 'success',
-          })
-        }
-      }
-    } catch (err) {
-      setToast({
-        message: err instanceof Error ? err.message : 'Erro ao importar',
-        type: 'error',
-      })
-    } finally {
-      setImportLoading(false)
-    }
-  }
-
-  const closeImportModal = () => {
-    setImportModalOpen(false)
-    setImportFile(null)
-    setImportResult(null)
-    setImportValidationErrors(null)
-  }
-
-  const handleUndoLastImport = () => {
-    if (lastImportedIds.length === 0) return
-    setConfirmModal({
-      title: 'Excluir última lista adicionada',
-      message: `Deseja excluir os ${lastImportedIds.length} aluno(s) da última importação? Esta ação não pode ser desfeita.`,
-      variant: 'danger',
-      confirmLabel: 'Excluir',
-      onConfirm: async () => {
-        try {
-          const res = await fetch('/api/admin/enrollments/undo-import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ enrollmentIds: lastImportedIds }),
-          })
-          const json = await res.json()
-          if (res.ok && json.ok) {
-            setLastImportedIds([])
-            try {
-              localStorage.removeItem(LAST_IMPORTED_IDS_KEY)
-            } catch {}
-            fetchStudents()
-            setToast({ message: 'Última lista adicionada foi excluída.', type: 'success' })
-          } else {
-            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
-          }
-        } catch (err) {
-          setToast({ message: 'Erro ao excluir última lista', type: 'error' })
-        }
-      },
-    })
-  }
-
   const handleSendAccessToAll = () => {
     setConfirmModal({
       title: 'Liberar acesso para alunos sem conta',
@@ -1066,42 +911,6 @@ export default function AdminAlunosPage() {
             setSendAccessLoading(false)
           }
         })()
-      },
-    })
-  }
-
-  const handleDeleteLast10Min = () => {
-    setConfirmModal({
-      title: 'Excluir alunos dos últimos 10 minutos',
-      message:
-        'Serão excluídos todos os alunos (matrículas) criados nos últimos 10 minutos. Esta ação não pode ser desfeita. Deseja continuar?',
-      variant: 'danger',
-      confirmLabel: 'Excluir',
-      onConfirm: async () => {
-        try {
-          const res = await fetch('/api/admin/enrollments/delete-recent', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ minutes: 10 }),
-          })
-          const json = await res.json()
-          if (res.ok && json.ok) {
-            setLastImportedIds([])
-            try {
-              localStorage.removeItem(LAST_IMPORTED_IDS_KEY)
-            } catch {}
-            fetchStudents()
-            setToast({
-              message: `${json.data?.deleted ?? 0} aluno(s) criado(s) nos últimos 10 min foram excluídos.`,
-              type: 'success',
-            })
-          } else {
-            setToast({ message: json.message || 'Erro ao excluir', type: 'error' })
-          }
-        } catch (err) {
-          setToast({ message: 'Erro ao excluir alunos recentes', type: 'error' })
-        }
       },
     })
   }
@@ -1502,21 +1311,30 @@ export default function AdminAlunosPage() {
       key: 'nome',
       label: 'Nome',
       fixed: true,
+      minWidthClass: 'min-w-[11rem] sm:min-w-[13rem]',
       sortable: true,
       sortValue: (s: Student) => (s.nome ?? '').toLowerCase(),
       render: (s: Student) => (
-        <div className="flex items-center gap-2">
-          {s.alerts && s.alerts.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setAlertsModalStudent(s)}
-              className={`shrink-0 ${getAlertSymbolColor(s.alerts)}`}
-              title="Ver notificações"
-            >
-              <Bell className="w-4 h-4 fill-current" />
-            </button>
-          ) : null}
-          <span>{s.nome}</span>
+        <div className="min-w-max">
+          <div className="flex items-center gap-2">
+            {s.alerts && s.alerts.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setAlertsModalStudent(s)}
+                className={`shrink-0 ${getAlertSymbolColor(s.alerts)}`}
+                title="Ver notificações"
+              >
+                <Bell className="w-4 h-4 fill-current" />
+              </button>
+            ) : null}
+            <span>{s.nome}</span>
+          </div>
+          <RecordAuditLabel
+            criadoEm={s.criadoEm}
+            atualizadoEm={s.atualizadoEm}
+            createdByName={s.createdByName}
+            updatedByName={s.updatedByName}
+          />
         </div>
       ),
     },
@@ -1540,6 +1358,25 @@ export default function AdminAlunosPage() {
       render: (s: Student) => {
         const idade = calcularIdade(s.dataNascimento)
         return idade != null ? `${idade} anos` : '—'
+      },
+    },
+    {
+      key: 'nivelLivro',
+      label: 'Nível',
+      sortable: true,
+      sortValue: (s: Student) => (s.nivelLivro ?? NIVEL_LIVRO_NAO_DEFINIDO).toLowerCase(),
+      render: (s: Student) => {
+        const nivel = s.nivelLivro ?? NIVEL_LIVRO_NAO_DEFINIDO
+        if (nivel === NIVEL_LIVRO_NAO_DEFINIDO) {
+          return <span className="text-gray-400">não definido</span>
+        }
+        const desc = cefrDescriptionFromBookName(s.livroAtual)
+        const title = [s.livroAtual, desc].filter(Boolean).join(' · ')
+        return (
+          <span className="font-medium text-gray-800" title={title || undefined}>
+            {nivel}
+          </span>
+        )
       },
     },
     { key: 'email', label: 'Email', sortable: true, sortValue: (s: Student) => (s.email ?? '').toLowerCase() },
@@ -1580,13 +1417,12 @@ export default function AdminAlunosPage() {
       key: 'teacherNameForWeek',
       label: 'Professor',
       sortable: true,
-      sortValue: (s: Student) =>
-        (normalizeEnrollmentStatus(s.status) === 'INACTIVE' ? '' : (s.teacherNameForWeek ?? '')).toLowerCase(),
+      sortValue: (s: Student) => (s.teacherNameForWeek ?? '').toLowerCase(),
       render: (s: Student) =>
-        normalizeEnrollmentStatus(s.status) === 'INACTIVE' ? (
-          <span>—</span>
-        ) : s.teacherNameForWeek ? (
+        s.teacherNameForWeek ? (
           <span>{s.teacherNameForWeek}</span>
+        ) : normalizeEnrollmentStatus(s.status) === 'INACTIVE' ? (
+          <span>—</span>
         ) : (
           <span className="text-red-600 font-medium">s/ professor</span>
         ),
@@ -1746,69 +1582,13 @@ export default function AdminAlunosPage() {
 
   return (
     <AdminLayout>
-      <div className="space-y-8">
-        {/* Cabeçalho */}
-        <div className="flex flex-col gap-4">
-          <div>
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900">Alunos</h1>
-            <p className="text-xs sm:text-sm text-gray-600 mt-1">Lista de alunos e matrículas do instituto</p>
-          </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <Button
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  window.open('/admin/alunos/bolsistas', '_blank', 'noopener,noreferrer')
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-1.5 sm:gap-2 border-amber-300 text-amber-900 hover:bg-amber-50 text-xs sm:text-sm"
-              title="Abrir controle de aulas por período (nova guia)"
-            >
-              <Award className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Controle alunos bolsistas</span>
-            </Button>
-            <Button
-              onClick={handleSendAccessToAll}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-1.5 sm:gap-2 border-green-300 text-green-700 hover:bg-green-50 text-xs sm:text-sm"
-              title="Enviar e-mail de acesso (login e senha padrão) para todos os alunos"
-              disabled={sendAccessLoading}
-            >
-              {sendAccessLoading ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <Mail className="w-4 h-4 shrink-0" />}
-              <span className="hidden sm:inline">Liberar acesso</span>
-            </Button>
-            <Button
-              onClick={handleDeleteLast10Min}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-1.5 sm:gap-2 border-red-300 text-red-700 hover:bg-red-50 text-xs sm:text-sm"
-              title="Excluir todos os alunos criados nos últimos 10 minutos (somente admin)"
-            >
-              <Trash2 className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Excluir últimos 10 min</span>
-            </Button>
-            <Button
-              onClick={() => setImportModalOpen(true)}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
-            >
-              <FileSpreadsheet className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Adicionar por lista</span>
-            </Button>
-            <Button variant="primary" size="sm" onClick={handleOpenModal} className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm">
-              <Plus className="w-4 h-4 shrink-0" />
-              Adicionar aluno
-            </Button>
-          </div>
+      <div>
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Alunos</h1>
+          <p className="text-sm text-gray-600">Lista de alunos e matrículas do instituto</p>
         </div>
 
-        {/* Seção: Resumo (estilo financeiro: fundo pastel, borda colorida) */}
-        <section>
-          <h2 className="text-base font-semibold text-gray-800 mb-3">Resumo</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-stretch">
+        <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-stretch">
           {/* Por Status - Mais importantes */}
           <div
             role="button"
@@ -1828,8 +1608,8 @@ export default function AdminAlunosPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => openListModal('enrollmentsInactive', 'Alunos Inativos')}
-            onKeyDown={(e) => e.key === 'Enter' && openListModal('enrollmentsInactive', 'Alunos Inativos')}
+            onClick={() => router.push('/admin/alunos/inativos')}
+            onKeyDown={(e) => e.key === 'Enter' && router.push('/admin/alunos/inativos')}
             className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
           >
             <StatCard
@@ -1955,54 +1735,6 @@ export default function AdminAlunosPage() {
             role="button"
             tabIndex={0}
             onClick={() => {
-              setListModal({ title: 'Alunos com repetição no fim', type: 'repetitionEnding' })
-              setListData([])
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                setListModal({ title: 'Alunos com repetição no fim', type: 'repetitionEnding' })
-                setListData([])
-              }
-            }}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Repetição no fim"
-              value={repetitionEndingStats.count}
-              icon={<CalendarPlus className="w-5 h-5" />}
-              color="indigo"
-              subtitle="Aulas terminando em 1 semana ou menos"
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => {
-              setListModal({ title: 'Alunos fora do valor', type: 'belowHourRate' })
-              setListData([])
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                setListModal({ title: 'Alunos fora do valor', type: 'belowHourRate' })
-                setListData([])
-              }
-            }}
-            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
-          >
-            <StatCard
-              variant="finance"
-              title="Alunos fora do valor"
-              value={belowHourRateStats.count}
-              icon={<CircleDollarSign className="w-5 h-5" />}
-              color="red"
-              subtitle={`Valor hora abaixo de R$ ${BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')} (ativos)`}
-            />
-          </div>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => {
               setListLoading(false)
               setListModal({ title: 'Alunos com infos obrigatórias faltantes', type: 'missingRequired' })
             }}
@@ -2051,11 +1783,33 @@ export default function AdminAlunosPage() {
               color="blue"
             />
           </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListLoading(false)
+              setListModal({ title: 'Alunos com avanço de livro', type: 'bookAdvances' })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListLoading(false)
+                setListModal({ title: 'Alunos com avanço de livro', type: 'bookAdvances' })
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Alunos com avanço de livro"
+              value={bookAdvanceLoading ? '...' : bookAdvanceStats.count}
+              icon={<BookOpen className="w-5 h-5" />}
+              color="teal"
+              subtitle="Clique para ver aluno, professor e livros"
+            />
           </div>
-        </section>
+        </div>
 
-        {/* Buscar e filtros (recolhível) */}
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <button
             type="button"
             onClick={() => setShowBuscarFiltros((v) => !v)}
@@ -2114,16 +1868,15 @@ export default function AdminAlunosPage() {
                 </div>
               </div>
 
-              {/* Linha de filtros + relatório */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 pt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Status</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Status</label>
                   <select
                     value={filters.status}
                     onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                    className="input w-full text-sm py-2"
+                    className="input w-full text-sm"
                   >
-                    <option value="">Todos</option>
+                    <option value="">Todos (exc. inativos)</option>
                     <option value="ACTIVE">Ativo</option>
                     <option value="INACTIVE">Inativo</option>
                     <option value="PAUSED">Pausado</option>
@@ -2136,11 +1889,11 @@ export default function AdminAlunosPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Escola</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Escola</label>
                   <select
                     value={filters.escola}
                     onChange={(e) => setFilters({ ...filters, escola: e.target.value })}
-                    className="input w-full text-sm py-2"
+                    className="input w-full text-sm"
                   >
                     <option value="">Todas</option>
                     <option value="SEIDMANN">Seidmann</option>
@@ -2150,11 +1903,11 @@ export default function AdminAlunosPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tipo</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tipo</label>
                   <select
                     value={filters.tipo}
                     onChange={(e) => setFilters({ ...filters, tipo: e.target.value })}
-                    className="input w-full text-sm py-2"
+                    className="input w-full text-sm"
                   >
                     <option value="">Todos</option>
                     <option value="PARTICULAR">Particular</option>
@@ -2162,15 +1915,27 @@ export default function AdminAlunosPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Professor (semana)</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Professor (semana)</label>
                   <select
                     value={filters.professor}
                     onChange={(e) => setFilters({ ...filters, professor: e.target.value })}
-                    className="input w-full text-sm py-2"
+                    className="input w-full text-sm"
                   >
                     <option value="">Todos</option>
                     <option value="com">Com professor</option>
                     <option value="sem">Sem professor</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Itens por página</label>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                    className="input w-full text-sm"
+                  >
+                    <option value={5}>5</option>
+                    <option value={30}>30</option>
+                    <option value={500}>500</option>
                   </select>
                 </div>
                 <div className="flex items-end">
@@ -2190,37 +1955,63 @@ export default function AdminAlunosPage() {
           )}
         </div>
 
+        <div className="mb-4 flex gap-2 flex-wrap">
+          <Button
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.open('/admin/alunos/bolsistas', '_blank', 'noopener,noreferrer')
+              }
+            }}
+            variant="outline"
+            size="md"
+            className="flex items-center gap-2 border-amber-300 text-amber-900 hover:bg-amber-50"
+            title="Abrir controle de aulas por período (nova guia)"
+          >
+            <Award className="w-4 h-4 shrink-0" />
+            Controle alunos bolsistas
+          </Button>
+          <Button
+            onClick={handleSendAccessToAll}
+            variant="outline"
+            size="md"
+            className="flex items-center gap-2 border-green-300 text-green-700 hover:bg-green-50"
+            title="Enviar e-mail de acesso (login e senha padrão) para todos os alunos"
+            disabled={sendAccessLoading}
+          >
+            {sendAccessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 shrink-0" />}
+            (liberar acessos)
+          </Button>
+          <Link
+            href="/admin/alunos/inativos"
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border-2 font-medium text-sm transition-colors shrink-0 ${
+              (stats?.porStatus.inativos ?? 0) > 0
+                ? 'border-slate-500 bg-slate-100 text-slate-900 hover:bg-slate-200 shadow-sm'
+                : 'border-brand-orange/40 bg-white text-gray-800 hover:bg-orange-50'
+            }`}
+            title="Ver alunos inativos (não aparecem nesta lista)"
+          >
+            <UserX className="w-4 h-4 shrink-0" />
+            <span className="whitespace-nowrap">Alunos inativos</span>
+            {(stats?.porStatus.inativos ?? 0) > 0 && (
+              <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs font-bold text-white">
+                {stats.porStatus.inativos}
+              </span>
+            )}
+          </Link>
+          <Button variant="primary" size="md" onClick={handleOpenModal} className="flex items-center gap-2">
+            <Plus className="w-4 h-4 shrink-0" />
+            Adicionar aluno
+          </Button>
+        </div>
+
         {error && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
             {error}
           </div>
         )}
 
-        {/* Lista de alunos */}
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center gap-3">
-            <h2 className="text-base font-semibold text-gray-800 mr-2">Lista de alunos</h2>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Itens por página</label>
-              <select
-                value={itemsPerPage}
-                onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                className="input min-w-[72px] text-sm py-1.5"
-              >
-                <option value={5}>5</option>
-                <option value={30}>30</option>
-                <option value={500}>500</option>
-              </select>
-            </div>
-            {filteredAndSortedStudents.length > 0 && (
-              <span className="text-sm text-gray-500">
-                {filteredAndSortedStudents.length} aluno(s)
-              </span>
-            )}
-          </div>
-          <div className="px-5 py-4">
         {filteredAndSortedStudents.length > 0 && (
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -2292,19 +2083,17 @@ export default function AdminAlunosPage() {
           </div>
         )}
 
-            <Table
-              columns={columns}
-              data={filteredAndSortedStudents}
-              loading={loading}
-              emptyMessage="Nenhum aluno encontrado"
-              sortKey={sortKey}
-              sortDir={sortDir}
-              onSort={handleSort}
-              visibleColumnKeys={visibleColumnKeys}
-              onVisibleColumnsChange={setVisibleColumnKeys}
-            />
-          </div>
-        </section>
+        <Table
+          columns={columns}
+          data={filteredAndSortedStudents}
+          loading={loading}
+          emptyMessage="Nenhum aluno encontrado"
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSort}
+          visibleColumnKeys={visibleColumnKeys}
+          onVisibleColumnsChange={setVisibleColumnKeys}
+        />
 
         {/* Modal Redefinir senha do aluno */}
         <Modal
@@ -3567,114 +3356,6 @@ export default function AdminAlunosPage() {
           )}
         </Modal>
 
-        {/* Modal Importar por lista */}
-        <Modal
-          isOpen={importModalOpen}
-          onClose={closeImportModal}
-          title="Adicionar alunos por lista"
-          size="md"
-          footer={
-            <>
-              <Button variant="outline" onClick={closeImportModal}>
-                Fechar
-              </Button>
-              {importFile && (
-                <Button
-                  variant="primary"
-                  onClick={() => void handleImportSubmit({ preventDefault: () => {} } as React.FormEvent)}
-                  disabled={importLoading}
-                  className="flex items-center gap-2"
-                >
-                  {importLoading ? (
-                    'Importando...'
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Importar
-                    </>
-                  )}
-                </Button>
-              )}
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Baixe o modelo CSV com as colunas necessárias, preencha com os dados dos alunos e faça o upload.
-            </p>
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadTemplate}
-                className="flex items-center gap-2"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Baixar planilha modelo
-              </Button>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Arquivo CSV
-              </label>
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  setImportFile(f || null)
-                  setImportResult(null)
-                  setImportValidationErrors(null)
-                }}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-brand-orange file:text-white hover:file:bg-orange-600"
-              />
-            </div>
-            {importValidationErrors && (
-              <div className="space-y-2 pt-2 border-t border-amber-200 bg-amber-50 rounded-lg p-4">
-                <p className="text-sm font-medium text-amber-800">
-                  {importValidationErrors.message}
-                </p>
-                {importValidationErrors.totalValidationErrors > 0 && (
-                  <>
-                    <p className="text-xs text-amber-700">
-                      {importValidationErrors.totalValidationErrors} problema(s) encontrado(s). Use a planilha modelo e mantenha a mesma ordem das colunas.
-                    </p>
-                    <ul className="text-xs text-gray-700 max-h-32 overflow-y-auto space-y-0.5 list-disc list-inside">
-                      {importValidationErrors.validationErrors.map((err, i) => (
-                        <li key={i}>
-                          Linha {err.row}: {err.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )}
-            {importResult && (
-              <div className="space-y-2 pt-2 border-t">
-                <p className="text-sm font-medium text-green-700">
-                  {importResult.created} aluno(s) adicionado(s).
-                </p>
-                {importResult.errors.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-amber-700 mb-1">
-                      {importResult.errors.length} linha(s) com erro:
-                    </p>
-                    <ul className="text-xs text-gray-600 max-h-32 overflow-y-auto space-y-0.5">
-                      {importResult.errors.map((err, i) => (
-                        <li key={i}>
-                          Linha {err.row}: {err.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Modal>
-
         {confirmModal && (
           <ConfirmModal
             isOpen={!!confirmModal}
@@ -3698,57 +3379,8 @@ export default function AdminAlunosPage() {
           title={listModal?.title || ''}
           size="xl"
         >
-          {listLoading && listModal?.type !== 'missingRequired' ? (
+          {listLoading && listModal?.type !== 'missingRequired' && listModal?.type !== 'bookAdvances' ? (
             <p className="text-gray-500">Carregando...</p>
-          ) : listModal?.type === 'belowHourRate' ? (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">
-                Matrículas <strong>ativas</strong> com valor da hora-aula (cadastro de pagamento){' '}
-                <strong>menor que R$ {BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')}</strong>.
-                Quem não tem valor da hora preenchido não entra nesta lista.
-              </p>
-              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-white z-10 shadow-sm">
-                    <tr className="border-b border-gray-200">
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Valor hora aula</th>
-                      <th className="py-2 pr-4 font-semibold text-gray-700">Tempo de aula</th>
-                      <th className="py-2 font-semibold text-gray-700">Frequência na semana</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {belowHourRateStats.list.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="py-4 text-center text-gray-500">
-                          Nenhum aluno ativo com hora-aula abaixo de R${' '}
-                          {BELOW_HOUR_RATE_MAX_REAIS.toFixed(2).replace('.', ',')}.
-                        </td>
-                      </tr>
-                    ) : (
-                      belowHourRateStats.list.map((item) => (
-                        <tr key={item.enrollmentId} className="border-b border-gray-100">
-                          <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
-                          <td className="py-3 pr-4 text-sm text-gray-800 tabular-nums">
-                            {item.valorHora != null
-                              ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
-                                  item.valorHora
-                                )
-                              : '—'}
-                          </td>
-                          <td className="py-3 pr-4 text-sm text-gray-700">
-                            {formatTempoAulaMinutosLabel(item.tempoAulaMinutos)}
-                          </td>
-                          <td className="py-3 text-sm text-gray-700">
-                            {item.frequenciaSemanal != null ? `${item.frequenciaSemanal}× por semana` : '—'}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           ) : listModal?.type === 'missingRequired' ? (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3812,8 +3444,49 @@ export default function AdminAlunosPage() {
                 </div>
               )}
             </div>
+          ) : listModal?.type === 'bookAdvances' ? (
+            <TableScrollArea>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Professor</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Livro anterior</th>
+                    <th className="py-2 pr-4 font-semibold text-gray-700">Novo livro</th>
+                    <th className="py-2 font-semibold text-gray-700">Data da aula</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bookAdvanceLoading ? (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-gray-500">
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : bookAdvanceStats.list.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-gray-500">
+                        Nenhum avanço de livro registrado ainda.
+                      </td>
+                    </tr>
+                  ) : (
+                    bookAdvanceStats.list.map((row) => (
+                      <tr key={row.id} className="border-b border-gray-100">
+                        <td className="py-3 pr-4 font-medium text-gray-900">{row.studentName}</td>
+                        <td className="py-3 pr-4 text-gray-700">{row.teacherName}</td>
+                        <td className="py-3 pr-4 text-gray-600">{row.previousBook}</td>
+                        <td className="py-3 pr-4 font-medium text-brand-orange">{row.newBook}</td>
+                        <td className="py-3 text-gray-600">
+                          {new Date(row.advancedAt).toLocaleString('pt-BR')}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </TableScrollArea>
           ) : listModal?.type === 'wrongFrequency' || listModal?.type === 'wrongFrequencyProximaSemana' ? (
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
@@ -3882,78 +3555,7 @@ export default function AdminAlunosPage() {
                   )}
                 </tbody>
               </table>
-            </div>
-          ) : listModal?.type === 'repetitionEnding' ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="py-2 pr-4 font-semibold text-gray-700">Aluno</th>
-                    <th className="py-2 pr-4 font-semibold text-gray-700">Última aula</th>
-                    <th className="py-2 font-semibold text-gray-700">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {repetitionEndingStats.list.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="py-4 text-center text-gray-500">
-                        Nenhum aluno com repetição terminando em 1 semana ou menos.
-                      </td>
-                    </tr>
-                  ) : (
-                    repetitionEndingStats.list.map((item) => {
-                      const lastDate = new Date(item.lastLessonAt)
-                      const formatted = lastDate.toLocaleDateString('pt-BR', {
-                        weekday: 'short',
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                      return (
-                        <tr key={item.enrollmentId} className="border-b border-gray-100">
-                          <td className="py-3 pr-4 font-medium text-gray-900">{item.studentName}</td>
-                          <td className="py-3 pr-4 text-sm text-gray-600">{formatted}</td>
-                          <td className="py-3">
-                            <Button
-                              type="button"
-                              variant="primary"
-                              size="sm"
-                              disabled={extendingRepetitionId === item.enrollmentId}
-                              onClick={async () => {
-                                setExtendingRepetitionId(item.enrollmentId)
-                                try {
-                                  const res = await fetch(`/api/admin/enrollments/${item.enrollmentId}/extend-repetition`, {
-                                    method: 'PATCH',
-                                    credentials: 'include',
-                                  })
-                                  const json = await res.json()
-                                  if (res.ok && json.ok) {
-                                    setToast({ message: json.data?.message ?? 'Aulas repetidas por mais um ano.', type: 'success' })
-                                    fetchRepetitionEndingStats()
-                                    fetchStats()
-                                  } else {
-                                    setToast({ message: json.message ?? 'Erro ao repetir aulas.', type: 'error' })
-                                  }
-                                } catch (e) {
-                                  setToast({ message: 'Erro ao repetir aulas.', type: 'error' })
-                                } finally {
-                                  setExtendingRepetitionId(null)
-                                }
-                              }}
-                              className="px-3 py-1.5 text-sm font-medium"
-                            >
-                              {extendingRepetitionId === item.enrollmentId ? 'Repetindo...' : 'Repetir por mais um ano'}
-                            </Button>
-                          </td>
-                        </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+            </TableScrollArea>
           ) : listData.length === 0 ? (
             <p className="text-gray-500">Nenhum registro.</p>
           ) : listModal?.type === 'studentsBolsistas' ? (
@@ -3961,7 +3563,7 @@ export default function AdminAlunosPage() {
               <p className="text-xs text-gray-500">
                 Horas no mês: estimativa com média de 52÷12 semanas (~4,33 semanas por mês), a partir da frequência e do tempo de cada aula.
               </p>
-              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <TableScrollArea scrollClassName="overflow-x-auto max-h-[60vh] overflow-y-auto">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 bg-white z-10 shadow-sm">
                     <tr className="border-b border-gray-200">
@@ -4005,10 +3607,10 @@ export default function AdminAlunosPage() {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
             </div>
           ) : listModal?.type === 'studentsOutros' ? (
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
@@ -4025,7 +3627,7 @@ export default function AdminAlunosPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           ) : listModal?.type === 'studentsBySchool' ? (
             <div className="space-y-3">
               {(listData as { id: string; nome: string; count: number }[]).map((item) => (
@@ -4061,7 +3663,7 @@ export default function AdminAlunosPage() {
               ))}
             </div>
           ) : listModal?.type === 'studentsWithoutTeacherWeek' || listModal?.type === 'studentsWithoutTeacherNextWeek' ? (
-            <div className="overflow-x-auto">
+            <TableScrollArea>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
@@ -4143,9 +3745,12 @@ export default function AdminAlunosPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           ) : listModal?.type === 'enrollmentsInactive' ? (
-            <div className="overflow-x-auto max-h-[min(60vh,520px)] overflow-y-auto border border-gray-100 rounded-lg">
+            <TableScrollArea
+              className="border border-gray-100 rounded-lg"
+              scrollClassName="overflow-x-auto max-h-[min(60vh,520px)] overflow-y-auto"
+            >
               <table className="w-full text-left border-collapse">
                 <thead className="sticky top-0 bg-white border-b border-gray-200 z-10">
                   <tr>
@@ -4184,7 +3789,7 @@ export default function AdminAlunosPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           ) : (
             <ul className="space-y-1 max-h-96 overflow-y-auto">
               {listData.map((item) => (

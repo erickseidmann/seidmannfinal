@@ -15,6 +15,7 @@ import { requireAdmin } from '@/lib/auth'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -289,9 +290,13 @@ export async function PATCH(
         ;(updateData as Record<string, unknown>).inactiveByUserId = null
       }
 
+      const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
       updatedEnrollment = await prisma.enrollment.update({
         where: { id },
-        data: updateData,
+        data: {
+          ...updateData,
+          ...auditFieldsForUpdate(adminActor),
+        },
       })
 
       // Se o aluno tem conta (userId) e o e-mail foi alterado, atualizar também o e-mail de login do User

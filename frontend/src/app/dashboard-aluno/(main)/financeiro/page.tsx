@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Wallet, Calendar, DollarSign, CheckCircle, AlertCircle, Copy, ExternalLink, FileText, Download } from 'lucide-react'
 import Button from '@/components/ui/Button'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -523,7 +524,7 @@ export default function FinanceiroAlunoPage() {
           ) : (
             <>
               {/* Desktop: Tabela */}
-              <div className="hidden md:block overflow-x-auto">
+              <TableScrollArea className="hidden md:block">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
@@ -560,7 +561,7 @@ export default function FinanceiroAlunoPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollArea>
 
               {/* Mobile: Cards */}
               <div className="md:hidden divide-y divide-gray-200">

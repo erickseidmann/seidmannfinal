@@ -63,6 +63,57 @@ export function extractMovimentacaoMarcadoresExtrato(description: string | null 
   }
 }
 
+/** Competência de referência do valor (ex.: pagamento em maio referente a março). */
+export function parseCompetenciaVinculada(
+  description: string | null | undefined
+): { year: number; month: number } | null {
+  const m = (description ?? '').match(/\[COMPETENCIA_VINCULADA:(\d{1,2})\/(\d{4})\]/i)
+  if (!m) return null
+  const month = Number(m[1])
+  const year = Number(m[2])
+  if (!Number.isFinite(month) || !Number.isFinite(year) || month < 1 || month > 12) return null
+  return { year, month }
+}
+
+export function resolveCompetenciaExibicao(
+  row: { year: number; month: number; description?: string | null },
+  vinculada?: { year: number; month: number } | null
+): { extrato: string; referencia: string | null; referenciaDiferente: boolean } {
+  const extrato = `${String(row.month).padStart(2, '0')}/${row.year}`
+  const ref = vinculada ?? parseCompetenciaVinculada(row.description)
+  if (!ref || (ref.year === row.year && ref.month === row.month)) {
+    return { extrato, referencia: null, referenciaDiferente: false }
+  }
+  return {
+    extrato,
+    referencia: `${String(ref.month).padStart(2, '0')}/${ref.year}`,
+    referenciaDiferente: true,
+  }
+}
+
+export function applyCompetenciaVinculadaMarker(
+  description: string | null | undefined,
+  options: {
+    rowYear: number
+    rowMonth: number
+    vinculadaYear: number
+    vinculadaMonth: number
+    includeMarker: boolean
+  }
+): string | null {
+  const cleaned = (description ?? '')
+    .replace(/\[COMPETENCIA_VINCULADA:[^\]]+\]\s*/gi, '')
+    .trim()
+  if (
+    !options.includeMarker ||
+    (options.vinculadaYear === options.rowYear && options.vinculadaMonth === options.rowMonth)
+  ) {
+    return cleaned || null
+  }
+  const marker = `[COMPETENCIA_VINCULADA:${String(options.vinculadaMonth).padStart(2, '0')}/${options.vinculadaYear}]`
+  return cleaned ? `${marker} ${cleaned}` : marker
+}
+
 type LinhaComValor = {
   description: string | null | undefined
   valor: number | string

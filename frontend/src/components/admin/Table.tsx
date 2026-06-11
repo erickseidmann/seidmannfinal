@@ -9,6 +9,7 @@
 import { ReactNode, useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronUp, Columns } from 'lucide-react'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 
 export interface Column<T> {
   key: string
@@ -20,6 +21,10 @@ export interface Column<T> {
   fixed?: boolean
   /** Alinhamento do cabeçalho e células (padrão: left) */
   align?: 'left' | 'right' | 'center'
+  /** Permite quebra de linha na célula (ex.: metadados abaixo do nome) */
+  wrap?: boolean
+  /** Largura mínima da coluna (ex.: min-w-[13rem]) */
+  minWidthClass?: string
 }
 
 interface TableProps<T> {
@@ -187,15 +192,16 @@ export default function Table<T extends { id: string }>({
           </div>
         </div>
       )}
-      <div
-        className={`-mx-4 sm:mx-0 rounded-lg border border-gray-200 bg-white shadow-sm min-w-0 ${
+      <TableScrollArea
+        className="-mx-4 sm:mx-0 rounded-lg border border-gray-200 bg-white shadow-sm"
+        scrollClassName={
           scrollBodyHeightClass
-            ? `overflow-auto ${scrollBodyHeightClass} [scrollbar-width:thin] [scrollbar-color:rgb(209_213_219)_rgb(243_244_246)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400`
+            ? `overflow-auto ${scrollBodyHeightClass}`
             : 'overflow-x-auto'
-        }`}
+        }
       >
         <div className="min-w-full inline-block">
-          <table className="w-full min-w-[640px]">
+          <table className="w-full min-w-[640px] table-auto">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 {displayColumns.map((column) => {
@@ -206,7 +212,7 @@ export default function Table<T extends { id: string }>({
                   return (
                     <th
                       key={column.key}
-                      className={`whitespace-nowrap ${alignClass} py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${scrollBodyHeightClass ? 'sticky top-0 z-10 bg-gray-50 shadow-[inset_0_-1px_0_0_rgb(229_231_235)]' : ''} ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
+                      className={`whitespace-nowrap ${alignClass} py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm font-semibold text-gray-700 ${column.minWidthClass ?? ''} ${scrollBodyHeightClass ? 'sticky top-0 z-10 bg-gray-50 shadow-[inset_0_-1px_0_0_rgb(229_231_235)]' : ''} ${canSort ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
                       onClick={() => canSort && onSort(column.key)}
                     >
                       <span className="inline-flex items-center gap-1">
@@ -237,7 +243,7 @@ export default function Table<T extends { id: string }>({
                     const align = column.align ?? 'left'
                     const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
                     return (
-                      <td key={column.key} className={`py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm text-gray-900 whitespace-nowrap ${alignClass}`}>
+                      <td key={column.key} className={`py-2 sm:py-3 px-2 sm:px-3 text-xs sm:text-sm text-gray-900 align-top ${column.wrap ? 'whitespace-normal' : 'whitespace-nowrap'} ${column.minWidthClass ?? ''} ${alignClass}`}>
                         {column.render ? column.render(item) : (item as any)[column.key]}
                       </td>
                     )
@@ -247,7 +253,7 @@ export default function Table<T extends { id: string }>({
             </tbody>
           </table>
         </div>
-      </div>
+      </TableScrollArea>
     </div>
   )
 }

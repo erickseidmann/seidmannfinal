@@ -1,12 +1,14 @@
 /**
  * API Route: POST /api/admin/teachers/[id]/toggle
- * 
- * Ativa/desativa professor (toggle status ACTIVE/INACTIVE)
+ *
+ * Ativa/desativa professor (toggle status ACTIVE/INACTIVE).
+ * Inativação grava inactiveAt (hoje BRT), revoga User.status e bloqueia acesso.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { applyTeacherStatusChange } from '@/lib/teacher-status-change'
 
 export async function POST(
   request: NextRequest,
@@ -23,7 +25,6 @@ export async function POST(
 
     const { id } = params
 
-    // Verificar se o model existe no Prisma Client
     if (!prisma.teacher) {
       console.error('[api/admin/teachers/[id]/toggle] Model Teacher não encontrado no Prisma Client. Execute: npx prisma generate')
       return NextResponse.json(
@@ -34,6 +35,7 @@ export async function POST(
 
     const teacher = await prisma.teacher.findUnique({
       where: { id },
+      select: { id: true, nome: true, status: true, userId: true },
     })
 
     if (!teacher) {
@@ -43,21 +45,30 @@ export async function POST(
       )
     }
 
-    // Toggle: ACTIVE -> INACTIVE, INACTIVE -> ACTIVE
-    const newStatus = teacher.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+    let inactiveFrom: string | undefined
+    try {
+      const body = await request.json()
+      if (body && typeof body.inactiveFrom === 'string') {
+        inactiveFrom = body.inactiveFrom
+      }
+    } catch {
+      // body opcional
+    }
 
-    const updated = await prisma.teacher.update({
-      where: { id },
-      data: { status: newStatus },
+    const newStatus = teacher.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+    const result = await applyTeacherStatusChange(id, newStatus, {
+      inactiveFrom: newStatus === 'INACTIVE' ? inactiveFrom : undefined,
+      userId: teacher.userId,
     })
 
     return NextResponse.json({
       ok: true,
       data: {
         teacher: {
-          id: updated.id,
-          nome: updated.nome,
-          status: updated.status,
+          id: teacher.id,
+          nome: teacher.nome,
+          status: result.status,
+          inactiveAt: result.inactiveAt?.toISOString() ?? null,
         },
         message: `Professor ${newStatus === 'ACTIVE' ? 'ativado' : 'desativado'} com sucesso`,
       },

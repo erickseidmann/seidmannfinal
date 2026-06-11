@@ -1,7 +1,7 @@
 /**
  * POST /api/admin/financeiro/boletos-e-lembretes
- * Gera boleto/PIX na Cora para todos os alunos do mês (exceto método cartão) e envia e-mail de lembrete.
- * O e-mail inclui aviso: "Se você já realizou o pagamento, desconsidere este e-mail."
+ * Gera boleto/PIX na Cora para alunos elegíveis do mês e envia e-mail de lembrete.
+ * Nunca gera boleto duplicado: quem já tem cobrança no mês ou não paga por boleto é ignorado.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -11,25 +11,20 @@ import { requireAdmin } from '@/lib/auth'
 import { getEnrollmentFinanceData } from '@/lib/finance'
 import { sendEmail, lembretePagamentoContent } from '@/lib/email'
 import { generateMonthlyBilling } from '@/lib/cora/billing'
+import {
+  enrollmentEligibleForBoleto,
+} from '@/lib/boleto-eligibility'
 
 const bodySchema = z.object({
   year: z.number().int().min(2020).max(2100),
   month: z.number().int().min(1).max(12),
 })
 
-function isCartao(metodoPagamento: string | null, paymentInfoMetodo: string | null): boolean {
-  const m = (metodoPagamento ?? '').toUpperCase().trim()
-  const p = (paymentInfoMetodo ?? '').toUpperCase().trim()
-  return m === 'CARTAO' || p === 'CARTAO' || m === 'CARTÃO' || p === 'CARTÃO'
-}
-
-/** Próxima data de vencimento dado o dia do mês (1-31). */
 function nextDueDateFromDay(dayOfMonth: number, year: number, month: number): Date {
   const lastDay = new Date(year, month, 0).getDate()
   const day = Math.min(dayOfMonth, lastDay)
   return new Date(year, month - 1, day)
 }
-
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,38 +82,41 @@ export async function POST(request: NextRequest) {
     })
     const invoiceSet = new Set(existingInvoices.map((r) => r.enrollmentId))
 
-    const toProcess = enrollments.filter((e) => {
-      if ((e as { bolsista?: boolean | null }).bolsista) return false
-      // Não gerar boleto/PIX para alunos faturados em nome de EMPRESA
-      const faturamentoTipo = (e as { faturamentoTipo?: string | null }).faturamentoTipo ?? 'ALUNO'
-      if (faturamentoTipo === 'EMPRESA') return false
-
-      // Não gerar cobrança para quem paga com cartão
-      if (isCartao((e as { metodoPagamento?: string | null }).metodoPagamento ?? null, e.paymentInfo?.metodo ?? null)) return false
-
-      // Não gerar cobrança para quem já está marcado como PAGO no mês
-      if (paidSet.has(e.id)) return false
-
-      return true
-    })
-
     const boletoErrors: Array<{ name: string; error: string }> = []
-    const enrollmentIdsWithBoleto: string[] = []
+    const newlyCreatedIds: string[] = []
+    let skippedExisting = 0
+    let skippedPaid = 0
+    let skippedIneligible = 0
 
-    for (const enrollment of toProcess) {
-      if (invoiceSet.has(enrollment.id)) {
-        enrollmentIdsWithBoleto.push(enrollment.id)
+    for (const enrollment of enrollments) {
+      if (paidSet.has(enrollment.id)) {
+        skippedPaid++
         continue
       }
+
+      if (invoiceSet.has(enrollment.id)) {
+        skippedExisting++
+        continue
+      }
+
+      if (!enrollmentEligibleForBoleto(enrollment)) {
+        skippedIneligible++
+        continue
+      }
+
       try {
-        await generateMonthlyBilling({
+        const result = await generateMonthlyBilling({
           enrollmentId: enrollment.id,
           year,
           month,
           performedBy,
         })
-        enrollmentIdsWithBoleto.push(enrollment.id)
-        invoiceSet.add(enrollment.id)
+        if (result.created) {
+          newlyCreatedIds.push(enrollment.id)
+          invoiceSet.add(enrollment.id)
+        } else {
+          skippedExisting++
+        }
       } catch (error) {
         boletoErrors.push({
           name: enrollment.nome,
@@ -127,10 +125,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Buscar links do boleto e PIX para incluir no e-mail de lembrete
+    if (newlyCreatedIds.length === 0 && skippedExisting > 0 && boletoErrors.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        boletosGerados: 0,
+        boletosJaExistiam: skippedExisting,
+        boletosIgnoradosPagos: skippedPaid,
+        boletosIgnoradosInelegiveis: skippedIneligible,
+        emailsEnviados: 0,
+        emailsErros: 0,
+        message:
+          'Nenhum boleto novo gerado: todos os alunos elegíveis deste mês já possuem cobrança ou não pagam por boleto.',
+      })
+    }
+
     const coraInvoices = await prisma.coraInvoice.findMany({
       where: {
-        enrollmentId: { in: enrollmentIdsWithBoleto },
+        enrollmentId: { in: newlyCreatedIds },
         year,
         month,
       },
@@ -157,7 +168,7 @@ export async function POST(request: NextRequest) {
     let emailsEnviados = 0
     const emailErrors: Array<{ name: string; error: string }> = []
 
-    for (const enrollmentId of enrollmentIdsWithBoleto) {
+    for (const enrollmentId of newlyCreatedIds) {
       const enrollment = await prisma.enrollment.findUnique({
         where: { id: enrollmentId },
         include: { paymentInfo: true, user: { select: { email: true } } },
@@ -196,7 +207,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      boletosGerados: enrollmentIdsWithBoleto.length - boletoErrors.length,
+      boletosGerados: newlyCreatedIds.length,
+      boletosJaExistiam: skippedExisting,
+      boletosIgnoradosPagos: skippedPaid,
+      boletosIgnoradosInelegiveis: skippedIneligible,
       boletosErros: boletoErrors.length,
       emailsEnviados,
       emailsErros: emailErrors.length,

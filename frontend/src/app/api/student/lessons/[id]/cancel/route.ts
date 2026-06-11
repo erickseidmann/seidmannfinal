@@ -8,6 +8,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isLessonCancelledFamily } from '@/lib/lesson-status'
 import { requireStudent } from '@/lib/auth'
+import {
+  createNoShowLessonRecordIfMissing,
+  isLessonCancelamentoTardio,
+} from '@/lib/lesson-no-show-record'
 
 function formatarDataHora(d: Date): string {
   return d.toLocaleString('pt-BR', {
@@ -53,6 +57,8 @@ export async function POST(
             nome: true,
             email: true,
             tipoAula: true,
+            escolaMatricula: true,
+            cancelamentoAntecedenciaHoras: true,
           },
         },
       },
@@ -106,22 +112,40 @@ export async function POST(
       )
     }
 
-    // Cancelar a aula (sem restrição de tempo mínimo para cancelamento direto)
+    // Cancelar a aula — tardio (em cima da hora) = sem reposição + registro de falta automático
     const agora = new Date()
     const notesAtuais = lesson.notes
     const novaObservacao = adicionarObservacaoCancelamento(notesAtuais, 'aluno', agora)
-    
+
+    const cancelamentoTardio = isLessonCancelamentoTardio(
+      lesson.startAt,
+      lesson.enrollment.escolaMatricula,
+      lesson.enrollment.cancelamentoAntecedenciaHoras,
+      agora
+    )
+    const novoStatus = cancelamentoTardio ? 'CANCELLED_NO_REPLACEMENT' : 'CANCELLED'
+
     await prisma.lesson.update({
       where: { id: lessonId },
       data: {
-        status: 'CANCELLED',
+        status: novoStatus,
         notes: novaObservacao,
       },
     })
 
+    if (cancelamentoTardio) {
+      try {
+        await createNoShowLessonRecordIfMissing(lessonId)
+      } catch (recordErr) {
+        console.error('[api/student/lessons/[id]/cancel POST] Erro ao criar registro de falta:', recordErr)
+      }
+    }
+
     return NextResponse.json({
       ok: true,
-      message: 'Aula cancelada com sucesso',
+      message: cancelamentoTardio
+        ? 'Aula cancelada. Registrado como não compareceu (sem reposição).'
+        : 'Aula cancelada com sucesso',
     })
   } catch (error) {
     console.error('[api/student/lessons/[id]/cancel POST]', error)

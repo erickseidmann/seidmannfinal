@@ -8,12 +8,25 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
+import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
-import { Plus, Pencil, Trash2, Loader2, CalendarX } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, CalendarX, Unlock, Check, X, FileDown, Search } from 'lucide-react'
+import { LESSON_RECORD_UNLOCK_STATUS_LABELS } from '@/lib/lesson-record-unlock'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import {
+  bookAdvanceConfirmMessage,
+  checkBookProgression,
+  findLatestRecordBookFromList,
+  resolveBookProgressionReference,
+} from '@/lib/lesson-record-book-progression'
+import {
+  downloadLessonRecordsPdf,
+  getLessonRecordAlunoLabel,
+  getLessonRecordPresenceLabel,
+} from '@/lib/lesson-records-pdf-export'
 
 interface StudentPresenceItem {
   enrollmentId: string
@@ -151,6 +164,25 @@ const emptyForm: FormState = {
   gradeUnderstanding: '',
 }
 
+function toDateInputValue(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function enrollmentOptionLabel(e: { nome: string; tipoAula?: string | null; nomeGrupo?: string | null }): string {
+  if (e.tipoAula === 'GRUPO' && e.nomeGrupo?.trim()) return e.nomeGrupo.trim()
+  return e.nome
+}
+
+type FilterScope = 'all' | 'teacher' | 'student'
+
+interface SelectOption {
+  id: string
+  label: string
+}
+
 /** Rótulo da aula no select: grupo = nome do grupo, particular = nome do aluno */
 function getLessonOptionLabel(l: LessonOption): string {
   const enr = l.enrollment
@@ -165,18 +197,31 @@ export default function AdminRegistrosAulasPage() {
   const router = useRouter()
   const [records, setRecords] = useState<LessonRecord[]>([])
   const [lessons, setLessons] = useState<LessonOption[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [teacherOptions, setTeacherOptions] = useState<SelectOption[]>([])
+  const [enrollmentOptions, setEnrollmentOptions] = useState<SelectOption[]>([])
+  const defaultEnd = useMemo(() => new Date(), [])
+  const defaultStart = useMemo(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 30)
+    return d
+  }, [])
+  const [filterStartDate, setFilterStartDate] = useState(() => toDateInputValue(defaultStart))
+  const [filterEndDate, setFilterEndDate] = useState(() => toDateInputValue(defaultEnd))
+  const [filterScope, setFilterScope] = useState<FilterScope>('all')
+  const [filterTeacherId, setFilterTeacherId] = useState('')
+  const [filterEnrollmentId, setFilterEnrollmentId] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingOriginalBook, setEditingOriginalBook] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
   const [studentsPresence, setStudentsPresence] = useState<{ enrollmentId: string; presence: string }[]>([])
   const [loadingGroup, setLoadingGroup] = useState(false)
-  const [filterProfessor, setFilterProfessor] = useState<string>('')
-  const [filterAluno, setFilterAluno] = useState<string>('')
-  const [filterMes, setFilterMes] = useState<string>('')
 
   // Bulk delete por dia
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
@@ -195,9 +240,106 @@ export default function AdminRegistrosAulasPage() {
     records: BulkDeletePreviewItem[]
   } | null>(null)
 
-  const fetchRecords = useCallback(async () => {
+  interface UnlockRequestRow {
+    id: string
+    status: 'PENDING' | 'APPROVED' | 'DENIED'
+    message: string | null
+    adminNotes: string | null
+    criadoEm: string
+    processedAt: string | null
+    teacher: { id: string; nome: string; email: string }
+    processedBy: { id: string; nome: string; email: string } | null
+    lesson: {
+      id: string
+      startAt: string
+      status: string
+      hasRecord: boolean
+      enrollment: { id: string; nome: string; tipoAula: string | null; nomeGrupo: string | null }
+    }
+  }
+  const [unlocksModalOpen, setUnlocksModalOpen] = useState(false)
+  const [unlockRequests, setUnlockRequests] = useState<UnlockRequestRow[]>([])
+  const [unlockPendingCount, setUnlockPendingCount] = useState(0)
+  const [unlocksLoading, setUnlocksLoading] = useState(false)
+  const [processingUnlockId, setProcessingUnlockId] = useState<string | null>(null)
+  const [unlockNotesById, setUnlockNotesById] = useState<Record<string, string>>({})
+
+  const fetchUnlockRequests = useCallback(async () => {
+    setUnlocksLoading(true)
     try {
-      const res = await fetch('/api/admin/lesson-records', { credentials: 'include' })
+      const res = await fetch('/api/admin/lesson-record-unlock-requests', { credentials: 'include' })
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json.message || 'Erro ao carregar liberações')
+      setUnlockRequests(json.data.requests || [])
+      setUnlockPendingCount(json.data.pendingCount ?? 0)
+    } catch (err) {
+      setToast({
+        message: err instanceof Error ? err.message : 'Erro ao carregar liberações',
+        type: 'error',
+      })
+    } finally {
+      setUnlocksLoading(false)
+    }
+  }, [])
+
+  const openUnlocksModal = () => {
+    setUnlocksModalOpen(true)
+    fetchUnlockRequests()
+  }
+
+  const processUnlockRequest = async (id: string, action: 'APPROVE' | 'DENY') => {
+    setProcessingUnlockId(id)
+    try {
+      const res = await fetch(`/api/admin/lesson-record-unlock-requests/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action,
+          adminNotes: unlockNotesById[id]?.trim() || null,
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        setToast({ message: json.message || 'Erro ao processar', type: 'error' })
+        return
+      }
+      setToast({
+        message: json.message || (action === 'APPROVE' ? 'Liberação concedida' : 'Solicitação negada'),
+        type: 'success',
+      })
+      fetchUnlockRequests()
+    } catch {
+      setToast({ message: 'Erro ao processar solicitação', type: 'error' })
+    } finally {
+      setProcessingUnlockId(null)
+    }
+  }
+
+  useEffect(() => {
+    fetch('/api/admin/lesson-record-unlock-requests?status=PENDING', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok) setUnlockPendingCount(json.data?.pendingCount ?? 0)
+      })
+      .catch(() => {})
+  }, [])
+
+  const fetchRecords = useCallback(async () => {
+    if (!filterStartDate || !filterEndDate) return
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        start: new Date(`${filterStartDate}T00:00:00`).toISOString(),
+        end: new Date(`${filterEndDate}T23:59:59.999`).toISOString(),
+      })
+      if (filterScope === 'teacher' && filterTeacherId) {
+        params.set('teacherId', filterTeacherId)
+      }
+      if (filterScope === 'student' && filterEnrollmentId) {
+        params.set('enrollmentId', filterEnrollmentId)
+      }
+      const res = await fetch(`/api/admin/lesson-records?${params}`, { credentials: 'include' })
       const json = await res.json()
       if (!res.ok || !json.ok) {
         if (res.status === 401 || res.status === 403) {
@@ -209,10 +351,18 @@ export default function AdminRegistrosAulasPage() {
       setRecords(json.data.records || [])
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erro ao carregar registros', type: 'error' })
+      setRecords([])
     } finally {
       setLoading(false)
     }
-  }, [router])
+  }, [
+    filterStartDate,
+    filterEndDate,
+    filterScope,
+    filterTeacherId,
+    filterEnrollmentId,
+    router,
+  ])
 
   const fetchLessons = useCallback(async () => {
     const start = new Date()
@@ -232,8 +382,88 @@ export default function AdminRegistrosAulasPage() {
   }, [])
 
   useEffect(() => {
-    fetchRecords()
-  }, [fetchRecords])
+    Promise.all([
+      fetch('/api/admin/teachers?limit=500', { credentials: 'include' }).then((r) => r.json()),
+      fetch('/api/admin/enrollments?limit=500', { credentials: 'include' }).then((r) => r.json()),
+    ])
+      .then(([teachersJson, enrollmentsJson]) => {
+        if (teachersJson.ok && Array.isArray(teachersJson.data?.teachers)) {
+          setTeacherOptions(
+            teachersJson.data.teachers
+              .map((t: { id: string; nome: string }) => ({ id: t.id, label: t.nome }))
+              .sort((a: SelectOption, b: SelectOption) => a.label.localeCompare(b.label, 'pt-BR'))
+          )
+        }
+        if (enrollmentsJson.ok && Array.isArray(enrollmentsJson.data?.enrollments)) {
+          const seen = new Set<string>()
+          const options: SelectOption[] = []
+          for (const e of enrollmentsJson.data.enrollments as {
+            id: string
+            nome: string
+            tipoAula?: string | null
+            nomeGrupo?: string | null
+          }[]) {
+            const label = enrollmentOptionLabel(e)
+            const key = e.tipoAula === 'GRUPO' && e.nomeGrupo?.trim() ? `grupo:${e.nomeGrupo.trim()}` : e.id
+            if (seen.has(key)) continue
+            seen.add(key)
+            options.push({ id: e.id, label })
+          }
+          options.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
+          setEnrollmentOptions(options)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const filterScopeLabel = useMemo(() => {
+    if (filterScope === 'teacher') {
+      const t = teacherOptions.find((o) => o.id === filterTeacherId)
+      return t ? `Professor: ${t.label}` : 'Professor'
+    }
+    if (filterScope === 'student') {
+      const e = enrollmentOptions.find((o) => o.id === filterEnrollmentId)
+      return e ? `Aluno / grupo: ${e.label}` : 'Aluno / grupo'
+    }
+    return 'Todos'
+  }, [filterScope, filterTeacherId, filterEnrollmentId, teacherOptions, enrollmentOptions])
+
+  const handleSearch = () => {
+    if (!filterStartDate || !filterEndDate) {
+      setToast({ message: 'Selecione o período (De e Até).', type: 'error' })
+      return
+    }
+    if (filterStartDate > filterEndDate) {
+      setToast({ message: 'A data inicial não pode ser posterior à final.', type: 'error' })
+      return
+    }
+    if (filterScope === 'teacher' && !filterTeacherId) {
+      setToast({ message: 'Selecione um professor.', type: 'error' })
+      return
+    }
+    if (filterScope === 'student' && !filterEnrollmentId) {
+      setToast({ message: 'Selecione um aluno ou grupo.', type: 'error' })
+      return
+    }
+    setHasSearched(true)
+    void fetchRecords()
+  }
+
+  const handleDownloadPdf = async () => {
+    if (records.length === 0) return
+    setDownloadingPdf(true)
+    try {
+      await downloadLessonRecordsPdf(records, {
+        startDate: filterStartDate,
+        endDate: filterEndDate,
+        scopeLabel: filterScopeLabel,
+      })
+    } catch {
+      setToast({ message: 'Erro ao gerar PDF', type: 'error' })
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }
 
   useEffect(() => {
     if (modalOpen) fetchLessons()
@@ -253,34 +483,6 @@ export default function AdminRegistrosAulasPage() {
     ? lessonsWithoutRecord.find((l) => l.id === form.lessonId) ?? records.find((r) => r.lessonId === form.lessonId)?.lesson ?? null
     : null
   const isGroupLesson = selectedLessonForGroup?.enrollment?.tipoAula === 'GRUPO' && selectedLessonForGroup?.enrollment?.nomeGrupo?.trim()
-
-  const filteredRecords = useMemo(() => {
-    let list = [...records]
-    if (filterProfessor.trim()) {
-      const search = filterProfessor.toLowerCase()
-      list = list.filter((r) => r.lesson.teacher.nome.toLowerCase().includes(search))
-    }
-    if (filterAluno.trim()) {
-      const search = filterAluno.toLowerCase()
-      list = list.filter((r) => {
-        const isGroup = r.lesson.enrollment?.tipoAula === 'GRUPO' && r.lesson.enrollment?.nomeGrupo?.trim()
-        const alunoLabel = isGroup ? (r.lesson.enrollment.nomeGrupo?.trim() ?? r.lesson.enrollment.nome) : r.lesson.enrollment.nome
-        return alunoLabel.toLowerCase().includes(search)
-      })
-    }
-    if (filterMes) {
-      const [yearStr, monthStr] = filterMes.split('-')
-      const year = Number(yearStr)
-      const month = Number(monthStr)
-      if (!Number.isNaN(year) && !Number.isNaN(month)) {
-        list = list.filter((r) => {
-          const d = new Date(r.lesson.startAt)
-          return d.getFullYear() === year && d.getMonth() + 1 === month
-        })
-      }
-    }
-    return list
-  }, [records, filterProfessor, filterAluno, filterMes])
 
   useEffect(() => {
     if (!modalOpen || !isGroupLesson || !selectedLessonForGroup?.enrollment?.nomeGrupo) {
@@ -324,8 +526,42 @@ export default function AdminRegistrosAulasPage() {
     }))
   }, [modalOpen, editingId, form.lessonId, lessons, records])
 
+  const modalEnrollmentId = useMemo(() => {
+    if (form.lessonId) {
+      const lesson = lessons.find((l) => l.id === form.lessonId)
+      if (lesson) return lesson.enrollment.id
+    }
+    if (editingId) {
+      const rec = records.find((r) => r.id === editingId)
+      if (rec) return rec.lesson.enrollment.id
+    }
+    return null
+  }, [form.lessonId, editingId, lessons, records])
+
+  const bookProgressionReference = useMemo(() => {
+    if (!modalEnrollmentId) return null
+    const latest = findLatestRecordBookFromList(records, modalEnrollmentId)
+    return resolveBookProgressionReference({
+      latestRecordBook: latest?.book,
+      latestRecordId: latest?.recordId,
+      editingRecordId: editingId,
+      editingOriginalBook,
+    })
+  }, [modalEnrollmentId, records, editingId, editingOriginalBook])
+
+  const modalStudentName = useMemo(() => {
+    if (form.lessonId) {
+      return lessons.find((l) => l.id === form.lessonId)?.enrollment?.nome ?? null
+    }
+    if (editingId) {
+      return records.find((r) => r.id === editingId)?.lesson.enrollment.nome ?? null
+    }
+    return null
+  }, [form.lessonId, editingId, lessons, records])
+
   const openAdd = () => {
     setEditingId(null)
+    setEditingOriginalBook(null)
     setForm(emptyForm)
     setGroupMembers([])
     setStudentsPresence([])
@@ -334,6 +570,7 @@ export default function AdminRegistrosAulasPage() {
 
   const openEdit = (record: LessonRecord) => {
     setEditingId(record.id)
+    setEditingOriginalBook(record.book?.trim() || null)
     setForm({
       lessonId: record.lessonId,
       status: (record.status === 'CANCELLED' || record.status === 'REPOSICAO' ? record.status : 'CONFIRMED'),
@@ -367,23 +604,7 @@ export default function AdminRegistrosAulasPage() {
     setModalOpen(true)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (editingId) {
-      const status =
-        lessons.find((l) => l.id === form.lessonId)?.status ??
-        records.find((r) => r.id === editingId)?.lesson?.status
-      if (!canRegisterLesson(status ?? '')) {
-        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
-        return
-      }
-    } else {
-      const lesson = lessons.find((l) => l.id === form.lessonId)
-      if (!lesson || !canRegisterLesson(lesson.status)) {
-        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
-        return
-      }
-    }
+  const saveRecord = async (confirmBookAdvance = false) => {
     setSaving(true)
     try {
       const payload = {
@@ -406,6 +627,7 @@ export default function AdminRegistrosAulasPage() {
         gradeSpeaking: form.lessonType === 'AVALIACAO' && form.gradeSpeaking !== '' ? Number(form.gradeSpeaking) : null,
         gradeListening: form.lessonType === 'AVALIACAO' && form.gradeListening !== '' ? Number(form.gradeListening) : null,
         gradeUnderstanding: form.lessonType === 'AVALIACAO' && form.gradeUnderstanding !== '' ? Number(form.gradeUnderstanding) : null,
+        ...(confirmBookAdvance ? { confirmBookAdvance: true } : {}),
       }
 
       const url = editingId
@@ -426,12 +648,57 @@ export default function AdminRegistrosAulasPage() {
       }
       setToast({ message: editingId ? 'Registro atualizado' : 'Registro criado', type: 'success' })
       setModalOpen(false)
+      setEditingOriginalBook(null)
+      setHasSearched(true)
       fetchRecords()
-    } catch (err) {
+    } catch {
       setToast({ message: 'Erro ao salvar', type: 'error' })
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (editingId) {
+      const status =
+        lessons.find((l) => l.id === form.lessonId)?.status ??
+        records.find((r) => r.id === editingId)?.lesson?.status
+      if (!canRegisterLesson(status ?? '')) {
+        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
+        return
+      }
+    } else {
+      const lesson = lessons.find((l) => l.id === form.lessonId)
+      if (!lesson || !canRegisterLesson(lesson.status)) {
+        setToast({ message: LESSON_RECORD_BLOCKED_MESSAGE, type: 'error' })
+        return
+      }
+    }
+
+    if (form.book.trim()) {
+      const bookCheck = checkBookProgression(form.book, bookProgressionReference)
+      if (!bookCheck.ok && bookCheck.code === 'RETROGRADE') {
+        setToast({ message: bookCheck.message, type: 'error' })
+        return
+      }
+      if (!bookCheck.ok && bookCheck.code === 'ADVANCE_NEEDS_CONFIRM') {
+        const ok = await confirm({
+          title: 'Atenção',
+          message: bookAdvanceConfirmMessage(
+            bookCheck.referenceBook,
+            bookCheck.newBook,
+            modalStudentName ?? undefined
+          ),
+          confirmLabel: 'Sim, progredir',
+        })
+        if (!ok) return
+        await saveRecord(true)
+        return
+      }
+    }
+
+    await saveRecord(false)
   }
 
   const openBulkDelete = () => {
@@ -537,6 +804,23 @@ export default function AdminRegistrosAulasPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={openUnlocksModal}
+              className={`inline-flex items-center gap-2 rounded-lg border-2 px-4 py-2 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                unlockPendingCount > 0
+                  ? 'border-amber-500 bg-amber-50 text-amber-900 hover:bg-amber-100 focus:ring-amber-500 animate-pulse'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-gray-400'
+              }`}
+            >
+              <Unlock className="w-4 h-4" />
+              Liberações
+              {unlockPendingCount > 0 && (
+                <span className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-600 px-1.5 text-xs font-bold text-white">
+                  {unlockPendingCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={openBulkDelete}
               className="inline-flex items-center gap-2 rounded-lg border-2 border-red-500 px-4 py-2 text-sm font-semibold text-red-600 transition-all duration-200 hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
               title="Remove todos os registros de aula de um dia específico"
@@ -551,62 +835,131 @@ export default function AdminRegistrosAulasPage() {
           </div>
         </div>
 
-        {loading ? (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-4">
+          <p className="text-sm text-gray-600">
+            Selecione o período e, se quiser, filtre por professor ou aluno/grupo. Clique em{' '}
+            <strong>Buscar</strong> para carregar os registros.
+          </p>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">De</label>
+              <input
+                type="date"
+                value={filterStartDate}
+                onChange={(e) => setFilterStartDate(e.target.value)}
+                className="input w-[160px]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Até</label>
+              <input
+                type="date"
+                value={filterEndDate}
+                onChange={(e) => setFilterEndDate(e.target.value)}
+                className="input w-[160px]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Ver</label>
+              <select
+                value={filterScope}
+                onChange={(e) => {
+                  const scope = e.target.value as FilterScope
+                  setFilterScope(scope)
+                  if (scope !== 'teacher') setFilterTeacherId('')
+                  if (scope !== 'student') setFilterEnrollmentId('')
+                }}
+                className="input w-[180px]"
+              >
+                <option value="all">Todos</option>
+                <option value="teacher">Um professor</option>
+                <option value="student">Um aluno / grupo</option>
+              </select>
+            </div>
+            {filterScope === 'teacher' && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Professor</label>
+                <select
+                  value={filterTeacherId}
+                  onChange={(e) => setFilterTeacherId(e.target.value)}
+                  className="input w-[220px]"
+                >
+                  <option value="">Selecione...</option>
+                  {teacherOptions.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {filterScope === 'student' && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Aluno / Grupo</label>
+                <select
+                  value={filterEnrollmentId}
+                  onChange={(e) => setFilterEnrollmentId(e.target.value)}
+                  className="input w-[240px]"
+                >
+                  <option value="">Selecione...</option>
+                  {enrollmentOptions.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <Button variant="primary" onClick={handleSearch} disabled={loading}>
+              {loading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 mr-2" />
+              )}
+              Buscar
+            </Button>
+            {hasSearched && records.length > 0 && (
+              <Button variant="outline" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
+                {downloadingPdf ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FileDown className="w-4 h-4 mr-2" />
+                )}
+                Baixar PDF
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {!hasSearched ? (
+          <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+            Selecione o período e clique em &quot;Buscar&quot; para ver os registros de aula.
+          </div>
+        ) : loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
           </div>
         ) : records.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
-            Nenhum registro de aula ainda. Clique em &quot;Adicionar aula&quot; para registrar uma aula.
+            Nenhum registro encontrado para os filtros selecionados.
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="px-4 pt-4 pb-2 border-b border-gray-200 flex flex-wrap gap-3 items-end">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Professor</label>
-                <input
-                  type="text"
-                  value={filterProfessor}
-                  onChange={(e) => setFilterProfessor(e.target.value)}
-                  placeholder="Nome do professor..."
-                  className="input w-[200px]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Aluno / Grupo</label>
-                <input
-                  type="text"
-                  value={filterAluno}
-                  onChange={(e) => setFilterAluno(e.target.value)}
-                  placeholder="Nome do aluno ou grupo..."
-                  className="input w-[220px]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Mês</label>
-                <input
-                  type="month"
-                  value={filterMes}
-                  onChange={(e) => setFilterMes(e.target.value)}
-                  className="input w-[160px]"
-                />
-              </div>
-              {(filterProfessor || filterAluno || filterMes) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterProfessor('')
-                    setFilterAluno('')
-                    setFilterMes('')
-                  }}
-                  className="text-xs text-gray-500 hover:text-gray-700 mt-5"
-                >
-                  Limpar filtros
-                </button>
-              )}
+            <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-gray-600">
+                {records.length} registro(s) — {filterScopeLabel}
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
+                {downloadingPdf ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FileDown className="w-4 h-4 mr-2" />
+                )}
+                Baixar PDF
+              </Button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+            <TableScrollArea>
+              <table className="w-max min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Data / Hora</th>
@@ -619,15 +972,13 @@ export default function AdminRegistrosAulasPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {filteredRecords.map((r) => {
+                  {records.map((r) => {
+                    const alunoLabel = getLessonRecordAlunoLabel(r)
+                    const presenceLabel = getLessonRecordPresenceLabel(r)
                     const isGroup = r.lesson.enrollment?.tipoAula === 'GRUPO' && r.lesson.enrollment?.nomeGrupo?.trim()
-                    const alunoLabel = isGroup ? (r.lesson.enrollment.nomeGrupo?.trim() ?? r.lesson.enrollment.nome) : r.lesson.enrollment.nome
-                    const presenceLabel = isGroup && r.studentPresences?.length
-                      ? r.studentPresences.map((s) => `${s.enrollment?.nome ?? s.enrollmentId}: ${PRESENCE_LABELS[s.presence] ?? s.presence}`).join('; ')
-                      : (PRESENCE_LABELS[r.presence] ?? r.presence)
                     return (
                     <tr key={r.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm text-gray-900">{formatDateTime(r.lesson.startAt)}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{formatDateTime(r.lesson.startAt)}</td>
                       <td className="px-4 py-3 text-sm text-gray-900">{alunoLabel}</td>
                       <td className="px-4 py-3 text-sm text-gray-900">{r.lesson.teacher.nome}</td>
                       <td className="px-4 py-3 text-sm">{STATUS_LABELS[r.status] ?? r.status}</td>
@@ -657,7 +1008,7 @@ export default function AdminRegistrosAulasPage() {
                   ); })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollArea>
           </div>
         )}
       </div>
@@ -851,10 +1202,23 @@ export default function AdminRegistrosAulasPage() {
             <input
               type="text"
               value={form.book}
-              onChange={(e) => setForm({ ...form, book: e.target.value })}
+              onChange={(e) => {
+                const next = e.target.value
+                const check = checkBookProgression(next, bookProgressionReference)
+                if (!check.ok && check.code === 'RETROGRADE') {
+                  setToast({ message: check.message, type: 'error' })
+                  return
+                }
+                setForm({ ...form, book: next })
+              }}
               className="input w-full"
               placeholder="Ex.: Book 1"
             />
+            {bookProgressionReference && (
+              <p className="text-xs text-gray-500 mt-1">
+                Livro atual do aluno (última aula): <strong>{bookProgressionReference}</strong>
+              </p>
+            )}
           </div>
 
           <div>
@@ -1112,6 +1476,125 @@ export default function AdminRegistrosAulasPage() {
             </div>
           )}
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={unlocksModalOpen}
+        onClose={() => setUnlocksModalOpen(false)}
+        title="Liberações de registro"
+        size="xl"
+        footer={
+          <Button variant="outline" onClick={() => setUnlocksModalOpen(false)}>
+            Fechar
+          </Button>
+        }
+      >
+        <p className="text-sm text-gray-600 mb-4">
+          Professores podem solicitar liberação quando o prazo de 3 dias para registrar a aula expirou.
+          Qualquer administrador pode aprovar ou negar.
+        </p>
+        {unlocksLoading ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-gray-500">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            Carregando...
+          </div>
+        ) : unlockRequests.length === 0 ? (
+          <p className="text-center text-gray-500 py-8">Nenhuma solicitação de liberação.</p>
+        ) : (
+          <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
+            {unlockRequests.map((req) => {
+              const lessonLabel =
+                req.lesson.enrollment.tipoAula === 'GRUPO' && req.lesson.enrollment.nomeGrupo
+                  ? req.lesson.enrollment.nomeGrupo
+                  : req.lesson.enrollment.nome
+              const isPending = req.status === 'PENDING'
+              return (
+                <div
+                  key={req.id}
+                  className={`rounded-xl border p-4 ${
+                    isPending ? 'border-amber-300 bg-amber-50/80' : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                    <div>
+                      <p className="font-semibold text-gray-900">{lessonLabel}</p>
+                      <p className="text-sm text-gray-600">
+                        {formatDateTime(req.lesson.startAt)} · Professor: {req.teacher.nome}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Solicitado em {formatDateTime(req.criadoEm)}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
+                        req.status === 'PENDING'
+                          ? 'bg-amber-200 text-amber-900'
+                          : req.status === 'APPROVED'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {LESSON_RECORD_UNLOCK_STATUS_LABELS[req.status]}
+                    </span>
+                  </div>
+                  {req.message && (
+                    <p className="text-sm text-gray-700 mb-2">
+                      <span className="font-medium">Mensagem do professor:</span> {req.message}
+                    </p>
+                  )}
+                  {req.lesson.hasRecord && (
+                    <p className="text-sm text-green-700 font-medium mb-2">
+                      Esta aula já possui registro.
+                    </p>
+                  )}
+                  {req.processedBy && req.processedAt && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Processado por {req.processedBy.nome} em {formatDateTime(req.processedAt)}
+                      {req.adminNotes ? ` — ${req.adminNotes}` : ''}
+                    </p>
+                  )}
+                  {isPending && !req.lesson.hasRecord && (
+                    <div className="mt-3 space-y-2 border-t border-amber-200/80 pt-3">
+                      <input
+                        type="text"
+                        value={unlockNotesById[req.id] ?? ''}
+                        onChange={(e) =>
+                          setUnlockNotesById((prev) => ({ ...prev, [req.id]: e.target.value }))
+                        }
+                        placeholder="Observação opcional para o professor"
+                        className="input w-full text-sm"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void processUnlockRequest(req.id, 'APPROVE')}
+                          disabled={processingUnlockId === req.id}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {processingUnlockId === req.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4" />
+                          )}
+                          Liberar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void processUnlockRequest(req.id, 'DENY')}
+                          disabled={processingUnlockId === req.id}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <X className="w-4 h-4" />
+                          Negar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </Modal>
 
       {toast && (
