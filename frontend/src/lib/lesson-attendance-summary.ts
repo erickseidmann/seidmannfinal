@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { lessonAttendanceWindowEndAt } from '@/lib/lesson-attendance-service'
 
 /** Presença em chamada passou a ser rastreada a partir desta data (migration lesson_attendance). */
 // Rastreamento de presença/ausência vale a partir de 11/06/2026 (meia-noite BRT = 03:00 UTC).
@@ -16,9 +17,13 @@ export function attendanceSessionDurationSeconds(
   leftAt: Date | null,
   lastSeen: Date,
   status: string,
-  now = new Date()
+  now = new Date(),
+  windowEndAt?: Date
 ): number {
-  const endMs = leftAt?.getTime() ?? (status === 'ACTIVE' ? now.getTime() : lastSeen.getTime())
+  let endMs = leftAt?.getTime() ?? (status === 'ACTIVE' ? now.getTime() : lastSeen.getTime())
+  if (windowEndAt) {
+    endMs = Math.min(endMs, windowEndAt.getTime())
+  }
   return Math.max(0, Math.floor((endMs - joinedAt.getTime()) / 1000))
 }
 
@@ -110,25 +115,35 @@ export function summarizeLessonAttendance(
   now = new Date()
 ): LessonAttendanceSummary {
   const scheduledSeconds = (lesson.durationMinutes ?? 60) * 60
+  const windowEnd = lessonAttendanceWindowEndAt(lesson.startAt, lesson.durationMinutes)
+  const pastWindow = now >= windowEnd
 
   const sessions: AttendanceSessionRow[] = lessonRows
-    .map((r) => ({
-      id: r.id,
-      lessonId: r.lessonId,
-      role: r.role,
-      participantName: r.participantName,
-      joinedAt: r.joinedAt.toISOString(),
-      leftAt: r.leftAt?.toISOString() ?? null,
-      lastSeen: r.lastSeen.toISOString(),
-      status: r.status as 'ACTIVE' | 'ENDED',
-      durationSeconds: attendanceSessionDurationSeconds(
-        r.joinedAt,
-        r.leftAt,
-        r.lastSeen,
-        r.status,
-        now
-      ),
-    }))
+    .map((r) => {
+      const dbStatus = r.status as 'ACTIVE' | 'ENDED'
+      const effectiveEnded = dbStatus === 'ENDED' || pastWindow
+      const effectiveLeftAt =
+        r.leftAt?.toISOString() ??
+        (effectiveEnded ? new Date(Math.max(r.joinedAt.getTime(), windowEnd.getTime())).toISOString() : null)
+      return {
+        id: r.id,
+        lessonId: r.lessonId,
+        role: r.role,
+        participantName: r.participantName,
+        joinedAt: r.joinedAt.toISOString(),
+        leftAt: effectiveLeftAt,
+        lastSeen: r.lastSeen.toISOString(),
+        status: (effectiveEnded ? 'ENDED' : 'ACTIVE') as 'ACTIVE' | 'ENDED',
+        durationSeconds: attendanceSessionDurationSeconds(
+          r.joinedAt,
+          r.leftAt,
+          r.lastSeen,
+          r.status,
+          now,
+          windowEnd
+        ),
+      }
+    })
     .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime())
 
   const teacherSessions = sessions.filter((s) => s.role === 'TEACHER')
@@ -281,11 +296,20 @@ export function teacherAbsentFlagsByLessonId(
   const flags = new Map<string, boolean>()
   for (const lesson of lessons) {
     const lessonRows = byLesson.get(lesson.id) ?? []
+    const windowEnd = lessonAttendanceWindowEndAt(lesson.startAt, lesson.durationMinutes)
     const teacherTimeSeconds = lessonRows
       .filter((r) => r.role === 'TEACHER')
       .reduce(
         (sum, r) =>
-          sum + attendanceSessionDurationSeconds(r.joinedAt, r.leftAt, r.lastSeen, r.status, now),
+          sum +
+          attendanceSessionDurationSeconds(
+            r.joinedAt,
+            r.leftAt,
+            r.lastSeen,
+            r.status,
+            now,
+            windowEnd
+          ),
         0
       )
     flags.set(
@@ -318,12 +342,20 @@ export async function assertTeacherAttendedLessonForRecord(
     return { ok: true }
   }
 
+  const windowEnd = lessonAttendanceWindowEndAt(lessonStartAt, durationMinutes)
   const teacherTimeSeconds = rows
     .filter((r) => r.role === 'TEACHER')
     .reduce(
       (sum, r) =>
         sum +
-        attendanceSessionDurationSeconds(r.joinedAt, r.leftAt, r.lastSeen, r.status),
+        attendanceSessionDurationSeconds(
+          r.joinedAt,
+          r.leftAt,
+          r.lastSeen,
+          r.status,
+          undefined,
+          windowEnd
+        ),
       0
     )
 

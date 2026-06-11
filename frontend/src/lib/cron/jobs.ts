@@ -751,3 +751,8 @@ export async function runPurgeLessonAttendance(): Promise<{
   const { purgeExpiredLessonAttendance } = await import('@/lib/lesson-attendance-retention')
   return purgeExpiredLessonAttendance()
 }
+
+export async function runCloseLessonAttendances(): Promise<{ closed: number }> {
+  const { closeStaleAndExpiredLessonAttendances } = await import('@/lib/lesson-attendance-service')
+  return closeStaleAndExpiredLessonAttendances()
+}

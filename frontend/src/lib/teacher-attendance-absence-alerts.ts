@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { isLessonCancelledFamily, isLessonScheduledStatus } from '@/lib/lesson-status'
+import { lessonAttendanceWindowEndAt } from '@/lib/lesson-attendance-service'
 import {
   LESSON_ATTENDANCE_TRACKING_SINCE,
   TEACHER_ABSENCE_GRACE_MINUTES,
@@ -67,11 +68,23 @@ export async function syncTeacherAttendanceAbsenceReports(now = new Date()): Pro
     if (isLessonCancelledFamily(lesson.status)) continue
     if (lesson.teacherAbsenceReports.length > 0) continue
 
+    const windowEnd = lessonAttendanceWindowEndAt(
+      lesson.startAt,
+      lesson.durationMinutes ?? 60
+    )
     const teacherTimeSeconds = lesson.lessonAttendances
       .filter((r) => r.role === 'TEACHER')
       .reduce(
         (sum, r) =>
-          sum + attendanceSessionDurationSeconds(r.joinedAt, r.leftAt, r.lastSeen, r.status, now),
+          sum +
+          attendanceSessionDurationSeconds(
+            r.joinedAt,
+            r.leftAt,
+            r.lastSeen,
+            r.status,
+            now,
+            windowEnd
+          ),
         0
       )
 

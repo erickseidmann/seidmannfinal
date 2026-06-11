@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import { useLessonAttendance } from '@/hooks/useLessonAttendance'
+import { formatLessonDateLongInTZ, formatTimeInTZ } from '@/lib/datetime'
 
 // ——— Tipos ———
 interface LessonData {
@@ -68,23 +69,6 @@ interface TeacherAbsenceState {
   windowEnd: string
   reportedAbsent: boolean
   reportedLate: boolean
-}
-
-// ——— Helpers ———
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('pt-BR', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  })
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 function idiomaLabel(idioma: string | null): string {
@@ -141,7 +125,7 @@ export default function AulaAlunoPage() {
   const router = useRouter()
   const params = useParams()
   const lessonId = typeof params?.id === 'string' ? params.id : ''
-  const { registerJoin } = useLessonAttendance(lessonId, 'student')
+  const { registerJoin, registerLeave, isTracking } = useLessonAttendance(lessonId, 'student')
 
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [classroom, setClassroom] = useState<ClassroomAccess | null>(null)
@@ -262,8 +246,6 @@ export default function AulaAlunoPage() {
   const windowStartTime = new Date(classroom.windowStart).getTime()
   const lessonStartTime = new Date(lesson.startAt).getTime()
   const lessonEndTime = lessonStartTime + (lesson.durationMinutes || 60) * 60 * 1000
-  const minutesUntilStart = (lessonStartTime - now) / (1000 * 60)
-  const canEnter = (minutesUntilStart <= 3 || now >= lessonStartTime) && now < lessonEndTime
   const lessonEnded = now >= lessonEndTime
   const showCountdown = !classroom.canJoin && now < windowStartTime
 
@@ -301,7 +283,7 @@ export default function AulaAlunoPage() {
             Aula de {idiomaLabel(lesson.enrollment.idioma)} {idiomaFlag(lesson.enrollment.idioma)}
           </h1>
           <p className="text-gray-600 mt-1">
-            {formatDate(lesson.startAt)} · {formatTime(lesson.startAt)}
+            {formatLessonDateLongInTZ(lesson.startAt)} · {formatTimeInTZ(lesson.startAt)}
           </p>
         </div>
         <Link href="/dashboard-aluno/calendario">
@@ -329,31 +311,35 @@ export default function AulaAlunoPage() {
                     </div>
                     <p className="text-lg font-semibold text-gray-900">Sala disponível!</p>
                     <p className="text-gray-600 mt-1">Professor(a): {lesson.teacher.nome}</p>
-                    {canEnter ? (
-                      <a
-                        href={lesson.teacher.linkSala || `https://meet.jit.si/${classroom.roomName}#config.prejoinPageEnabled=false`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => {
-                          void registerJoin()
-                        }}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
-                      >
-                        <Video className="w-5 h-5" />
-                        Entrar na Aula
-                      </a>
-                    ) : (
-                      <div
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg opacity-50 cursor-not-allowed shadow-sm mt-4"
-                        aria-disabled
-                      >
-                        <Video className="w-5 h-5" />
-                        {lessonEnded ? 'Aula encerrada' : `Disponível em ${Math.ceil(minutesUntilStart)} min`}
-                      </div>
-                    )}
+                    <a
+                      href={lesson.teacher.linkSala || `https://meet.jit.si/${classroom.roomName}#config.prejoinPageEnabled=false`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        void registerJoin()
+                      }}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
+                    >
+                      <Video className="w-5 h-5" />
+                      Entrar na Aula
+                    </a>
                     <p className="text-xs text-gray-400 mt-3">
                       {lesson.teacher.linkSala ? 'A aula abrirá em uma nova aba do navegador' : 'A aula abrirá via Jitsi Meet em uma nova aba'}
                     </p>
+                    {isTracking && (
+                      <div className="mt-4 w-full max-w-md rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left">
+                        <p className="text-sm text-amber-900">
+                          Ao sair do Google Meet, clique em <strong>Encerrar participação</strong> para registrar sua saída.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void registerLeave()}
+                          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+                        >
+                          Encerrar participação
+                        </button>
+                      </div>
+                    )}
                     <p className="text-sm text-gray-500 mt-2">
                       Certifique-se de permitir câmera e microfone no navegador.
                     </p>

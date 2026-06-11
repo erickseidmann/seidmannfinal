@@ -12,6 +12,7 @@
  * - nfse-status: a cada 30 minutos
  * - sync-cora-extrato: a cada 5 minutos
  * - sync-santander-extrato: a cada 5 minutos
+ * - close-lesson-attendances: a cada 5 minutos
  */
 
 import * as cron from 'node-cron'
@@ -25,6 +26,7 @@ import {
   runSyncCoraExtrato,
   runSyncSantanderExtrato,
   runPurgeLessonAttendance,
+  runCloseLessonAttendances,
 } from './jobs'
 
 const log = (job: string, msg: string, data?: unknown) => {
@@ -35,6 +37,18 @@ export function initScheduler() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') {
     return
   }
+
+  // Encerrar sessões de presença expiradas ou sem heartbeat (a cada 5 min)
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const result = await runCloseLessonAttendances()
+      if (result.closed > 0) {
+        log('close-lesson-attendances', 'Encerradas', result)
+      }
+    } catch (err) {
+      console.error('[cron/close-lesson-attendances] Erro:', err)
+    }
+  })
 
   // Presença em chamada — excluir após 60 dias (5h UTC ≈ 2h BRT)
   cron.schedule('0 5 * * *', async () => {

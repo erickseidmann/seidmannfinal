@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { closeStaleAndExpiredLessonAttendances } from '@/lib/lesson-attendance-service'
 import { summarizeLessonsWithAttendance } from '@/lib/lesson-attendance-summary'
 import {
   brazilDayStartUtc,
@@ -38,6 +39,8 @@ export async function GET(request: NextRequest) {
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       return NextResponse.json({ ok: false, message: 'Período inválido' }, { status: 400 })
     }
+
+    await closeStaleAndExpiredLessonAttendances()
 
     const retentionStart = brazilDayStartUtc(lessonAttendanceVisibleSinceDateKey())
     const rangeStart = start > retentionStart ? start : retentionStart

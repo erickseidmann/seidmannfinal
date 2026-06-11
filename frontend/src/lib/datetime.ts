@@ -172,6 +172,24 @@ export function getTimeInTZ(iso: string, tz: string = BRAZIL_TZ): { hour: number
 }
 
 /**
+ * Data longa da aula (ex.: quinta-feira, 11 de junho de 2026) no fuso de Brasília.
+ */
+export function formatLessonDateLongInTZ(
+  iso: string,
+  locale: string = 'pt-BR',
+  tz: string = BRAZIL_TZ
+): string {
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: tz,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date)
+}
+
+/**
  * Formats weekday name in Brazil timezone
  */
 export function formatWeekdayInTZ(date: Date | string, locale: string, tz: string = BRAZIL_TZ): string {

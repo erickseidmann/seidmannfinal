@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Role = 'professor' | 'student'
 
@@ -11,6 +11,7 @@ export function useLessonAttendance(lessonId: string, role: Role) {
   const leaveSentRef = useRef(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const base = `/api/${role}/lessons`
+  const [isTracking, setIsTracking] = useState(false)
 
   const stopHeartbeat = useCallback(() => {
     if (intervalRef.current) {
@@ -30,6 +31,8 @@ export function useLessonAttendance(lessonId: string, role: Role) {
     } else {
       fetch(url, { method: 'POST', credentials: 'include', keepalive: true }).catch(() => {})
     }
+    attendanceIdRef.current = null
+    setIsTracking(false)
   }, [base])
 
   const startHeartbeat = useCallback(() => {
@@ -56,12 +59,31 @@ export function useLessonAttendance(lessonId: string, role: Role) {
       if (data?.ok && data.attendanceId) {
         attendanceIdRef.current = data.attendanceId
         leaveSentRef.current = false
+        setIsTracking(true)
         startHeartbeat()
       }
     } catch {
       // falha de tracking não deve impedir o usuário de entrar na aula
     }
   }, [base, lessonId, startHeartbeat])
+
+  const registerLeave = useCallback(async () => {
+    const id = attendanceIdRef.current
+    if (!id) return
+    stopHeartbeat()
+    leaveSentRef.current = true
+    try {
+      await fetch(`${base}/attendance/${id}/leave`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+    } catch {
+      // ignore
+    }
+    attendanceIdRef.current = null
+    leaveSentRef.current = false
+    setIsTracking(false)
+  }, [base, stopHeartbeat])
 
   useEffect(() => {
     const handleLeave = () => sendLeave()
@@ -75,5 +97,5 @@ export function useLessonAttendance(lessonId: string, role: Role) {
     }
   }, [sendLeave, stopHeartbeat])
 
-  return { registerJoin }
+  return { registerJoin, registerLeave, isTracking }
 }

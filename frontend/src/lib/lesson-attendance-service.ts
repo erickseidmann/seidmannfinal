@@ -12,7 +12,14 @@ export type Identity = TeacherIdentity | StudentIdentity
 /** Janela máxima sem heartbeat antes de considerar que saiu (ms) */
 export const STALE_MS = 90 * 1000 // 90s (heartbeat a cada 30s, tolera 3 perdidos)
 
-const TOLERANCE_MINUTES = 15
+/** Minutos após o fim da aula em que a sala ainda aceita entrada/saída rastreada */
+export const LESSON_ATTENDANCE_TOLERANCE_MINUTES = 15
+
+export function lessonAttendanceWindowEndAt(startAt: Date, durationMinutes: number): Date {
+  const durationMin = durationMinutes ?? 60
+  const lessonEnd = new Date(startAt.getTime() + durationMin * 60 * 1000)
+  return new Date(lessonEnd.getTime() + LESSON_ATTENDANCE_TOLERANCE_MINUTES * 60 * 1000)
+}
 
 type ServiceFail = { ok: false; message: string; status: 400 | 403 | 404 }
 type JoinOk = { ok: true; attendanceId: string; reused: boolean }
@@ -30,8 +37,8 @@ function isWithinJoinWindow(lesson: {
   const lessonStart = new Date(lesson.startAt)
   const durationMin = lesson.durationMinutes ?? 60
   const lessonEnd = new Date(lessonStart.getTime() + durationMin * 60 * 1000)
-  const windowStart = new Date(lessonStart.getTime() - TOLERANCE_MINUTES * 60 * 1000)
-  const windowEnd = new Date(lessonEnd.getTime() + TOLERANCE_MINUTES * 60 * 1000)
+  const windowStart = new Date(lessonStart.getTime() - LESSON_ATTENDANCE_TOLERANCE_MINUTES * 60 * 1000)
+  const windowEnd = lessonAttendanceWindowEndAt(lessonStart, durationMin)
   if (now < windowStart) {
     return { allowed: false, message: 'A sala abre 15 minutos antes do início da aula' }
   }
@@ -174,4 +181,41 @@ export async function registerLeave(
     data: { leftAt: now, lastSeen: now, status: LessonAttendanceStatus.ENDED },
   })
   return { ok: true }
+}
+
+/**
+ * Encerra sessões ACTIVE quando a janela da aula expirou ou o heartbeat parou (aba fechada sem unload).
+ */
+export async function closeStaleAndExpiredLessonAttendances(now = new Date()): Promise<{ closed: number }> {
+  const active = await prisma.lessonAttendance.findMany({
+    where: { status: LessonAttendanceStatus.ACTIVE },
+    include: {
+      lesson: { select: { startAt: true, durationMinutes: true } },
+    },
+  })
+
+  let closed = 0
+
+  for (const att of active) {
+    const windowEnd = lessonAttendanceWindowEndAt(
+      att.lesson.startAt,
+      att.lesson.durationMinutes ?? 60
+    )
+    const pastWindow = now >= windowEnd
+    const stale = now.getTime() - att.lastSeen.getTime() > STALE_MS
+
+    if (!pastWindow && !stale) continue
+
+    const leftAt = pastWindow
+      ? new Date(Math.max(att.joinedAt.getTime(), windowEnd.getTime()))
+      : att.lastSeen
+
+    await prisma.lessonAttendance.update({
+      where: { id: att.id },
+      data: { leftAt, lastSeen: leftAt, status: LessonAttendanceStatus.ENDED },
+    })
+    closed++
+  }
+
+  return { closed }
 }
