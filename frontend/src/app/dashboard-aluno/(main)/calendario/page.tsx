@@ -26,7 +26,12 @@ import {
 } from '@/lib/datetime'
 import { buildRescheduleLinks } from '@/lib/lesson-reschedule'
 import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import {
+  getCancelamentoAntecedenciaHoras,
+  isLessonCancelamentoTardio,
+} from '@/lib/lesson-no-show-record'
 import LessonCalendarBlock from '@/components/calendar/LessonCalendarBlock'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = [
@@ -38,7 +43,7 @@ interface Lesson {
   id: string
   enrollmentId: string
   teacherId: string
-  status: 'CONFIRMED' | 'CANCELLED' | 'REPOSICAO'
+  status: 'CONFIRMED' | 'CANCELLED' | 'CANCELLED_NO_REPLACEMENT' | 'REPOSICAO'
   startAt: string
   durationMinutes: number
   notes: string | null
@@ -115,6 +120,7 @@ function toDateKey(d: Date): string {
 const statusLabel: Record<string, string> = {
   CONFIRMED: 'Confirmada',
   CANCELLED: 'Cancelada',
+  CANCELLED_NO_REPLACEMENT: 'Cancelada sem reposição',
   REPOSICAO: 'Reposição',
 }
 
@@ -426,7 +432,7 @@ export default function CalendarioAlunoPage() {
       if (res.ok && json.ok) {
         setShowCancelConfirm(false)
         setSelectedLesson(null)
-        setToast({ message: 'Aula cancelada com sucesso!', type: 'success' })
+        setToast({ message: json.message || 'Aula cancelada com sucesso!', type: 'success' })
         // Disparar evento para atualizar calendários
         window.dispatchEvent(new CustomEvent('lessons-updated'))
         setTimeout(() => {
@@ -462,6 +468,23 @@ export default function CalendarioAlunoPage() {
   const getLessonsForDay = (day: Date) => lessons.filter((l) => isSameDayInTZ(l.startAt, day))
 
   const titleLabel = `${MESES[currentDate.getMonth()]} ${currentDate.getFullYear()}`
+
+  const selectedLessonCancelamentoTardio = useMemo(() => {
+    if (!selectedLesson) return false
+    return isLessonCancelamentoTardio(
+      selectedLesson.startAt,
+      selectedLesson.enrollment.escolaMatricula,
+      selectedLesson.enrollment.cancelamentoAntecedenciaHoras
+    )
+  }, [selectedLesson])
+
+  const horasAntecedenciaCancel = useMemo(() => {
+    if (!selectedLesson) return 6
+    return getCancelamentoAntecedenciaHoras(
+      selectedLesson.enrollment.escolaMatricula,
+      selectedLesson.enrollment.cancelamentoAntecedenciaHoras
+    )
+  }, [selectedLesson])
 
   return (
     <div className="min-w-0">
@@ -525,7 +548,7 @@ export default function CalendarioAlunoPage() {
       {error && (
         <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg text-sm">{error}</div>
       )}
-      {loading && <div className="mb-4 text-sm text-gray-500">Carregando...</div>}
+      {loading && <SeidmannLoading variant="compact" className="mb-4" />}
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto min-w-0">
         <div className="grid grid-cols-7 min-w-[280px]">
@@ -711,7 +734,11 @@ export default function CalendarioAlunoPage() {
       <Modal
         isOpen={showCancelConfirm && !!selectedLesson}
         onClose={() => setShowCancelConfirm(false)}
-        title="Confirmar cancelamento"
+        title={
+          selectedLessonCancelamentoTardio
+            ? 'Cancelamento com pouca antecedência'
+            : 'Confirmar cancelamento'
+        }
         size="md"
         footer={
           <div className="flex gap-2">
@@ -728,20 +755,38 @@ export default function CalendarioAlunoPage() {
               disabled={cancellingLesson}
               className="bg-red-600 hover:bg-red-700"
             >
-              {cancellingLesson ? 'Cancelando...' : 'Sim, cancelar aula'}
+              {cancellingLesson
+                ? 'Cancelando...'
+                : selectedLessonCancelamentoTardio
+                  ? 'Confirmar cancelamento sem reposição'
+                  : 'Sim, cancelar aula'}
             </Button>
           </div>
         }
       >
         <div className="space-y-4">
-          <div className="p-4 bg-amber-50 border-2 border-amber-200 rounded-lg">
-            <p className="text-sm font-semibold text-amber-900 mb-2">
-              ⚠️ Atenção
-            </p>
-            <p className="text-sm text-amber-800">
-              Se você cancelar essa aula não poderá agendar reposição. Tem certeza disso?
-            </p>
-          </div>
+          {selectedLessonCancelamentoTardio ? (
+            <div className="p-4 bg-amber-50 border-2 border-amber-200 rounded-lg space-y-2">
+              <p className="text-sm font-semibold text-amber-900">Atenção</p>
+              <p className="text-sm text-amber-900">
+                Você está cancelando com <strong>menos de {horasAntecedenciaCancel} horas</strong> de
+                antecedência.
+              </p>
+              <ul className="text-sm text-amber-900 list-disc pl-4 space-y-1">
+                <li>A aula será cancelada <strong>sem reposição</strong>.</li>
+                <li>O <strong>professor receberá</strong> por esta aula.</li>
+                <li>Você receberá um <strong>e-mail</strong> confirmando o cancelamento sem reposição.</li>
+              </ul>
+            </div>
+          ) : (
+            <div className="p-4 bg-amber-50 border-2 border-amber-200 rounded-lg">
+              <p className="text-sm font-semibold text-amber-900 mb-2">Atenção</p>
+              <p className="text-sm text-amber-800">
+                Ao cancelar com a antecedência necessária, a aula será cancelada. Para reposição, utilize
+                a opção &quot;Solicitar troca de aula&quot; antes do prazo mínimo ou entre em contato com a gestão.
+              </p>
+            </div>
+          )}
           {selectedLesson && (
             <div className="space-y-2 text-sm">
               <p><strong>Aula:</strong> {formatDateTimeInTZ(selectedLesson.startAt, 'pt-BR')}</p>
@@ -831,7 +876,7 @@ export default function CalendarioAlunoPage() {
                       Selecione uma data disponível
                     </label>
                     {loadingDays ? (
-                      <p className="text-sm text-gray-500">Carregando datas disponíveis...</p>
+                      <SeidmannLoading message="Carregando datas disponíveis..." variant="compact" />
                     ) : availableDates.length === 0 ? (
                       <div className="text-sm text-gray-500 space-y-1">
                         <p>Professor não possui horários disponíveis nos próximos 3 meses</p>
@@ -996,7 +1041,7 @@ export default function CalendarioAlunoPage() {
                           : ''}
                       </label>
                       {loadingSlots ? (
-                        <p className="text-sm text-gray-500">Carregando horários...</p>
+                        <SeidmannLoading message="Carregando horários..." variant="compact" />
                       ) : teacherSlots.length === 0 ? (
                         <p className="text-sm text-gray-500">Nenhum horário disponível neste dia</p>
                       ) : (

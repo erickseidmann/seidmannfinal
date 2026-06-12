@@ -141,6 +141,7 @@ model User {
   lessonPastEditRequestsProcessed LessonPastEditRequest[] @relation("LessonPastEditProcessedBy")
   /** Áudios de livro marcados como ouvidos (material do aluno) */
   bookAudioListens BookAudioListen[]
+  onlineCertificatesCreated OnlineCertificate[]
 
   // ├ìndices
   @@index([email])
@@ -984,6 +985,7 @@ model Lesson {
   startAt           DateTime     @map("start_at")
   durationMinutes   Int          @default(60) @map("duration_minutes")
   notes             String?      @db.Text
+  professorCallEndedAt DateTime? @map("professor_call_ended_at") // professor encerrou a chamada (não reabre)
   createdById       String?      @map("created_by_id") // Admin que criou/agendou a aula
   createdByName     String?      @map("created_by_name") @db.VarChar(255) // Nome do admin que criou (para exibi├º├úo r├ípida)
   criadoEm          DateTime     @default(now()) @map("created_at")
@@ -1421,6 +1423,36 @@ enum LessonAttendanceRole {
 enum LessonAttendanceStatus {
   ACTIVE
   ENDED
+}
+
+enum OnlineCertificateType {
+  DECLARACAO
+  CONCLUSAO
+}
+
+model OnlineCertificate {
+  id             String                @id @default(cuid())
+  certificateNo  String                @unique @map("certificate_no") @db.VarChar(32)
+  type           OnlineCertificateType
+  studentName    String                @map("student_name") @db.VarChar(255)
+  studentCpf     String                @map("student_cpf") @db.VarChar(14)
+  courseTitle    String                @map("course_title") @db.VarChar(500)
+  courseBody     String                @map("course_body") @db.Text
+  periodStart    DateTime?             @map("period_start")
+  periodEnd      DateTime?             @map("period_end")
+  totalHours     Int                   @map("total_hours")
+  issueDate      DateTime              @map("issue_date") @db.Date
+  pdfPath        String                @map("pdf_path") @db.VarChar(500)
+  active         Boolean               @default(true)
+  createdById    String?               @map("created_by_id")
+  criadoEm       DateTime              @default(now()) @map("created_at")
+  atualizadoEm   DateTime              @updatedAt @map("updated_at")
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([active])
+  @@index([createdById])
+  @@map("online_certificates")
 }
 
 enum TeacherAbsenceReportType {

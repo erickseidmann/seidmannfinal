@@ -3,7 +3,8 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import { isLessonScheduledStatus, LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { resolveStudentEnrollmentForLesson } from '@/lib/student-group-lesson-access'
 import { LessonAttendanceRole, LessonAttendanceStatus } from '@prisma/client'
 
 export type TeacherIdentity = { role: 'TEACHER'; teacherId: string }
@@ -25,6 +26,7 @@ export function lessonAttendanceWindowEndAt(startAt: Date, durationMinutes: numb
 type ServiceFail = { ok: false; message: string; status: 400 | 403 | 404 }
 type JoinOk = { ok: true; attendanceId: string; reused: boolean }
 type SimpleOk = { ok: true }
+type LeaveOk = { ok: true; nextLesson: { id: string; startAt: string } | null }
 
 function isWithinJoinWindow(lesson: {
   startAt: Date
@@ -72,6 +74,7 @@ export async function registerJoin(
       startAt: true,
       durationMinutes: true,
       status: true,
+      professorCallEndedAt: true,
     },
   })
   if (!lesson) {
@@ -86,10 +89,27 @@ export async function registerJoin(
         status: 403,
       }
     }
-  } else if (!identity.enrollmentIds.includes(lesson.enrollmentId)) {
+  }
+
+  let studentEnrollmentId: string | null = null
+  if (identity.role === 'STUDENT') {
+    studentEnrollmentId = await resolveStudentEnrollmentForLesson(
+      identity.enrollmentIds,
+      lesson.enrollmentId
+    )
+    if (!studentEnrollmentId) {
+      return {
+        ok: false,
+        message: 'Você não tem permissão para acessar esta aula',
+        status: 403,
+      }
+    }
+  }
+
+  if (lesson.professorCallEndedAt) {
     return {
       ok: false,
-      message: 'Você não tem permissão para acessar esta aula',
+      message: 'Esta aula foi encerrada e não pode ser reaberta',
       status: 403,
     }
   }
@@ -100,6 +120,25 @@ export async function registerJoin(
   }
 
   const now = new Date()
+
+  if (identity.role === 'TEACHER') {
+    const otherActive = await prisma.lessonAttendance.findFirst({
+      where: {
+        teacherId: identity.teacherId,
+        status: LessonAttendanceStatus.ACTIVE,
+        lessonId: { not: lessonId },
+      },
+      select: { lessonId: true },
+    })
+    if (otherActive) {
+      return {
+        ok: false,
+        message: 'Encerre a chamada da outra aula antes de entrar nesta.',
+        status: 400,
+      }
+    }
+  }
+
   const where =
     identity.role === 'TEACHER'
       ? {
@@ -109,7 +148,7 @@ export async function registerJoin(
         }
       : {
           lessonId,
-          enrollmentId: lesson.enrollmentId,
+          enrollmentId: studentEnrollmentId!,
           status: LessonAttendanceStatus.ACTIVE,
         }
 
@@ -130,7 +169,7 @@ export async function registerJoin(
           ? LessonAttendanceRole.TEACHER
           : LessonAttendanceRole.STUDENT,
       teacherId: identity.role === 'TEACHER' ? identity.teacherId : null,
-      enrollmentId: identity.role === 'STUDENT' ? lesson.enrollmentId : null,
+      enrollmentId: identity.role === 'STUDENT' ? studentEnrollmentId : null,
       joinedAt: now,
       lastSeen: now,
       status: LessonAttendanceStatus.ACTIVE,
@@ -161,11 +200,34 @@ export async function registerHeartbeat(
   return { ok: true }
 }
 
+async function findNextLessonForTeacher(
+  teacherId: string,
+  afterStartAt: Date
+): Promise<{ id: string; startAt: string } | null> {
+  const row = await prisma.lesson.findFirst({
+    where: {
+      teacherId,
+      startAt: { gt: afterStartAt },
+      status: { in: [...LESSON_STATUSES_SCHEDULED] },
+      professorCallEndedAt: null,
+    },
+    orderBy: { startAt: 'asc' },
+    select: { id: true, startAt: true },
+  })
+  return row ? { id: row.id, startAt: row.startAt.toISOString() } : null
+}
+
 export async function registerLeave(
   attendanceId: string,
-  identity: Identity
-): Promise<ServiceFail | SimpleOk> {
-  const att = await prisma.lessonAttendance.findUnique({ where: { id: attendanceId } })
+  identity: Identity,
+  options?: { finalizeCall?: boolean }
+): Promise<ServiceFail | SimpleOk | LeaveOk> {
+  const att = await prisma.lessonAttendance.findUnique({
+    where: { id: attendanceId },
+    include: {
+      lesson: { select: { id: true, teacherId: true, startAt: true, professorCallEndedAt: true } },
+    },
+  })
   if (!att) {
     return { ok: false, message: 'Sessão de presença não encontrada', status: 404 }
   }
@@ -177,10 +239,35 @@ export async function registerLeave(
   }
 
   const now = new Date()
-  await prisma.lessonAttendance.update({
-    where: { id: attendanceId },
-    data: { leftAt: now, lastSeen: now, status: LessonAttendanceStatus.ENDED },
+  const finalizeCall = options?.finalizeCall === true && identity.role === 'TEACHER'
+
+  await prisma.$transaction(async (tx) => {
+    await tx.lessonAttendance.update({
+      where: { id: attendanceId },
+      data: { leftAt: now, lastSeen: now, status: LessonAttendanceStatus.ENDED },
+    })
+
+    if (finalizeCall && !att.lesson.professorCallEndedAt) {
+      await tx.lesson.update({
+        where: { id: att.lessonId },
+        data: { professorCallEndedAt: now },
+      })
+      await tx.lessonAttendance.updateMany({
+        where: {
+          lessonId: att.lessonId,
+          status: LessonAttendanceStatus.ACTIVE,
+          id: { not: attendanceId },
+        },
+        data: { leftAt: now, lastSeen: now, status: LessonAttendanceStatus.ENDED },
+      })
+    }
   })
+
+  if (identity.role === 'TEACHER' && att.lesson.teacherId) {
+    const nextLesson = await findNextLessonForTeacher(att.lesson.teacherId, att.lesson.startAt)
+    return { ok: true, nextLesson }
+  }
+
   return { ok: true }
 }
 

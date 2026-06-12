@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import { ChevronLeft, ChevronRight, ListTodo, Plus, Trash2, Flame, Loader2 } from 'lucide-react'
 
 type TodoCategory = 'GESTAO' | 'FINANCEIRO'
@@ -521,9 +522,9 @@ export default function AdminTodosPage() {
             </select>
           </div>
           {todoLoading && todos.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-              Carregando tarefas…
-            </p>
+            <div className="border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+              <SeidmannLoading message="Carregando tarefas…" variant="inline" className="py-6" />
+            </div>
           ) : todos.length === 0 ? (
             <p className="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
               Nenhuma tarefa neste dia. Use o campo acima para criar lembretes.

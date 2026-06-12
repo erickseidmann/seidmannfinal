@@ -22,6 +22,7 @@ import {
   Line,
 } from 'recharts'
 import { TrendingUp, TrendingDown, Loader2, ClipboardList } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 const ANOS_DISPONIVEIS = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i)
@@ -133,9 +134,7 @@ export default function FinanceiroGeralPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

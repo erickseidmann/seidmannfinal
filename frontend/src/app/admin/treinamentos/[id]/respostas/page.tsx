@@ -5,6 +5,7 @@ import Link from 'next/link'
 import AdminLayout from '@/components/admin/AdminLayout'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import { ChevronLeft, GraduationCap, Loader2, Users } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 type ResponseRow = {
   id: string
@@ -73,9 +74,7 @@ export default function AdminTreinamentoRespostasPage({ params }: { params: { id
         </Link>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : error || !data ? (
           <p className="text-red-600">{error || 'Dados não encontrados'}</p>
         ) : (

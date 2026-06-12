@@ -11,6 +11,7 @@ import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Loader2, Mail, AlertTriangle, AlertCircle, UserX, Send, ChevronDown } from 'lucide-react'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -293,9 +294,7 @@ export default function FinanceiroNotificacoesPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : (
           <>
             {summary && (

@@ -10,13 +10,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { BookOpen, Loader2, X, AlertCircle } from 'lucide-react'
 import MaterialSubNav from '@/components/professor/MaterialSubNav'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const PdfViewer = dynamic(() => import('@/components/aluno/PdfViewer'), {
   ssr: false,
   loading: () => (
-    <div className="flex flex-1 items-center justify-center min-h-[200px]">
-      <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-    </div>
+    <SeidmannLoading variant="inline" className="flex flex-1 items-center justify-center min-h-[200px]" />
   ),
 })
 
@@ -96,9 +95,7 @@ export default function MaterialProfessorPage() {
       )}
 
       {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-        </div>
+        <SeidmannLoading variant="section" className="py-12" />
       )}
 
       {!loading && !error && books.length === 0 && (

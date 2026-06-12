@@ -11,6 +11,7 @@ import AdminHeader from './AdminHeader'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useTranslation } from '@/contexts/LanguageContext'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   LayoutDashboard,
   Users,
@@ -78,11 +79,12 @@ const PAGE_KEY_BY_HREF: Record<string, string> = {
   '/admin/minhas-financas': 'minhas-financas',
   '/admin/karaoke': 'karaoke',
   '/admin/treinamentos': 'treinamentos',
+  '/admin/certificados': 'certificados',
   '/admin/escolas-parceiras': 'escolas-parceiras',
 }
 
 const GESTAO_SUB_KEYS = ['professores', 'alunos', 'calendario', 'registros-aulas', 'acompanhar-chamadas', 'alertas', 'todos'] as const
-const MATERIAL_SUB_KEYS = ['livros', 'karaoke', 'treinamentos'] as const
+const MATERIAL_SUB_KEYS = ['livros', 'karaoke', 'treinamentos', 'certificados'] as const
 const FINANCEIRO_SUB_KEYS = [
   'financeiro-geral',
   'financeiro-alunos',
@@ -106,7 +108,7 @@ function hasAnyGestaoAccess(adminPages: string[]): boolean {
 }
 
 function hasMaterialAccess(adminPages: string[], subKey: string): boolean {
-  if (subKey === 'karaoke' || subKey === 'treinamentos') return true
+  if (subKey === 'karaoke' || subKey === 'treinamentos' || subKey === 'certificados') return true
   return adminPages.includes(subKey)
 }
 function hasAnyMaterialAccess(adminPages: string[]): boolean {
@@ -161,6 +163,7 @@ function isChildActive(href: string, pathname: string | null): boolean {
   if (href === '/admin/professores' && pathname.startsWith('/admin/professores/')) return true
   if (href === '/admin/karaoke' && pathname.startsWith('/admin/karaoke/')) return true
   if (href === '/admin/treinamentos' && pathname.startsWith('/admin/treinamentos/')) return true
+  if (href === '/admin/certificados' && pathname.startsWith('/admin/certificados/')) return true
   return false
 }
 
@@ -195,11 +198,12 @@ const baseMenuItems: (MenuItem | MenuGroup)[] = [
     id: 'material',
     labelKey: 'admin.material',
     icon: Library,
-    expandedPrefixes: ['/admin/livros', '/admin/karaoke', '/admin/treinamentos'],
+    expandedPrefixes: ['/admin/livros', '/admin/karaoke', '/admin/treinamentos', '/admin/certificados'],
     children: [
       { href: '/admin/livros', labelKey: 'admin.books' },
       { href: '/admin/karaoke', labelKey: 'admin.karaoke' },
       { href: '/admin/treinamentos', labelKey: 'admin.trainings' },
+      { href: '/admin/certificados', labelKey: 'admin.certificates' },
     ],
   },
   {
@@ -434,9 +438,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             </div>
             <nav className="flex-1 p-4 space-y-2">
               {!meLoaded ? (
-                <div className="px-4 py-3 text-sm text-gray-500 animate-pulse">
-                  Carregando menu...
-                </div>
+                <div className="px-4 py-3"><SeidmannLoading message="Carregando menu..." variant="compact" className="py-2" /></div>
               ) : (
                 menuItems.map((item) => {
                   if ('type' in item && item.type === 'group') {

@@ -14,6 +14,7 @@ import Button from '@/components/ui/Button'
 import AdminHeader from '@/components/admin/AdminHeader'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Search, Eye, CheckCircle, Ban, ArrowLeft } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface Enrollment {
   id: string
@@ -218,7 +219,7 @@ export default function AdminPage() {
           {/* Tabela */}
           <Card className="p-6">
             {loading ? (
-              <div className="text-center py-12 text-gray-600">Carregando...</div>
+              <SeidmannLoading />
             ) : enrollments.length === 0 ? (
               <div className="text-center py-12 text-gray-600">
                 Nenhum enrollment encontrado com os filtros selecionados.

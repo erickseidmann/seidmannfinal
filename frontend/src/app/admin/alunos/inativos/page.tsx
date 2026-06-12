@@ -14,6 +14,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
 import { ArrowLeft, Loader2, Power, Search } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface InactiveStudent {
   id: string
@@ -171,9 +172,7 @@ export default function AlunosInativosPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : students.length === 0 ? (
           <p className="text-gray-500 text-center py-12">Nenhum aluno inativo encontrado.</p>
         ) : (

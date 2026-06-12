@@ -60,6 +60,7 @@ import {
   isBookOptionBelowReference,
   resolveBookProgressionReference,
 } from '@/lib/lesson-record-book-progression'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   assertLessonRecordDiffersFromPrevious,
   lessonRecordCompareFromProfessorForm,
@@ -995,7 +996,9 @@ export default function CalendarioProfessorPage() {
       </div>
 
       {error && <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-lg text-sm">{error}</div>}
-      {loading && <div className="mb-4 text-sm text-gray-500">{t('professor.calendar.loading')}</div>}
+      {loading && (
+        <SeidmannLoading message={t('professor.calendar.loading')} variant="compact" className="mb-4" />
+      )}
 
       {view === 'month' && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto min-w-0">
@@ -1247,10 +1250,7 @@ export default function CalendarioProfessorPage() {
         {modalStep === 'ver-ultima' && (
           <div className="space-y-3">
             {ultimaLoading ? (
-              <div className="flex items-center gap-2 text-gray-500">
-                <Loader2 className="w-5 h-5 animate-spin" />
-                {t('professor.calendar.loadingLastClass')}
-              </div>
+              <SeidmannLoading message={t('professor.calendar.loadingLastClass')} variant="compact" className="py-2" />
             ) : ultimaRecord ? (
               <div className="space-y-3 text-sm">
                 <p className="text-gray-600">
@@ -1329,7 +1329,7 @@ export default function CalendarioProfessorPage() {
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <p className="text-sm font-semibold text-amber-800">{t('professor.calendar.groupClass')}: {selectedLesson.enrollment?.nomeGrupo?.trim()}</p>
                 {loadingGroup && groupMembers.length === 0 ? (
-                  <p className="text-sm text-amber-700">{t('professor.calendar.loadingGroup')}</p>
+                  <SeidmannLoading message={t('professor.calendar.loadingGroup')} variant="compact" layout="row" className="py-1" />
                 ) : (
                   <div className="space-y-2">
                     <p className="text-xs text-amber-700 mb-2">{t('professor.calendar.presencePerStudent')} <span className="text-red-500">*</span></p>
@@ -1417,7 +1417,7 @@ export default function CalendarioProfessorPage() {
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Livro do aluno <span className="text-red-500">*</span></label>
               {catalogBooksLoading ? (
-                <p className="text-sm text-gray-500 py-2">Carregando catálogo de livros...</p>
+                <SeidmannLoading message="Carregando catálogo de livros..." variant="compact" className="py-2" />
               ) : (
                 <>
                   <select

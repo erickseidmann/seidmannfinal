@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Wallet, Calendar, DollarSign, CheckCircle, AlertCircle, Copy, ExternalLink, FileText, Download } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import TableScrollArea from '@/components/admin/TableScrollArea'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -251,7 +252,7 @@ export default function FinanceiroAlunoPage() {
       )}
 
       {loading && (
-        <div className="mb-6 text-gray-500">Carregando...</div>
+        <SeidmannLoading variant="inline" className="mb-6" />
       )}
 
       {!loading && data && (
@@ -339,7 +340,7 @@ export default function FinanceiroAlunoPage() {
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
               <div className="flex items-center gap-3 text-gray-500">
                 <div className="animate-pulse w-8 h-8 rounded-full bg-gray-200" />
-                <span>Carregando opções de pagamento...</span>
+                <SeidmannLoading message="Carregando opções de pagamento..." variant="compact" className="py-2" />
               </div>
             </div>
           )}
@@ -514,7 +515,7 @@ export default function FinanceiroAlunoPage() {
           {nfseLoading ? (
             <div className="p-8 text-center">
               <div className="inline-block animate-pulse w-8 h-8 rounded-full bg-gray-200 mb-2" />
-              <p className="text-gray-500 text-sm">Carregando notas fiscais...</p>
+              <SeidmannLoading message="Carregando notas fiscais..." variant="compact" />
             </div>
           ) : nfseNotas.length === 0 ? (
             <div className="p-8 text-center">

@@ -12,6 +12,7 @@ import TableScrollArea from '@/components/admin/TableScrollArea'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   Loader2,
   FileText,
@@ -845,10 +846,7 @@ export default function FinanceiroNfsePage() {
 
         {/* Tabela de Notas */}
         {loading ? (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400" />
-            <p className="text-gray-600 mt-2">Carregando notas...</p>
-          </div>
+          <SeidmannLoading message="Carregando notas..." variant="section" />
         ) : notas.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center">
             <p className="text-gray-600">
@@ -1192,9 +1190,7 @@ export default function FinanceiroNfsePage() {
             aria-busy="true"
           >
             <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-100 p-8 text-center space-y-5">
-              <div className="flex justify-center">
-                <Loader2 className="w-12 h-12 text-brand-orange animate-spin" aria-hidden />
-              </div>
+              <SeidmannLoading variant="section" className="" />
               <div>
                 <p className="text-lg font-semibold text-gray-900">Exportando notas</p>
                 <p className="text-sm text-gray-600 mt-1">

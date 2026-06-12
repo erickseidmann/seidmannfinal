@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { expandEnrollmentIdsForGroupLessons } from '@/lib/student-group-lesson-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,7 +23,8 @@ export async function GET(request: NextRequest) {
       where: { userId: auth.session.userId },
       select: { id: true },
     })
-    const enrollmentIds = enrollments.map((e) => e.id)
+    const ownEnrollmentIds = enrollments.map((e) => e.id)
+    const enrollmentIds = await expandEnrollmentIdsForGroupLessons(ownEnrollmentIds)
     const now = new Date()
 
     const alerts: { id: string; message: string; level: string | null; readAt: string | null; criadoEm: string }[] = []

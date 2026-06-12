@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import Button from '@/components/ui/Button'
 import { validateMeetingLink } from '@/lib/meeting-link'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface Professor {
   id: string
@@ -87,7 +88,7 @@ export default function DadosPessoaisPage() {
   }
 
   if (loading) {
-    return <p className="text-gray-500">Carregando...</p>
+    return <SeidmannLoading variant="inline" />
   }
 
   return (

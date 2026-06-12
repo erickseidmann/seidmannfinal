@@ -24,6 +24,7 @@ import Button from '@/components/ui/Button'
 import { useLessonAttendance } from '@/hooks/useLessonAttendance'
 import { formatLessonDateLongInTZ, formatTimeInTZ } from '@/lib/datetime'
 import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 // ——— Tipos ———
 interface LessonData {
@@ -221,9 +222,7 @@ export default function AulaAlunoPage() {
 
   if (loading && !lesson) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-      </div>
+      <SeidmannLoading variant="inline" className="flex items-center justify-center min-h-[300px]" />
     )
   }
 

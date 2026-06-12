@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from '@/contexts/LanguageContext'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
 import TableScrollArea from '@/components/admin/TableScrollArea'
@@ -361,10 +362,7 @@ export default function MinhaAgendaPage() {
       </section>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-gray-500 py-8">
-          <Loader2 className="w-6 h-6 animate-spin" />
-          {t('professor.agenda.loading')}
-        </div>
+        <SeidmannLoading message={t('professor.agenda.loading')} variant="section" className="py-8" />
       ) : (
         <TableScrollArea className="rounded-xl border border-gray-200 bg-white shadow-sm -mx-4 px-4 sm:mx-0 sm:px-0">
           <div className="inline-block min-w-full">

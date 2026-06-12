@@ -9,6 +9,8 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
+import Logo from '@/components/branding/Logo'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import Toast from '@/components/admin/Toast'
 import { CalendarRange, Loader2, Award, Clock, CircleDollarSign } from 'lucide-react'
 import { LESSON_STATUS_LABELS, type LessonStatusUi } from '@/lib/lesson-status'
@@ -278,10 +280,18 @@ export default function ControleBolsistasPage() {
                 Total de horas por período
               </p>
               <p className="mt-2 text-2xl font-bold text-amber-900 tabular-nums min-h-[2rem] flex items-center">
-                {loading ? <Loader2 className="w-7 h-7 animate-spin text-amber-600" aria-hidden /> : formatMinutesAsHours(totalMinutes)}
+                {loading ? (
+                  <Logo variant="icon" size="sm" noLink useFallback className="!w-7 !h-7 animate-pulse" />
+                ) : (
+                  formatMinutesAsHours(totalMinutes)
+                )}
               </p>
               <p className="mt-1 text-xs text-amber-800/90">
-                {loading ? 'Carregando…' : `Soma das durações das aulas listadas (${totalMinutes} min)`}
+                {loading ? (
+                  <SeidmannLoading message="Carregando…" variant="compact" layout="row" className="py-0" />
+                ) : (
+                  `Soma das durações das aulas listadas (${totalMinutes} min)`
+                )}
               </p>
             </div>
             <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-4 shadow-sm">
@@ -291,7 +301,7 @@ export default function ControleBolsistasPage() {
               </p>
               <p className="mt-2 text-2xl font-bold text-emerald-900 tabular-nums min-h-[2rem] flex items-center">
                 {loading ? (
-                  <Loader2 className="w-7 h-7 animate-spin text-emerald-600" aria-hidden />
+                  <Logo variant="icon" size="sm" noLink useFallback className="!w-7 !h-7 animate-pulse" />
                 ) : (
                   formatMoney(totalValorPeriodo)
                 )}
@@ -307,7 +317,11 @@ export default function ControleBolsistasPage() {
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-semibold text-gray-800">Aulas no período</h2>
             <p className="text-sm text-gray-600 mt-0.5">
-              {loading ? 'Carregando…' : `${lessons.length} aula(s) encontrada(s)`}
+              {loading ? (
+                <SeidmannLoading message="Carregando…" variant="compact" layout="row" className="py-0 items-start" />
+              ) : (
+                `${lessons.length} aula(s) encontrada(s)`
+              )}
             </p>
             {!loading && lessons.length > 0 && (
               <div className="mt-4">
@@ -351,8 +365,8 @@ export default function ControleBolsistasPage() {
                   </tr>
                 ) : loading ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-gray-500">
-                      <Loader2 className="w-8 h-8 animate-spin inline text-brand-orange" />
+                    <td colSpan={7} className="py-12">
+                      <SeidmannLoading variant="compact" className="py-2" />
                     </td>
                   </tr>
                 ) : (

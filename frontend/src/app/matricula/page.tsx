@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/Card'
 import type { MatriculaResponse, ApiResponse, MatriculaPayment } from '@/contracts/api.contract'
 import { isValidCPF } from '@/lib/finance/validators'
 import { User, BookOpen, FileCheck } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const STEPS = [
   { id: 1, label: 'Dados pessoais', icon: User },
@@ -1465,9 +1466,7 @@ export default function MatriculaPage() {
       <main className="min-h-screen bg-gradient-to-b from-orange-50 to-white pt-24 pb-20">
         <div className="container mx-auto px-4">
           <div className="max-w-3xl mx-auto">
-            <div className="text-center">
-              <p className="text-gray-600">Carregando...</p>
-            </div>
+            <SeidmannLoading variant="section" />
           </div>
         </div>
       </main>

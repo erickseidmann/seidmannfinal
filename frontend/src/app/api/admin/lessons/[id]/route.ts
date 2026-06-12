@@ -22,7 +22,11 @@ import {
   lessonSeriesRefFromStartAt,
   matchesLessonSeries,
 } from '@/lib/lesson-series'
-import { createNoShowLessonRecordIfMissing } from '@/lib/lesson-no-show-record'
+import {
+  createNoShowLessonRecordIfMissing,
+  findGroupSlotSiblingLessonIds,
+  resolveLessonCancelamentoTardio,
+} from '@/lib/lesson-no-show-record'
 import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
 import {
   sendEmail,
@@ -141,6 +145,7 @@ export async function PATCH(
       notes,
       createdByName,
       applyToFuture, // opcional: se true, aplica alterações a aulas futuras do mesmo aluno
+      cancelamentoExcecao, // exceção à regra de cancelamento tardio (permite reposição)
     } = body
 
     const updateData: {
@@ -183,7 +188,17 @@ export async function PATCH(
     const lessonBefore = await prisma.lesson.findUnique({
       where: { id },
       include: {
-        enrollment: { select: { nome: true, email: true, curso: true } },
+        enrollment: {
+          select: {
+            nome: true,
+            email: true,
+            curso: true,
+            tipoAula: true,
+            nomeGrupo: true,
+            escolaMatricula: true,
+            cancelamentoAntecedenciaHoras: true,
+          },
+        },
         teacher: { select: { nome: true, email: true } },
       },
     })
@@ -402,11 +417,32 @@ export async function PATCH(
 
     // Adicionar observações automáticas quando status muda
     const oldStatus = lessonBefore?.status as string | undefined
-    const newStatus = (updateData.status ?? oldStatus) as string | undefined
+    let newStatus = (updateData.status ?? oldStatus) as string | undefined
     const statusChanged = updateData.status != null && String(oldStatus) !== String(newStatus)
-    
+    const agora = new Date()
+    let cancelamentoTardioApplied = false
+
+    if (
+      statusChanged &&
+      newStatus &&
+      (newStatus === 'CANCELLED' || newStatus === 'CANCELLED_BY_TEACHER') &&
+      cancelamentoExcecao !== true
+    ) {
+      const cancelamentoTardio = await resolveLessonCancelamentoTardio(
+        {
+          startAt: updateData.startAt ?? lessonBefore.startAt,
+          enrollmentId: updateData.enrollmentId ?? lessonBefore.enrollmentId,
+        },
+        agora
+      )
+      if (cancelamentoTardio) {
+        cancelamentoTardioApplied = true
+        newStatus = 'CANCELLED_NO_REPLACEMENT'
+        updateData.status = 'CANCELLED_NO_REPLACEMENT'
+      }
+    }
+
     if (statusChanged && newStatus) {
-      const agora = new Date()
       // Buscar nome do admin logado
       let nomeAdmin = 'admin'
       if (auth.session?.sub) {
@@ -449,9 +485,61 @@ export async function PATCH(
 
     if (statusChanged && newStatus === 'CANCELLED_NO_REPLACEMENT') {
       try {
-        await createNoShowLessonRecordIfMissing(id)
+        const lessonIdsForRecord = await findGroupSlotSiblingLessonIds(id)
+        for (const lessonIdForRecord of lessonIdsForRecord) {
+          await createNoShowLessonRecordIfMissing(lessonIdForRecord)
+        }
       } catch (recordErr) {
         console.error('[api/admin/lessons/[id] PATCH] Erro ao criar registro de falta:', recordErr)
+      }
+    }
+
+    if (
+      statusChanged &&
+      newStatus &&
+      isLessonCancelledFamily(newStatus) &&
+      lessonBefore.enrollment?.tipoAula === 'GRUPO' &&
+      lessonBefore.enrollment?.nomeGrupo?.trim()
+    ) {
+      const siblingIds = await findGroupSlotSiblingLessonIds(id)
+      const otherIds = siblingIds.filter((sid) => sid !== id)
+      if (otherIds.length > 0) {
+        let nomeAdmin = 'admin'
+        if (auth.session?.sub) {
+          try {
+            const adminUser = await prisma.user.findUnique({
+              where: { id: auth.session.sub },
+              select: { nome: true },
+            })
+            if (adminUser?.nome) nomeAdmin = adminUser.nome
+          } catch {
+            // ignora
+          }
+        }
+        for (const siblingId of otherIds) {
+          const sibling = await prisma.lesson.findUnique({
+            where: { id: siblingId },
+            select: { notes: true, status: true },
+          })
+          if (!sibling || isLessonCancelledFamily(sibling.status)) continue
+          const siblingNotes = isLessonCancelledFamily(newStatus)
+            ? adicionarObservacaoCancelamento(sibling.notes, nomeAdmin, agora)
+            : sibling.notes
+          await prisma.lesson.update({
+            where: { id: siblingId },
+            data: { status: newStatus, notes: siblingNotes },
+          })
+          if (newStatus === 'CANCELLED_NO_REPLACEMENT') {
+            try {
+              await createNoShowLessonRecordIfMissing(siblingId)
+            } catch (recordErr) {
+              console.error(
+                '[api/admin/lessons/[id] PATCH] Erro ao criar registro de falta (grupo):',
+                recordErr
+              )
+            }
+          }
+        }
       }
     }
 
@@ -669,7 +757,10 @@ Equipe Seidmann Institute`
       // Não bloquear a atualização da aula se houver erro ao processar solicitações
     }
 
-    return NextResponse.json({ ok: true, data: { lesson } })
+    return NextResponse.json({
+      ok: true,
+      data: { lesson, cancelamentoTardio: cancelamentoTardioApplied },
+    })
   } catch (error) {
     console.error('[api/admin/lessons/[id] PATCH]', error)
     return NextResponse.json(

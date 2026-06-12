@@ -10,6 +10,7 @@ import Modal from '@/components/admin/Modal'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { StickyNote, Plus, Trash2, Maximize2 } from 'lucide-react'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MAX_POSTITS = 20
 
@@ -314,7 +315,7 @@ export default function BlocoDeNotasPage() {
         </Modal>
 
         {initialLoading ? (
-          <p className="text-sm text-slate-500">Carregando seus post-its…</p>
+          <SeidmannLoading message="Carregando seus post-its…" variant="inline" />
         ) : loadError ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-4 text-sm text-amber-950 space-y-3">
             <p>{loadError}</p>

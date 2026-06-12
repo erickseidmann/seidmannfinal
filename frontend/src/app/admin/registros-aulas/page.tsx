@@ -22,6 +22,7 @@ import {
   findLatestRecordBookFromList,
   resolveBookProgressionReference,
 } from '@/lib/lesson-record-book-progression'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   downloadLessonRecordsPdf,
   getLessonRecordAlunoLabel,
@@ -936,9 +937,7 @@ export default function AdminRegistrosAulasPage() {
             Selecione o período e clique em &quot;Buscar&quot; para ver os registros de aula.
           </div>
         ) : loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : records.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
             Nenhum registro encontrado para os filtros selecionados.
@@ -1102,7 +1101,7 @@ export default function AdminRegistrosAulasPage() {
                 Aula em grupo: {selectedLessonForGroup?.enrollment?.nomeGrupo?.trim()}
               </p>
               {loadingGroup && groupMembers.length === 0 ? (
-                <p className="text-sm text-amber-700">Carregando alunos do grupo...</p>
+                <SeidmannLoading message="Carregando alunos do grupo..." variant="compact" />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-amber-700 mb-2">Status da aula (presença) de cada aluno:</p>
@@ -1494,10 +1493,7 @@ export default function AdminRegistrosAulasPage() {
           Qualquer administrador pode aprovar ou negar.
         </p>
         {unlocksLoading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-gray-500">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            Carregando...
-          </div>
+          <SeidmannLoading variant="section" />
         ) : unlockRequests.length === 0 ? (
           <p className="text-center text-gray-500 py-8">Nenhuma solicitação de liberação.</p>
         ) : (

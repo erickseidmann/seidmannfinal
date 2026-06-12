@@ -15,6 +15,7 @@ import {
 import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 export interface RecebimentoAllocation {
   id?: string
@@ -491,9 +492,7 @@ export default function RecebimentosConciliacao({
             </div>
 
             {loading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-brand-orange" />
-              </div>
+              <SeidmannLoading variant="section" className="py-8" />
             ) : items.length === 0 ? (
               <p className="text-sm text-gray-500 py-6 text-center">
                 Nenhum recebimento encontrado.

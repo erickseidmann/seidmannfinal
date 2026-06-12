@@ -27,6 +27,7 @@ import {
   type InactiveReasonValue,
   validateInactiveReasonPayload,
 } from '@/lib/inactive-reason'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   cefrDescriptionFromBookName,
   NIVEL_LIVRO_NAO_DEFINIDO,
@@ -3380,7 +3381,7 @@ export default function AdminAlunosPage() {
           size="xl"
         >
           {listLoading && listModal?.type !== 'missingRequired' && listModal?.type !== 'bookAdvances' ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : listModal?.type === 'missingRequired' ? (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3401,7 +3402,7 @@ export default function AdminAlunosPage() {
                 </Button>
               </div>
               {missingRequiredLoading ? (
-                <p className="text-gray-500 py-8 text-center">Carregando...</p>
+                <SeidmannLoading variant="section" />
               ) : missingRequiredStats.list.length === 0 ? (
                 <p className="text-center text-gray-600 py-8">
                   Nenhuma matrícula com informações obrigatórias faltando.
@@ -3459,8 +3460,8 @@ export default function AdminAlunosPage() {
                 <tbody>
                   {bookAdvanceLoading ? (
                     <tr>
-                      <td colSpan={5} className="py-4 text-center text-gray-500">
-                        Carregando...
+                      <td colSpan={5} className="py-4">
+                        <SeidmannLoading variant="compact" className="py-2" />
                       </td>
                     </tr>
                   ) : bookAdvanceStats.list.length === 0 ? (

@@ -15,6 +15,11 @@ import StatCard from '@/components/admin/StatCard'
 import Modal from '@/components/admin/Modal'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import { useLateCancellationDialog } from '@/hooks/useLateCancellationDialog'
+import {
+  getLessonCancelamentoAntecedenciaHoras,
+  isLessonCancelamentoTardioForEnrollments,
+} from '@/lib/lesson-no-show-record'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
@@ -36,6 +41,7 @@ import {
   formatInactiveDateLabel,
   isLessonInInactivationWarningWindow,
 } from '@/lib/enrollment-inactivation-warning'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   type LessonStatusUi,
   LESSON_STATUS_LABELS,
@@ -312,6 +318,7 @@ function toDateKey(d: Date): string {
 export default function AdminCalendarioPage() {
   console.log('render')
   const { confirm, ConfirmDialog } = useConfirmDialog()
+  const { promptLateCancellation, LateCancellationDialog } = useLateCancellationDialog()
   const router = useRouter()
   const searchParams = useSearchParams()
   const searchParamsKey = searchParams?.toString() ?? ''
@@ -331,7 +338,10 @@ export default function AdminCalendarioPage() {
     tipoAula: string | null
     nomeGrupo: string | null
     curso: string | null
+    escolaMatricula: string | null
+    cancelamentoAntecedenciaHoras: number | null
   }[]>([])
+  const [cancelamentoExcecao, setCancelamentoExcecao] = useState(false)
   const [teachers, setTeachers] = useState<{
     id: string
     nome: string
@@ -962,6 +972,8 @@ export default function AdminCalendarioPage() {
           tipoAula?: string | null
           nomeGrupo?: string | null
           curso?: string | null
+          escolaMatricula?: string | null
+          cancelamentoAntecedenciaHoras?: number | null
         }) => ({
           id: e.id,
           nome: e.nome,
@@ -970,6 +982,8 @@ export default function AdminCalendarioPage() {
           tipoAula: e.tipoAula ?? null,
           nomeGrupo: e.nomeGrupo ?? null,
           curso: e.curso ?? null,
+          escolaMatricula: e.escolaMatricula ?? null,
+          cancelamentoAntecedenciaHoras: e.cancelamentoAntecedenciaHoras ?? null,
         })))
       }
       if (teaRes.ok) {
@@ -1452,6 +1466,9 @@ export default function AdminCalendarioPage() {
       })
       return
     }
+    if (!options?.agendarReposicao) {
+      setCancelamentoExcecao(false)
+    }
     setEditingLesson(lesson)
     setAgendarReposicao(options?.agendarReposicao ?? false)
     setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: lesson.durationMinutes || 30 })
@@ -1684,6 +1701,7 @@ export default function AdminCalendarioPage() {
             notes: lessonForm.notes || null,
             createdByName: lessonForm.createdByName?.trim() || null,
             ...(applyToFuture ? { applyToFuture: true } : {}),
+            ...(cancelamentoExcecao ? { cancelamentoExcecao: true } : {}),
           }),
         })
         const json = await res.json()
@@ -1803,6 +1821,7 @@ export default function AdminCalendarioPage() {
       setLessonModalOpen(false)
       setLessonProfessorDropdownOpen(false)
       setAgendarReposicao(false)
+      setCancelamentoExcecao(false)
       setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: 30 })
       fetchLessons()
       fetchStats()
@@ -1839,12 +1858,38 @@ export default function AdminCalendarioPage() {
         cancelLabel: 'Só esta semana',
       })
 
-      const scheduleReposicao = await confirm({
-        title: 'Agendar reposição?',
-        message: 'Deseja agendar uma aula de reposição após o cancelamento?',
-        confirmLabel: 'Sim, agendar',
-        cancelLabel: 'Não',
-      })
+      const startAt = fromModal && editingLesson?.id === lesson.id && lessonForm.startAt
+        ? new Date(lessonForm.startAt + ':00')
+        : new Date(lesson.startAt)
+      if (Number.isNaN(startAt.getTime())) {
+        setToast({ message: 'Data/hora inválida', type: 'error' })
+        return
+      }
+
+      const cancelamentoTardio = isLessonCancelamentoTardioForEnrollments(
+        startAt,
+        lesson.enrollmentId,
+        enrollments
+      )
+
+      let scheduleReposicao = false
+
+      if (cancelamentoTardio) {
+        const horas = getLessonCancelamentoAntecedenciaHoras(lesson.enrollmentId, enrollments)
+        const lateChoice = await promptLateCancellation(horas)
+        if (lateChoice === 'back') return
+        if (lateChoice === 'exception') {
+          setCancelamentoExcecao(true)
+          scheduleReposicao = true
+        }
+      } else {
+        scheduleReposicao = await confirm({
+          title: 'Agendar reposição?',
+          message: 'Deseja agendar uma aula de reposição após o cancelamento?',
+          confirmLabel: 'Sim, agendar',
+          cancelLabel: 'Não',
+        })
+      }
 
       if (scheduleReposicao) {
         if (fromModal && editingLesson?.id === lesson.id) {
@@ -1859,20 +1904,15 @@ export default function AdminCalendarioPage() {
           durationMinutes: lesson.durationMinutes,
         }))
         setToast({
-          message: 'Preencha a data e o professor da reposição e clique em Salvar.',
+          message: cancelamentoTardio
+            ? 'Exceção registrada. Preencha a reposição e clique em Salvar.'
+            : 'Preencha a data e o professor da reposição e clique em Salvar.',
           type: 'success',
         })
         return
       }
 
-      const startAt = fromModal && editingLesson?.id === lesson.id && lessonForm.startAt
-        ? new Date(lessonForm.startAt + ':00')
-        : new Date(lesson.startAt)
-      if (Number.isNaN(startAt.getTime())) {
-        setToast({ message: 'Data/hora inválida', type: 'error' })
-        return
-      }
-
+      setCancelamentoExcecao(false)
       setCancellingLessonId(lesson.id)
       try {
         const res = await fetch(`/api/admin/lessons/${lesson.id}`, {
@@ -1903,7 +1943,12 @@ export default function AdminCalendarioPage() {
           setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: 30 })
           setEditingLesson(null)
         }
-        setToast({ message: 'Aula cancelada', type: 'success' })
+        setToast({
+          message: json.data?.cancelamentoTardio
+            ? 'Cancelamento em cima da hora: aula registrada automaticamente para o professor (aluno não compareceu, sem reposição).'
+            : 'Aula cancelada',
+          type: 'success',
+        })
         fetchLessons()
         fetchStats()
       } catch {
@@ -1912,7 +1957,17 @@ export default function AdminCalendarioPage() {
         setCancellingLessonId(null)
       }
     },
-    [canDirectEditLesson, confirm, editingLesson, lessonForm.startAt, fetchLessons, fetchStats]
+    [
+      canDirectEditLesson,
+      confirm,
+      promptLateCancellation,
+      enrollments,
+      editingLesson,
+      lessonForm.startAt,
+      fetchLessons,
+      fetchStats,
+      openEditLesson,
+    ]
   )
 
   const handleCancelLesson = () => {
@@ -2660,10 +2715,7 @@ export default function AdminCalendarioPage() {
         )}
 
         {loading && (
-          <div className="mb-6 flex items-center gap-2 text-slate-500">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm font-medium">Carregando calendário...</span>
-          </div>
+          <SeidmannLoading message="Carregando calendário..." variant="compact" className="mb-6" />
         )}
 
         {/* Visualização mensal */}
@@ -3636,7 +3688,7 @@ export default function AdminCalendarioPage() {
                 Alunos que se matricularam (formulário ou lista) e ainda não foram marcados como «tudo feito». Use «Enviei link pag» para registrar o envio do link de pagamento. «Tudo feito» remove o aluno da lista mesmo sem pagamento confirmado.
               </p>
               {novosMatriculadosListLoading ? (
-                <p className="text-gray-500">Carregando...</p>
+                <SeidmannLoading variant="inline" />
               ) : novosMatriculadosList.length === 0 ? (
                 <p className="text-gray-500">Nenhum novo aluno matriculado pendente.</p>
               ) : (
@@ -3701,7 +3753,7 @@ export default function AdminCalendarioPage() {
                 Alunos que têm aulas futuras em horários fora da disponibilidade atual do professor. Quando o professor salvar a alteração de horários, esses alunos serão redirecionados para outros professores.
               </p>
               {alunosParaRedirecionarListLoading ? (
-                <p className="text-gray-500">Carregando...</p>
+                <SeidmannLoading variant="inline" />
               ) : alunosParaRedirecionarList.length === 0 ? (
                 <p className="text-gray-500">Nenhum aluno para redirecionar.</p>
               ) : (
@@ -4205,6 +4257,7 @@ export default function AdminCalendarioPage() {
           <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
         )}
         <ConfirmDialog />
+        <LateCancellationDialog />
       </div>
     </AdminLayout>
   )

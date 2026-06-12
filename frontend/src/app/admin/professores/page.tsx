@@ -22,6 +22,7 @@ import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, 
 import { cn } from '@/lib/utils'
 import StatCard from '@/components/admin/StatCard'
 import { validateMeetingLink } from '@/lib/meeting-link'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   TEACHER_CEFR_LEVEL_OPTIONS,
   formatTeacherNiveisLabel,
@@ -1676,7 +1677,7 @@ export default function AdminProfessoresPage() {
           size="md"
         >
           {listTeachersLoading ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : listTeachers.length === 0 ? (
             <p className="text-gray-500">Nenhum professor.</p>
           ) : (
@@ -1911,7 +1912,7 @@ export default function AdminProfessoresPage() {
           size="md"
         >
           {teacherRequestsLoading ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : teacherRequests.length === 0 ? (
             <p className="text-gray-500">Nenhuma solicitação.</p>
           ) : (
@@ -2468,10 +2469,7 @@ export default function AdminProfessoresPage() {
                 </div>
               )}
               {availabilityLoading ? (
-                <div className="flex items-center gap-2 text-gray-500">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Carregando...
-                </div>
+                <SeidmannLoading message="Carregando..." variant="compact" className="py-2" />
               ) : (
                 <TableScrollArea className="-mx-4 sm:-mx-2 rounded-xl border border-gray-200 bg-white">
                   <div className="inline-block min-w-full">
@@ -2658,10 +2656,7 @@ export default function AdminProfessoresPage() {
                   className="flex items-center gap-2"
                 >
                   {availableTeachersLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Carregando...
-                    </>
+                    <SeidmannLoading message="Carregando..." variant="compact" layout="row" className="py-0" />
                   ) : (
                     <>
                       <ArrowRight className="w-4 h-4" />
@@ -2682,10 +2677,7 @@ export default function AdminProfessoresPage() {
           {alunosModalTeacher && (
             <div className="space-y-4">
               {alunosLoading ? (
-                <div className="flex items-center gap-2 text-gray-500">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Carregando...
-                </div>
+                <SeidmannLoading message="Carregando..." variant="compact" className="py-2" />
               ) : alunosData?.alunos?.length ? (
                 <TableScrollArea>
                   <table className="w-full text-sm border-collapse">
@@ -2916,10 +2908,7 @@ export default function AdminProfessoresPage() {
                 </p>
               </div>
               {availableTeachersLoading ? (
-                <div className="flex items-center gap-2 text-gray-500 py-4">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Carregando professores disponíveis...
-                </div>
+                <SeidmannLoading message="Carregando professores disponíveis..." variant="compact" className="py-2" />
               ) : availableTeachers.length === 0 ? (
                 <p className="text-sm text-amber-600 py-4">
                   Nenhum professor disponível com horários compatíveis para todas as aulas a partir da data selecionada.

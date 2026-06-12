@@ -21,6 +21,7 @@ import {
   BookOpen,
   ClipboardList,
 } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   formatDateOnlyInTZ,
   formatLessonDateShortInTZ,
@@ -326,7 +327,7 @@ export default function DashboardAlunoInicioPage() {
           </div>
           <div className="px-4 pb-4 max-h-[min(420px,55vh)] overflow-y-auto space-y-3">
             {loadingDashboard ? (
-              <p className="text-sm text-gray-500 py-6">Carregando...</p>
+              <SeidmannLoading variant="inline" className="py-6" />
             ) : (
               <>
                 {nextLesson ? (
@@ -479,7 +480,7 @@ export default function DashboardAlunoInicioPage() {
           </div>
           <div className="px-4 pb-4 max-h-[min(420px,55vh)] overflow-y-auto space-y-2.5">
             {loadingDashboard && loadingRequests ? (
-              <p className="text-sm text-gray-500 py-6">Carregando...</p>
+              <SeidmannLoading variant="inline" className="py-6" />
             ) : (
               <>
                 {pendingRequests.slice(0, 5).map((request) => {
@@ -594,7 +595,7 @@ export default function DashboardAlunoInicioPage() {
           </div>
           <div className="px-4 pb-4 max-h-[min(420px,55vh)] overflow-y-auto space-y-3">
             {loadingDashboard ? (
-              <p className="text-sm text-gray-500 py-6">Carregando...</p>
+              <SeidmannLoading variant="inline" className="py-6" />
             ) : lessonRecords.length === 0 ? (
               <p className="text-sm text-gray-600 py-4">Nenhum registro disponível ainda.</p>
             ) : (

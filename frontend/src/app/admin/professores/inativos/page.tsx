@@ -13,6 +13,7 @@ import Toast from '@/components/admin/Toast'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import { ArrowLeft, Loader2, Power, Search } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface InactiveTeacher {
   id: string
@@ -155,9 +156,7 @@ export default function ProfessoresInativosPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : teachers.length === 0 ? (
           <p className="text-gray-500 text-center py-12">Nenhum professor inativo encontrado.</p>
         ) : (

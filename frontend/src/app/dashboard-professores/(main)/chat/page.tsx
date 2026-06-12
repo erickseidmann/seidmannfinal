@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { MessageCircle, Send, Users, BookOpen, Calendar, Wallet, GraduationCap, ArrowLeft } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const SUBJECT_KEYS = [
   { key: 'aula', labelKey: 'professor.chat.subject.aula', icon: GraduationCap },
@@ -313,7 +314,7 @@ export default function ProfessorChatPage() {
             {subjectTab && (
               <div className="mt-2 max-h-40 overflow-y-auto border border-gray-100 rounded-lg">
                 {subjectLoading ? (
-                  <div className="p-2 text-xs text-gray-500">{t('professor.home.loading')}</div>
+                  <div className="p-2"><SeidmannLoading message={t('professor.home.loading')} variant="compact" className="py-2" /></div>
                 ) : subjectUsers.length === 0 ? (
                   <div className="p-2 text-xs text-gray-500">—</div>
                 ) : (
@@ -345,7 +346,7 @@ export default function ProfessorChatPage() {
           </div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-4 pt-2 pb-1">{t('professor.chat.conversations')}</p>
           {loading ? (
-            <div className="p-4 text-gray-500">{t('professor.home.loading')}</div>
+            <SeidmannLoading message={t('professor.home.loading')} variant="inline" className="p-4" />
           ) : conversations.length === 0 ? (
             <div className="p-4 text-gray-500 text-sm">{t('professor.chat.noConversation')}</div>
           ) : (

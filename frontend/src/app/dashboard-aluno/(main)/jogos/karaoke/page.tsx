@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { effectiveKaraokeTimeSec, getLyricWindowSec } from '@/lib/karaoke-timing'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 declare global {
   interface Window {
@@ -564,7 +565,7 @@ function KaraokeInner() {
         {phase === 'select' && (
           <>
             {songsLoading ? (
-              <p className="text-center text-slate-500">Carregando músicas…</p>
+              <SeidmannLoading message="Carregando músicas…" variant="inline" />
             ) : songs.length === 0 ? (
               <p className="rounded-2xl bg-white p-8 text-center text-slate-600 shadow-md">
                 Nenhuma música cadastrada ainda. Peça pro admin cadastrar!
@@ -747,7 +748,9 @@ function KaraokeInner() {
               <p className="mt-2 text-sm font-medium text-slate-700">
                 {volumeLevel > VOLUME_THRESHOLD ? '🎤 Cantando' : '🔇 Silêncio'}
               </p>
-              {!playerReady && <p className="mt-2 text-xs text-slate-500">Carregando vídeo…</p>}
+              {!playerReady && (
+                <SeidmannLoading message="Carregando vídeo…" variant="compact" layout="row" className="mt-2 py-1" />
+              )}
             </div>
           </div>
         )}

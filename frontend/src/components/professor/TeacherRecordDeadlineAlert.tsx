@@ -1,7 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Clock, ChevronRight } from 'lucide-react'
+import { AlertTriangle, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { formatTimeInTZ } from '@/lib/datetime'
 import {
   TEACHER_LESSON_RECORD_DEADLINE_DAYS,
@@ -73,28 +74,65 @@ export default function TeacherRecordDeadlineAlert({
   onLessonClick,
   showRegisterLink = true,
 }: TeacherRecordDeadlineAlertProps) {
+  const [open, setOpen] = useState(false)
   const backlog = registerablePending.filter((l) => isTeacherLessonRecordGrandfathered(l.startAt))
 
   if (registerablePending.length === 0 && expiredPending.length === 0) return null
 
+  const summaryParts: string[] = []
+  if (registerablePending.length > 0) {
+    summaryParts.push(`${registerablePending.length} aguardando registro`)
+  }
+  if (expiredPending.length > 0) {
+    summaryParts.push(`${expiredPending.length} com prazo expirado`)
+  }
+  const summary = summaryParts.join(' · ')
+
   return (
     <div
       role="alert"
-      className="rounded-2xl border-2 border-amber-500 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 p-5 sm:p-6 shadow-lg shadow-amber-200/60"
+      className="rounded-2xl border-2 border-amber-500 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 shadow-lg shadow-amber-200/60 overflow-hidden"
     >
-      <div className="flex flex-col sm:flex-row gap-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start gap-4 p-5 sm:p-6 text-left hover:bg-amber-100/40 transition-colors"
+      >
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-md">
           <AlertTriangle className="h-7 w-7" aria-hidden />
         </div>
-        <div className="flex-1 min-w-0 space-y-3">
-          <div>
-            <h2 className="text-lg sm:text-xl font-bold text-amber-950">{title}</h2>
-            <p className="mt-2 text-sm sm:text-base text-amber-950/90 leading-relaxed">{intro}</p>
-            {backlog.length > 0 && (
-              <p className="mt-2 text-sm sm:text-base text-amber-950/90 leading-relaxed">{backlogNote}</p>
-            )}
-            <p className="mt-2 text-sm sm:text-base font-semibold text-amber-950 leading-relaxed">{newRuleNote}</p>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-amber-950">{title}</h2>
+              {!open && summary ? (
+                <p className="mt-1 text-sm text-amber-950/80">{summary}</p>
+              ) : null}
+            </div>
+            <ChevronDown
+              className={`h-5 w-5 shrink-0 text-amber-800 mt-1 transition-transform duration-200 ${
+                open ? 'rotate-180' : ''
+              }`}
+              aria-hidden
+            />
           </div>
+        </div>
+      </button>
+
+      {open ? (
+        <div className="px-5 sm:px-6 pb-5 sm:pb-6 pt-0 border-t border-amber-300/50">
+          <div className="flex flex-col sm:flex-row gap-4 sm:pl-16">
+            <div className="flex-1 min-w-0 space-y-3">
+              <div>
+                <p className="text-sm sm:text-base text-amber-950/90 leading-relaxed">{intro}</p>
+                {backlog.length > 0 && (
+                  <p className="mt-2 text-sm sm:text-base text-amber-950/90 leading-relaxed">{backlogNote}</p>
+                )}
+                <p className="mt-2 text-sm sm:text-base font-semibold text-amber-950 leading-relaxed">
+                  {newRuleNote}
+                </p>
+              </div>
 
           {registerablePending.length > 0 && (
             <div className="rounded-xl border border-amber-300/80 bg-white/80 p-4">
@@ -174,8 +212,10 @@ export default function TeacherRecordDeadlineAlert({
               <ChevronRight className="w-4 h-4" />
             </Link>
           )}
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   )
 }

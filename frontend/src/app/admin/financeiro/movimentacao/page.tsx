@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import AdminLayout from '@/components/admin/AdminLayout'
 import Table, { Column } from '@/components/admin/Table'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Calendar, ChevronDown, ChevronRight, Download, Save, Trash2, Upload } from 'lucide-react'
@@ -1051,7 +1052,11 @@ export default function FinanceiroMovimentacaoPage() {
                 Faça upload do extrato da competência selecionada (OFX/CSV). Não é permitido importar extratos de outros meses nem anexar o mesmo arquivo duas vezes.
               </p>
               <p className="text-sm text-gray-700 mt-2">
-                {extratosLoading ? 'Carregando lista…' : `${extratos.length} arquivo(s) neste mês.`}
+                {extratosLoading ? (
+                  <SeidmannLoading message="Carregando lista…" variant="compact" layout="row" className="py-0 inline-flex" />
+                ) : (
+                  `${extratos.length} arquivo(s) neste mês.`
+                )}
               </p>
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">

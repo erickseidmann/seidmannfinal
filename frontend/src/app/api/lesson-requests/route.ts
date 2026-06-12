@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent, requireTeacher } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
+import { cancelStudentLessonByStudent } from '@/lib/student-lesson-cancel'
+import { resolveLessonCancelamentoTardio } from '@/lib/lesson-no-show-record'
 
 const DIAS_SEMANA = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
 
@@ -173,25 +175,24 @@ export async function POST(request: NextRequest) {
     const escolaMatricula = lesson.enrollment.escolaMatricula
     const isYoubecome = escolaMatricula === 'YOUBECOME'
     
-    // Obter tempo de antecedência: padrão 24h para YOUBECOME, 6h para outros, ou valor personalizado
-    let horasAntecedencia = isYoubecome ? 24 : 6
-    const cancelamentoHoras = (lesson.enrollment as any).cancelamentoAntecedenciaHoras
-    if (cancelamentoHoras !== null && cancelamentoHoras !== undefined && typeof cancelamentoHoras === 'number') {
-      horasAntecedencia = cancelamentoHoras
-    }
-    
-    if (type === 'CANCELAMENTO') {
-      const agora = new Date()
-      const diffHoras = (lessonDate.getTime() - agora.getTime()) / (1000 * 60 * 60)
-      
-      if (diffHoras < horasAntecedencia) {
-        const mensagem = isYoubecome
-          ? `Alunos YOUBECOME só podem cancelar aulas com pelo menos ${horasAntecedencia} horas de antecedência`
-          : `É necessário cancelar com pelo menos ${horasAntecedencia} horas de antecedência`
-        return NextResponse.json(
-          { ok: false, message: mensagem },
-          { status: 400 }
-        )
+    if (type === 'CANCELAMENTO' && isStudent && auth.session?.userId) {
+      const cancelamentoTardio = await resolveLessonCancelamentoTardio(
+        { startAt: lesson.startAt, enrollmentId: lesson.enrollmentId }
+      )
+      if (cancelamentoTardio) {
+        const cancelResult = await cancelStudentLessonByStudent(lesson.id, auth.session.userId)
+        if (!cancelResult.ok) {
+          return NextResponse.json(
+            { ok: false, message: cancelResult.message },
+            { status: cancelResult.status }
+          )
+        }
+        return NextResponse.json({
+          ok: true,
+          cancelledImmediately: true,
+          cancelamentoTardio: true,
+          message: cancelResult.message,
+        })
       }
     }
 

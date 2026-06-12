@@ -17,6 +17,7 @@ import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Pencil, Send, Loader2, Copy, Columns, ChevronDown, FileDown, MessageSquare, Trash2, ChevronRight, Calendar, CalendarX, Search, Receipt, QrCode, ExternalLink, CircleChevronDown, CheckCircle2, Maximize2, Minimize2, Download, FileText, Bell, FilePlus, XCircle, AlertCircle, Clock, Mail, Paperclip } from 'lucide-react'
 import { enrollmentEligibleForBoleto } from '@/lib/boleto-eligibility'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface AlunoFinanceiro {
   id: string
@@ -1922,9 +1923,7 @@ export default function FinanceiroAlunosPage() {
         )}
 
         {loading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : (
           <>
             {/* Buscar e filtros */}
@@ -2944,7 +2943,7 @@ export default function FinanceiroAlunosPage() {
           size="md"
         >
           {obsLoading ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : (
             <div className="space-y-4">
               <ul className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
@@ -3069,7 +3068,7 @@ export default function FinanceiroAlunosPage() {
           }
         >
           {agendarNfLoading ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : (
             <div className="space-y-4">
               {agendarNfFromRepeat && (

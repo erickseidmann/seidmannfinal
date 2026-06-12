@@ -12,6 +12,7 @@ import Toast from '@/components/admin/Toast'
 import Modal from '@/components/admin/Modal'
 import { resolveProfessorFinanceiroForToday } from '@/lib/professor-fin-period'
 import { validarJanelaEnvioNf } from '@/lib/finance/teacher-nf-window'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -427,7 +428,7 @@ export default function FinanceiroPage() {
       )}
 
       {loading && (
-        <div className="mb-6 text-gray-500">Carregando...</div>
+        <SeidmannLoading variant="inline" className="mb-6" />
       )}
 
       {!loading && data && (

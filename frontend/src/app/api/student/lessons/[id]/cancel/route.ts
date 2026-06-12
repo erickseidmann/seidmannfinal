@@ -1,35 +1,11 @@
 /**
  * POST /api/student/lessons/[id]/cancel
  * Cancelar aula diretamente (aluno)
- * Apenas alunos autenticados podem cancelar suas próprias aulas
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { isLessonCancelledFamily } from '@/lib/lesson-status'
 import { requireStudent } from '@/lib/auth'
-import {
-  createNoShowLessonRecordIfMissing,
-  isLessonCancelamentoTardio,
-} from '@/lib/lesson-no-show-record'
-
-function formatarDataHora(d: Date): string {
-  return d.toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function adicionarObservacaoCancelamento(notesAtuais: string | null, quemCancelou: string, dataHora: Date): string {
-  const novaObs = `Aula foi cancelada pelo aluno às ${formatarDataHora(dataHora)}`
-  if (notesAtuais && notesAtuais.trim()) {
-    return `${notesAtuais}\n${novaObs}`
-  }
-  return novaObs
-}
+import { cancelStudentLessonByStudent } from '@/lib/student-lesson-cancel'
 
 export async function POST(
   request: NextRequest,
@@ -44,108 +20,18 @@ export async function POST(
       )
     }
 
-    const lessonId = params.id
-
-    // Buscar a aula
-    const lesson = await prisma.lesson.findUnique({
-      where: { id: lessonId },
-      include: {
-        enrollment: {
-          select: {
-            id: true,
-            userId: true,
-            nome: true,
-            email: true,
-            tipoAula: true,
-            escolaMatricula: true,
-            cancelamentoAntecedenciaHoras: true,
-          },
-        },
-      },
-    })
-
-    if (!lesson) {
+    const result = await cancelStudentLessonByStudent(params.id, auth.session.userId)
+    if (!result.ok) {
       return NextResponse.json(
-        { ok: false, message: 'Aula não encontrada' },
-        { status: 404 }
+        { ok: false, message: result.message },
+        { status: result.status }
       )
-    }
-
-    // Verificar se o aluno tem permissão para cancelar esta aula
-    const sessionUserId = auth.session.userId
-    const enrollmentUserId = lesson.enrollment.userId
-
-    if (!enrollmentUserId) {
-      // Se o enrollment não tem userId vinculado, verificar se o aluno tem algum enrollment com esse ID
-      const studentEnrollments = await prisma.enrollment.findMany({
-        where: { userId: sessionUserId },
-        select: { id: true },
-      })
-      const enrollmentIds = studentEnrollments.map(e => e.id)
-
-      if (!enrollmentIds.includes(lesson.enrollmentId)) {
-        return NextResponse.json(
-          { ok: false, message: 'Você não tem permissão para cancelar esta aula' },
-          { status: 403 }
-        )
-      }
-    } else if (enrollmentUserId !== sessionUserId) {
-      return NextResponse.json(
-        { ok: false, message: 'Você não tem permissão para cancelar esta aula' },
-        { status: 403 }
-      )
-    }
-
-    // Verificar se a aula já está cancelada
-    if (isLessonCancelledFamily(lesson.status)) {
-      return NextResponse.json(
-        { ok: false, message: 'Esta aula já está cancelada' },
-        { status: 400 }
-      )
-    }
-
-    // Aulas em grupo não podem ser canceladas pelo portal do aluno
-    if (lesson.enrollment.tipoAula === 'GRUPO') {
-      return NextResponse.json(
-        { ok: false, message: 'Aulas em grupo não podem ser canceladas pelo portal do aluno. Entre em contato com a gestão.' },
-        { status: 403 }
-      )
-    }
-
-    // Cancelar a aula — tardio (em cima da hora) = sem reposição + registro de falta automático
-    const agora = new Date()
-    const notesAtuais = lesson.notes
-    const novaObservacao = adicionarObservacaoCancelamento(notesAtuais, 'aluno', agora)
-
-    const cancelamentoTardio = isLessonCancelamentoTardio(
-      lesson.startAt,
-      lesson.enrollment.escolaMatricula,
-      lesson.enrollment.cancelamentoAntecedenciaHoras,
-      agora
-    )
-    const novoStatus = cancelamentoTardio ? 'CANCELLED_NO_REPLACEMENT' : 'CANCELLED'
-
-    await prisma.lesson.update({
-      where: { id: lessonId },
-      data: {
-        status: novoStatus,
-        notes: novaObservacao,
-      },
-    })
-
-    if (cancelamentoTardio) {
-      try {
-        await createNoShowLessonRecordIfMissing(lessonId)
-      } catch (recordErr) {
-        console.error('[api/student/lessons/[id]/cancel POST] Erro ao criar registro de falta:', recordErr)
-      }
     }
 
     return NextResponse.json({
       ok: true,
-      message: cancelamentoTardio
-        ? 'Aula cancelada. Registrado como não compareceu (sem reposição).'
-        : 'Aula cancelada com sucesso',
+      cancelamentoTardio: result.cancelamentoTardio,
+      message: result.message,
     })
   } catch (error) {
     console.error('[api/student/lessons/[id]/cancel POST]', error)

@@ -11,6 +11,7 @@ import { useSearchParams } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { useTranslation } from '@/contexts/LanguageContext'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 function RedefinirSenhaForm() {
   const { t } = useTranslation()
@@ -190,7 +191,7 @@ export default function RedefinirSenhaPage() {
   return (
     <Suspense fallback={
       <main className="min-h-screen bg-gradient-to-b from-orange-50 to-white pt-24 pb-20 flex items-center justify-center">
-        <p className="text-gray-500">Carregando...</p>
+        <SeidmannLoading variant="inline" />
       </main>
     }>
       <RedefinirSenhaForm />

@@ -10,6 +10,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import { Loader2, Search, Download, HeartPulse, Lightbulb, ChevronDown, ChevronRight } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -209,9 +210,7 @@ export default function FinanceiroRelatoriosPage() {
 
         {/* Loading */}
         {loading && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 flex justify-center">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="" />
         )}
 
         {/* Resultados */}

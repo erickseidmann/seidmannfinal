@@ -12,6 +12,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Tag, Plus, Loader2, Infinity as InfinityIcon, Users, FileDown, Power, PowerOff, Trash2 } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -298,9 +299,7 @@ export default function FinanceiroCuponsPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : coupons.length === 0 ? (
           <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 p-12 text-center">
             <Tag className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -625,9 +624,7 @@ export default function FinanceiroCuponsPage() {
 
             {/* Lista */}
             {enrollmentsLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-              </div>
+              <SeidmannLoading variant="section" className="py-8" />
             ) : enrollments.length === 0 ? (
               <p className="text-gray-500 text-center py-8">
                 Nenhuma inscrição encontrada para os filtros selecionados.

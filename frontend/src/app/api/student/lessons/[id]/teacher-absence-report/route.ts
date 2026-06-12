@@ -12,6 +12,7 @@ import {
   createTeacherAbsenceReportWithTodo,
   isWithinTeacherAbsenceReportWindow,
 } from '@/lib/teacher-absence-report'
+import { resolveStudentEnrollmentForLesson } from '@/lib/student-group-lesson-access'
 
 function parseReportType(raw: unknown): TeacherAbsenceReportType | null {
   if (raw === 'ABSENT' || raw === 'LATE') return raw
@@ -67,7 +68,11 @@ export async function POST(
       return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
     }
 
-    if (!enrollmentIds.includes(lesson.enrollmentId)) {
+    const studentEnrollmentId = await resolveStudentEnrollmentForLesson(
+      enrollmentIds,
+      lesson.enrollmentId
+    )
+    if (!studentEnrollmentId) {
       return NextResponse.json({ ok: false, message: 'Sem permissão para esta aula' }, { status: 403 })
     }
 
@@ -96,11 +101,16 @@ export async function POST(
       )
     }
 
+    const studentEnrollment = await prisma.enrollment.findUnique({
+      where: { id: studentEnrollmentId },
+      select: { nome: true },
+    })
+
     const existing = await prisma.teacherAbsenceReport.findUnique({
       where: {
         lessonId_enrollmentId_reportType: {
           lessonId,
-          enrollmentId: lesson.enrollmentId,
+          enrollmentId: studentEnrollmentId,
           reportType,
         },
       },
@@ -114,9 +124,9 @@ export async function POST(
 
     const report = await createTeacherAbsenceReportWithTodo({
       lessonId,
-      enrollmentId: lesson.enrollmentId,
+      enrollmentId: studentEnrollmentId,
       teacherId: lesson.teacherId,
-      studentName: lesson.enrollment.nome,
+      studentName: studentEnrollment?.nome ?? lesson.enrollment.nome,
       teacherName: lesson.teacher.nome,
       lessonStart,
       reportType,

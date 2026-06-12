@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Search, Loader2, ZoomIn, ZoomOut } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface PdfViewerProps {
   url: string
@@ -155,9 +156,7 @@ export default function PdfViewer({ url, totalPaginas: totalFromBook, onClose, o
 
   if (loading) {
     return (
-      <div className="flex flex-1 items-center justify-center min-h-[200px]">
-        <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-      </div>
+      <SeidmannLoading variant="inline" className="flex flex-1 items-center justify-center min-h-[200px]" />
     )
   }
 

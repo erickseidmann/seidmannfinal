@@ -67,23 +67,46 @@ export function useLessonAttendance(lessonId: string, role: Role) {
     }
   }, [base, lessonId, startHeartbeat])
 
-  const registerLeave = useCallback(async () => {
-    const id = attendanceIdRef.current
-    if (!id) return
-    stopHeartbeat()
-    leaveSentRef.current = true
-    try {
-      await fetch(`${base}/attendance/${id}/leave`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-    } catch {
-      // ignore
-    }
-    attendanceIdRef.current = null
-    leaveSentRef.current = false
-    setIsTracking(false)
-  }, [base, stopHeartbeat])
+  const registerLeave = useCallback(
+    async (options?: { finalizeCall?: boolean }): Promise<{ nextLesson?: { id: string; startAt: string } | null }> => {
+      const id = attendanceIdRef.current
+      if (!id) return {}
+      stopHeartbeat()
+      leaveSentRef.current = true
+      let nextLesson: { id: string; startAt: string } | null | undefined
+      try {
+        const res = await fetch(`${base}/attendance/${id}/leave`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finalizeCall: options?.finalizeCall === true }),
+        })
+        const data = await res.json()
+        if (data?.ok && 'nextLesson' in data) {
+          nextLesson = data.nextLesson ?? null
+        }
+      } catch {
+        // ignore
+      }
+      attendanceIdRef.current = null
+      leaveSentRef.current = false
+      setIsTracking(false)
+      return { nextLesson }
+    },
+    [base, stopHeartbeat]
+  )
+
+  /** Retoma heartbeat quando a API já indica sessão ACTIVE (ex.: lista de salas). */
+  const syncActiveAttendance = useCallback(
+    (attendanceId: string) => {
+      if (!attendanceId || attendanceIdRef.current === attendanceId) return
+      attendanceIdRef.current = attendanceId
+      leaveSentRef.current = false
+      setIsTracking(true)
+      startHeartbeat()
+    },
+    [startHeartbeat]
+  )
 
   useEffect(() => {
     const handleLeave = () => sendLeave()
@@ -97,5 +120,5 @@ export function useLessonAttendance(lessonId: string, role: Role) {
     }
   }, [sendLeave, stopHeartbeat])
 
-  return { registerJoin, registerLeave, isTracking }
+  return { registerJoin, registerLeave, syncActiveAttendance, isTracking }
 }

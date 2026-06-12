@@ -5,6 +5,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import { School, Loader2, Search, Download } from 'lucide-react'
 import { useTranslation } from '@/contexts/LanguageContext'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 
 type SchoolOption = {
@@ -241,8 +242,8 @@ export default function AdminPartnerSchoolsPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                      Carregando...
+                    <td colSpan={4} className="px-4 py-8">
+                      <SeidmannLoading variant="compact" className="py-2" />
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (

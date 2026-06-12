@@ -11,6 +11,7 @@ import TableScrollArea from '@/components/admin/TableScrollArea'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   Loader2,
   FileText,
@@ -322,9 +323,7 @@ export default function FinanceiroCobrancasPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : (
           <>
             {summary && (

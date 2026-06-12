@@ -13,6 +13,7 @@ import Button from '@/components/ui/Button'
 import { LanguageSelector } from '@/components/layout/LanguageSelector'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { LogOut, LayoutDashboard, Bell, Loader2, Menu } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface AdminNotif {
   id: string
@@ -174,9 +175,7 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
                     )}
                   </div>
                   {loadingNotif ? (
-                    <div className="flex justify-center py-6">
-                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-                    </div>
+                    <SeidmannLoading variant="section" className="py-6" />
                   ) : notifications.length === 0 ? (
                     <p className="px-3 py-4 text-sm text-gray-500">Nenhuma notificação.</p>
                   ) : (

@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import { ChevronLeft, Loader2, Music } from 'lucide-react'
 import { emptyKaraokeForm, KaraokeSongFields, type KaraokeFormState } from '../KaraokeSongFields'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 export default function AdminKaraokeEditPage() {
   const router = useRouter()
@@ -119,9 +120,7 @@ export default function AdminKaraokeEditPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-20">
-            <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
-          </div>
+          <SeidmannLoading variant="section" className="py-20" />
         ) : (
           <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-md">
             {error && (

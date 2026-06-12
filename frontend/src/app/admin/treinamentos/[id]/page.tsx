@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import AdminLayout from '@/components/admin/AdminLayout'
 import { ChevronLeft, GraduationCap, Loader2 } from 'lucide-react'
 import { emptyTrainingForm, TrainingFields, type TrainingFormState } from '../TrainingFields'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 export default function AdminTreinamentoEditPage({ params }: { params: { id: string } }) {
   const router = useRouter()
@@ -102,9 +103,7 @@ export default function AdminTreinamentoEditPage({ params }: { params: { id: str
         </h1>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : !form ? (
           <p className="text-red-600">{error || 'Treinamento não encontrado'}</p>
         ) : (

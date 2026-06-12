@@ -6,6 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
+import {
+  dedupeGroupLessonsForStudent,
+  expandEnrollmentIdsForGroupLessons,
+} from '@/lib/student-group-lesson-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -41,7 +45,8 @@ export async function GET(request: NextRequest) {
       where: { userId: auth.session.userId },
       select: { id: true },
     })
-    const enrollmentIds = enrollments.map((e) => e.id)
+    const ownEnrollmentIds = enrollments.map((e) => e.id)
+    const enrollmentIds = await expandEnrollmentIdsForGroupLessons(ownEnrollmentIds)
     if (enrollmentIds.length === 0) {
       return NextResponse.json({
         ok: true,
@@ -82,7 +87,9 @@ export async function GET(request: NextRequest) {
       orderBy: { startAt: 'asc' },
     })
 
-    const list = lessons.map((l) => ({
+    const dedupedLessons = dedupeGroupLessonsForStudent(lessons)
+
+    const list = dedupedLessons.map((l) => ({
       id: l.id,
       enrollmentId: l.enrollmentId,
       teacherId: l.teacherId,

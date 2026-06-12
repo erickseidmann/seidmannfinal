@@ -7,6 +7,7 @@ import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import { GraduationCap, Loader2, Pencil, Plus, Trash2, Users } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 type TrainingRow = {
   id: string
@@ -100,9 +101,7 @@ export default function AdminTreinamentosPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : error ? (
           <p className="text-red-600">{error}</p>
         ) : rows.length === 0 ? (

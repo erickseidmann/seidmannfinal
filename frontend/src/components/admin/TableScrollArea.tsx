@@ -7,6 +7,7 @@ type TableScrollAreaProps = {
   children: ReactNode
   className?: string
   scrollClassName?: string
+  scrollStyle?: React.CSSProperties
 }
 
 /**
@@ -16,6 +17,7 @@ export default function TableScrollArea({
   children,
   className,
   scrollClassName = 'overflow-x-auto',
+  scrollStyle,
 }: TableScrollAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef({ active: false, startX: 0, scrollLeft: 0, moved: false })
@@ -73,6 +75,7 @@ export default function TableScrollArea({
         onMouseUp={stopDrag}
         onMouseLeave={stopDrag}
         onClickCapture={onClickCapture}
+        style={scrollStyle}
         className={cn(
           'scrollbar-table overscroll-x-contain cursor-grab active:cursor-grabbing',
           scrollClassName

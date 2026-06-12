@@ -15,6 +15,7 @@ import Modal from '@/components/admin/Modal'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { toDateKeyInTZ } from '@/lib/datetime'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   UserCheck,
   CalendarX,
@@ -530,7 +531,7 @@ export default function AdminDashboardPage() {
   if (loading) {
     return (
       <AdminLayout>
-        <div className="text-center py-12 text-gray-600">Carregando...</div>
+        <SeidmannLoading />
       </AdminLayout>
     )
   }
@@ -737,7 +738,7 @@ export default function AdminDashboardPage() {
             <strong>20 dias</strong>. Clique em um dia para ver todas as ações.
           </p>
           {adminActivitiesLoading ? (
-            <p className="text-gray-500 py-8 text-center">Carregando ações...</p>
+            <SeidmannLoading message="Carregando ações..." variant="section" />
           ) : adminActivitiesByDay.length === 0 ? (
             <p className="text-gray-500 py-8 text-center">Nenhuma ação registrada nos últimos 20 dias.</p>
           ) : (
@@ -806,7 +807,7 @@ export default function AdminDashboardPage() {
           size="xl"
         >
           {listLoading ? (
-            <p className="text-gray-500">Carregando...</p>
+            <SeidmannLoading variant="inline" />
           ) : listData.length === 0 ? (
             <p className="text-gray-500">Nenhum registro.</p>
           ) : modalType === 'novosMatriculados' ? (
@@ -1057,7 +1058,7 @@ export default function AdminDashboardPage() {
                   lista geral).
                 </p>
                 {lateRecordsDetailLoading ? (
-                  <p className="text-gray-500">Carregando aulas...</p>
+                  <SeidmannLoading message="Carregando aulas..." variant="inline" />
                 ) : lateRecordsLessonRows.length === 0 ? (
                   <p className="text-gray-500">Nenhuma aula pendente para este professor.</p>
                 ) : (

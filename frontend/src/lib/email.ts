@@ -385,6 +385,26 @@ En caso de dudas, comuníquese con la gestión de clases a través de los canale
 Atenciosamente / Kind regards / Saludos cordiales,
 Equipe Seidmann Institute`
 
+/** Mensagem: aula cancelada sem reposição (cancelamento tardio pelo aluno) */
+export function mensagemAulaCanceladaSemReposicao(opcoes: {
+  nomeAluno: string
+  data: Date
+  horasAntecedencia: number
+}): { subject: string; text: string } {
+  const { nomeAluno, data, horasAntecedencia } = opcoes
+  const { data: dataStr, horario } = formatarDataHora(new Date(data))
+  const horarioCurto = horario.replace(/:00$/, 'h')
+  const subject = 'Aula cancelada sem reposição – Seidmann Institute'
+  const text = `Olá, ${nomeAluno}!
+
+Informamos que a aula agendada para o dia ${dataStr}, às ${horarioCurto}, foi CANCELADA SEM REPOSIÇÃO.
+
+O cancelamento foi realizado com menos de ${horasAntecedencia} ${horasAntecedencia === 1 ? 'hora' : 'horas'} de antecedência. Nessa situação, a aula é considerada realizada para fins de cobrança e o professor receberá por ela.
+
+Para agendar uma nova aula, entre em contato com a gestão.${RODAPE_CANCELAMENTO}`
+  return { subject, text }
+}
+
 /** Mensagem: aula cancelada */
 export function mensagemAulaCancelada(opcoes: {
   nomeAluno: string

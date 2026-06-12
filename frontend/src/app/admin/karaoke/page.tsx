@@ -7,6 +7,7 @@ import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Loader2, Music, Pencil, Plus, Trash2 } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 type KaraokeSongRow = {
   id: string
@@ -137,9 +138,7 @@ export default function AdminKaraokeListPage() {
         )}
 
         {loading ? (
-          <div className="flex justify-center py-16 text-slate-500">
-            <Loader2 className="w-8 h-8 animate-spin" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : songs.length === 0 ? (
           <p className="text-slate-600">Nenhuma música cadastrada.</p>
         ) : (

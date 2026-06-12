@@ -10,6 +10,7 @@ import AdminLayout from '@/components/admin/AdminLayout'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   AlertTriangle,
   Calendar,
@@ -680,10 +681,7 @@ export default function FinanceiroPagamentosPage() {
 
         {/* Loading */}
         {loading && (
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 py-16 text-gray-500">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" aria-hidden />
-            <p className="text-sm">Carregando pagamentos…</p>
-          </div>
+          <SeidmannLoading message="Carregando pagamentos…" variant="section" className="mt-8 py-16" />
         )}
 
         {/* Grupos por dia + saídas fixas */}

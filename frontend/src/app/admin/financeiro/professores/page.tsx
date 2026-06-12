@@ -12,6 +12,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Calendar, Wallet, CheckCircle, Users, Copy, ThumbsUp, AlertTriangle, Clock, MessageSquare, Trash2, Loader2, ChevronDown, ChevronRight, Send, RefreshCw, Pencil, FileCheck, RotateCcw } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -1303,9 +1304,7 @@ Equipe Seidmann Institute`
         </section>
 
         {loading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-12" />
         ) : (
           <>
             {/* Seção: Lista de professores */}
@@ -1739,7 +1738,7 @@ Equipe Seidmann Institute`
         size="md"
       >
         {obsLoading ? (
-          <p className="text-gray-500">Carregando...</p>
+          <SeidmannLoading variant="inline" />
         ) : (
           <div className="space-y-4">
             <ul className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">

@@ -20,13 +20,12 @@ import {
 } from 'lucide-react'
 import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const PdfViewer = dynamic(() => import('@/components/aluno/PdfViewer'), {
   ssr: false,
   loading: () => (
-    <div className="flex flex-1 items-center justify-center min-h-[200px]">
-      <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-    </div>
+    <SeidmannLoading variant="inline" className="flex flex-1 items-center justify-center min-h-[200px]" />
   ),
 })
 
@@ -217,9 +216,7 @@ export default function MaterialPage() {
       )}
 
       {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-        </div>
+        <SeidmannLoading variant="section" className="py-12" />
       )}
 
       {!loading && !error && books.length === 0 && (
@@ -338,9 +335,7 @@ export default function MaterialPage() {
               </div>
             )}
             {audiosModalLoading ? (
-              <div className="flex items-center gap-2 text-gray-600 py-8 justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-              </div>
+              <SeidmannLoading variant="section" className="py-8" />
             ) : audiosModalList.length === 0 ? (
               <p className="text-sm text-gray-500 py-4">Nenhum áudio disponível para este livro.</p>
             ) : (
@@ -456,10 +451,7 @@ export default function MaterialPage() {
                   Áudio desta página
                 </div>
                 {viewingAudiosLoading ? (
-                  <div className="flex items-center gap-2 text-sky-800 text-xs py-2">
-                    <Loader2 className="w-4 h-4 animate-spin shrink-0" aria-hidden />
-                    Carregando áudios…
-                  </div>
+                  <SeidmannLoading message="Carregando áudios…" variant="compact" layout="row" className="py-2" />
                 ) : audiosForCurrentPdfPage.length > 0 ? (
                   <ul className="max-h-[min(28vh,200px)] sm:max-h-[min(40vh,220px)] overflow-y-auto space-y-2.5 sm:space-y-3 pr-0.5">
                     {audiosForCurrentPdfPage.map((a) => (

@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import { MessageCircle, Send, Users, ArrowLeft, PlusCircle } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const API = '/api/student/chat'
 
@@ -242,7 +243,7 @@ export default function AlunoChatPage() {
           </div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-4 pt-3 pb-2">Conversas</p>
           {loading ? (
-            <div className="p-4 text-gray-500">Carregando...</div>
+            <SeidmannLoading variant="inline" className="p-4" />
           ) : conversations.length === 0 ? (
             <div className="p-4 text-gray-500 text-sm">Nenhuma conversa ainda. Clique em &quot;Nova conversa&quot; para iniciar.</div>
           ) : (
@@ -388,7 +389,7 @@ export default function AlunoChatPage() {
           Selecione um professor ou funcionário para iniciar a conversa.
         </p>
         {usersLoading ? (
-          <div className="py-8 text-center text-gray-500">Carregando...</div>
+          <SeidmannLoading variant="inline" />
         ) : chatUsers.length === 0 ? (
           <div className="py-8 text-center text-gray-500">Nenhum professor ou funcionário disponível.</div>
         ) : (

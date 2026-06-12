@@ -6,20 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
-import { isLessonScheduledStatus, LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
-
-const TOLERANCE_MINUTES = 15
-
-function deterministicRoomPin(lessonId: string, lessonStart: Date): string {
-  const str = `seidmann-${lessonId}-${lessonStart.toISOString()}`
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i)
-    hash = (hash << 5) - hash + char
-    hash |= 0
-  }
-  return String((Math.abs(hash) % 900000) + 100000)
-}
+import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import { LessonAttendanceStatus } from '@prisma/client'
+import { buildVirtualClassroomAccess } from '@/lib/virtual-classroom-access'
 
 export async function GET(
   request: NextRequest,
@@ -92,31 +81,23 @@ export async function GET(
       )
     }
 
-    const now = new Date()
-    const lessonStart = new Date(lesson.startAt)
-    const durationMin = lesson.durationMinutes ?? 60
-    const lessonEnd = new Date(lessonStart.getTime() + durationMin * 60 * 1000)
-    const windowStart = new Date(lessonStart.getTime() - TOLERANCE_MINUTES * 60 * 1000)
-    const windowEnd = new Date(lessonEnd.getTime() + TOLERANCE_MINUTES * 60 * 1000)
+    const classroomAccess = buildVirtualClassroomAccess({
+      id: lesson.id,
+      status: lesson.status,
+      startAt: lesson.startAt,
+      durationMinutes: lesson.durationMinutes,
+      professorCallEndedAt: lesson.professorCallEndedAt,
+    })
+    const { canJoin, roomName, roomPin, windowStart, windowEnd, reason } = classroomAccess
 
-    const canJoin =
-      now >= windowStart &&
-      now <= windowEnd &&
-      isLessonScheduledStatus(lesson.status)
-
-    let reason: string | null = null
-    if (!canJoin) {
-      if (!isLessonScheduledStatus(lesson.status)) {
-        reason = 'Aula não está confirmada'
-      } else if (now < windowStart) {
-        reason = 'A sala abre 15 minutos antes do início da aula'
-      } else if (now > windowEnd) {
-        reason = 'O tempo de acesso à sala expirou'
-      }
-    }
-
-    const roomName = canJoin ? `seidmann-${lessonId}` : null
-    const roomPin = canJoin ? deterministicRoomPin(lessonId, lessonStart) : null
+    const activeAttendance = await prisma.lessonAttendance.findFirst({
+      where: {
+        lessonId,
+        teacherId: teacher.id,
+        status: LessonAttendanceStatus.ACTIVE,
+      },
+      select: { id: true },
+    })
 
     const lastRecord = await prisma.lessonRecord.findFirst({
       where: {
@@ -151,8 +132,9 @@ export async function GET(
     const nextLessonRow = await prisma.lesson.findFirst({
       where: {
         teacherId: teacher.id,
-        startAt: { gt: now },
+        startAt: { gt: lesson.startAt },
         status: { in: [...LESSON_STATUSES_SCHEDULED] },
+        professorCallEndedAt: null,
       },
       orderBy: { startAt: 'asc' },
       select: { id: true, startAt: true },
@@ -180,10 +162,12 @@ export async function GET(
           canJoin,
           roomName,
           roomPin,
-          windowStart: windowStart.toISOString(),
-          windowEnd: windowEnd.toISOString(),
+          windowStart,
+          windowEnd,
           reason,
+          callEndedByProfessor: lesson.professorCallEndedAt != null,
         },
+        activeAttendance: activeAttendance ? { id: activeAttendance.id } : null,
         nextLesson,
       },
     })

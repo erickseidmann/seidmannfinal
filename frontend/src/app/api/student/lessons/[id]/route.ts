@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
 import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import { resolveStudentEnrollmentForLesson } from '@/lib/student-group-lesson-access'
 
 const TOLERANCE_MINUTES = 15
 
@@ -77,7 +78,11 @@ export async function GET(
       )
     }
 
-    if (!enrollmentIds.includes(lesson.enrollmentId)) {
+    const studentEnrollmentId = await resolveStudentEnrollmentForLesson(
+      enrollmentIds,
+      lesson.enrollmentId
+    )
+    if (!studentEnrollmentId) {
       return NextResponse.json(
         { ok: false, message: 'Você não tem permissão para acessar esta aula' },
         { status: 403 }
@@ -91,14 +96,18 @@ export async function GET(
     const windowStart = new Date(lessonStart.getTime() - TOLERANCE_MINUTES * 60 * 1000)
     const windowEnd = new Date(lessonEnd.getTime() + TOLERANCE_MINUTES * 60 * 1000)
 
+    const callEnded = lesson.professorCallEndedAt != null
     const canJoin =
+      !callEnded &&
       now >= windowStart &&
       now <= windowEnd &&
       isLessonScheduledStatus(lesson.status)
 
     let reason: string | null = null
     if (!canJoin) {
-      if (!isLessonScheduledStatus(lesson.status)) {
+      if (callEnded) {
+        reason = 'O professor encerrou esta aula'
+      } else if (!isLessonScheduledStatus(lesson.status)) {
         reason = 'Aula não está confirmada'
       } else if (now < windowStart) {
         reason = 'A sala abre 15 minutos antes do início da aula'
@@ -122,7 +131,7 @@ export async function GET(
     })
 
     const teacherAbsenceReports = await prisma.teacherAbsenceReport.findMany({
-      where: { lessonId, enrollmentId: lesson.enrollmentId },
+      where: { lessonId, enrollmentId: studentEnrollmentId },
       select: { reportType: true, status: true },
     })
 

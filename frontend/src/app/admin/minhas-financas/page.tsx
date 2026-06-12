@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import AdminLayout from '@/components/admin/AdminLayout'
 import { Calendar, CheckCircle, ChevronDown, ChevronRight, Clock, Loader2, Wallet } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro',
@@ -171,9 +172,7 @@ export default function AdminMinhasFinancasPage() {
         </div>
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-          </div>
+          <SeidmannLoading variant="section" className="py-16" />
         ) : error ? (
           <p className="mt-6 text-red-600">{error}</p>
         ) : data ? (

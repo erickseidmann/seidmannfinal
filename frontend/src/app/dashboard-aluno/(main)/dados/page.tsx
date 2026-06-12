@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface Aluno {
   id: string
@@ -88,7 +89,7 @@ export default function DadosAlunoPage() {
   }
 
   if (loading) {
-    return <p className="text-gray-500">Carregando...</p>
+    return <SeidmannLoading variant="inline" />
   }
 
   if (!aluno) {

@@ -10,6 +10,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { MessageCircle, Plus, Send, Users, ArrowLeft } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface ChatUser {
   id: string
@@ -267,7 +268,7 @@ export default function AdminChatPage() {
               <span className="text-sm font-medium text-gray-700">Ver todas as conversas</span>
             </label>
             {loading ? (
-              <div className="p-4 text-gray-500">Carregando...</div>
+              <SeidmannLoading variant="inline" className="p-4" />
             ) : conversations.length === 0 ? (
               <div className="p-4 text-gray-500 text-sm">Nenhuma conversa. Clique em &quot;Nova conversa&quot; para começar.</div>
             ) : (

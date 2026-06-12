@@ -450,6 +450,7 @@ export async function GET(request: NextRequest) {
             nomeEmpresaOuIndicador: (e as any).nomeEmpresaOuIndicador ?? null,
             escolaMatricula: (e as any).escolaMatricula ?? null,
             escolaMatriculaOutro: (e as any).escolaMatriculaOutro ?? null,
+            cancelamentoAntecedenciaHoras: (e as any).cancelamentoAntecedenciaHoras ?? null,
             faturamentoTipo: (e as any).faturamentoTipo ?? 'ALUNO',
             faturamentoRazaoSocial: (e as any).faturamentoRazaoSocial ?? null,
             faturamentoCnpj: (e as any).faturamentoCnpj ?? null,

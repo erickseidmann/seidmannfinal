@@ -12,6 +12,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { Users, Wallet, CheckCircle, Pencil, Bell, Calendar, ChevronDown, ChevronRight, FileDown, Paperclip, Loader2, Link2, Unlink } from 'lucide-react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 const MESES_LABELS: Record<number, string> = {
   1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
@@ -878,7 +879,7 @@ Equipe Seidmann Institute`
               <strong>dia de pagamento</strong> passam a ser os mesmos do Financeiro – Professores neste mês.
             </p>
             {teachersPickLoading ? (
-              <p className="text-sm text-gray-500">Carregando professores...</p>
+              <SeidmannLoading message="Carregando professores..." variant="compact" />
             ) : (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Professor</label>

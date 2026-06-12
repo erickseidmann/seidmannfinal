@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { GraduationCap, Loader2, CheckCircle2, Circle } from 'lucide-react'
 import MaterialSubNav from '@/components/professor/MaterialSubNav'
 import { useTranslation } from '@/contexts/LanguageContext'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 type TrainingListItem = {
   id: string
@@ -61,9 +62,7 @@ export default function ProfessorTreinamentosPage() {
       <MaterialSubNav />
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-orange" />
-        </div>
+        <SeidmannLoading variant="section" className="py-16" />
       ) : error ? (
         <p className="text-red-600">{error}</p>
       ) : rows.length === 0 ? (

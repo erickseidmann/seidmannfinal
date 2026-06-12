@@ -12,6 +12,7 @@ import Button from '@/components/ui/Button'
 import { Loader2, RefreshCw, ChevronDown, ChevronUp, AlertTriangle, FileDown } from 'lucide-react'
 import { downloadLessonAttendancePdf } from '@/lib/lesson-attendance-pdf-export'
 import { TEACHER_ABSENCE_GRACE_MINUTES } from '@/lib/lesson-attendance-summary'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface AttendanceSession {
   id: string
@@ -60,6 +61,20 @@ const STATUS_LABELS: Record<string, string> = {
   ENDED: 'Encerrada',
 }
 
+type LessonStatusFilter = 'ALL' | 'ACTIVE' | 'ENDED' | 'TEACHER_ABSENT'
+
+const LESSON_STATUS_FILTER_OPTIONS: { value: LessonStatusFilter; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'ACTIVE', label: 'Na chamada' },
+  { value: 'ENDED', label: 'Encerrada' },
+  { value: 'TEACHER_ABSENT', label: 'Ausência do professor' },
+]
+
+/** Altura máxima da tabela: cabeçalho + até 8 linhas visíveis antes do scroll vertical. */
+const TABLE_VISIBLE_ROWS = 8
+const TABLE_ROW_HEIGHT_PX = 52
+const TABLE_MAX_HEIGHT_PX = TABLE_ROW_HEIGHT_PX * (TABLE_VISIBLE_ROWS + 1)
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', {
     day: '2-digit',
@@ -104,6 +119,18 @@ export default function AdminAcompanharChamadasPage() {
 
   const [startDate, setStartDate] = useState(() => toDateInputValue(today))
   const [endDate, setEndDate] = useState(() => toDateInputValue(today))
+  const [statusFilter, setStatusFilter] = useState<LessonStatusFilter>('ALL')
+
+  const filteredSummaries = useMemo(() => {
+    if (statusFilter === 'ALL') return summaries
+    if (statusFilter === 'TEACHER_ABSENT') {
+      return summaries.filter((s) => s.teacherAbsent)
+    }
+    if (statusFilter === 'ACTIVE') {
+      return summaries.filter((s) => !s.teacherAbsent && s.callStatus === 'ACTIVE')
+    }
+    return summaries.filter((s) => !s.teacherAbsent && s.callStatus === 'ENDED')
+  }, [summaries, statusFilter])
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -242,6 +269,20 @@ export default function AdminAcompanharChamadasPage() {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as LessonStatusFilter)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[180px] bg-white"
+            >
+              {LESSON_STATUS_FILTER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <Button variant="primary" onClick={() => fetchRecords()} disabled={loading}>
             {loading ? (
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -258,9 +299,13 @@ export default function AdminAcompanharChamadasPage() {
           </div>
         )}
 
-        <TableScrollArea className="rounded-xl border border-gray-200 bg-white">
+        <TableScrollArea
+          className="rounded-xl border border-gray-200 bg-white"
+          scrollClassName="overflow-x-auto overflow-y-auto"
+          scrollStyle={{ maxHeight: TABLE_MAX_HEIGHT_PX }}
+        >
           <table className="w-max min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+            <thead className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 shadow-[0_1px_0_0_rgb(229,231,235)]">
               <tr>
                 <th className="px-4 py-3">Aula</th>
                 <th className="px-4 py-3">Aluno</th>
@@ -277,19 +322,18 @@ export default function AdminAcompanharChamadasPage() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-gray-500">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-                    Carregando...
-                  </td>
+                  <td colSpan={10} className="px-4 py-12 text-center text-gray-500"><SeidmannLoading message="Carregando..." variant="compact" className="py-4" /></td>
                 </tr>
-              ) : summaries.length === 0 ? (
+              ) : filteredSummaries.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-12 text-center text-gray-500">
-                    Nenhum registro de presença no período selecionado.
+                    {summaries.length === 0
+                      ? 'Nenhum registro de presença no período selecionado.'
+                      : 'Nenhuma aula com o status selecionado.'}
                   </td>
                 </tr>
               ) : (
-                summaries.map((s) => {
+                filteredSummaries.map((s) => {
                   const isExpanded = expandedId === s.lessonId
                   const rowClass = s.teacherAbsent
                     ? 'bg-red-50 hover:bg-red-100/80'
@@ -423,11 +467,15 @@ export default function AdminAcompanharChamadasPage() {
           </table>
         </TableScrollArea>
 
-        {!loading && summaries.length > 0 && (
+        {!loading && filteredSummaries.length > 0 && (
           <p className="text-xs text-gray-500 mt-3">
-            {summaries.length} aula(s) no período.
-            {summaries.filter((s) => s.teacherAbsent).length > 0
-              ? ` ${summaries.filter((s) => s.teacherAbsent).length} com ausência do professor.`
+            {filteredSummaries.length} aula(s)
+            {statusFilter !== 'ALL' ? ' com o filtro aplicado' : ' no período'}.
+            {filteredSummaries.filter((s) => s.teacherAbsent).length > 0
+              ? ` ${filteredSummaries.filter((s) => s.teacherAbsent).length} com ausência do professor.`
+              : ''}
+            {filteredSummaries.length > TABLE_VISIBLE_ROWS
+              ? ` Role a tabela para ver mais (exibindo ${TABLE_VISIBLE_ROWS} por vez).`
               : ''}
           </p>
         )}

@@ -9,6 +9,7 @@ import { useState, useEffect, useLayoutEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import ProfessorHeader from '@/components/professor/ProfessorHeader'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import { useTranslation } from '@/contexts/LanguageContext'
 import {
   LayoutDashboard,
@@ -48,48 +49,31 @@ export default function DashboardProfessoresMainLayout({
   const [loading, setLoading] = useState(true)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
-  const [activeClassroomId, setActiveClassroomId] = useState<string | null>(null)
-  const [nextLessonStartAt, setNextLessonStartAt] = useState<number | null>(null)
-  const [tick, setTick] = useState(() => Date.now())
+  const [classroomInCall, setClassroomInCall] = useState(false)
   /** Mobile: fechado por padrão; a partir de md (768px): aberto. */
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  const checkActiveClassroom = useCallback(() => {
-    fetch('/api/professor/dashboard-home', { credentials: 'include' })
+  const checkClassroomSession = useCallback(() => {
+    fetch('/api/professor/classroom-lessons', { credentials: 'include' })
       .then((res) => res.json())
       .then((json) => {
         if (json.ok && json.data) {
-          const joinable = json.data.joinableLesson as { id: string } | null | undefined
-          if (joinable?.id) {
-            setActiveClassroomId(joinable.id)
-            setNextLessonStartAt(null)
-          } else {
-            setActiveClassroomId(null)
-            const upcoming = json.data.upcomingLessons as { startAt: string }[] | undefined
-            const next = upcoming?.[0]
-            setNextLessonStartAt(next ? new Date(next.startAt).getTime() : null)
-          }
+          setClassroomInCall(Boolean(json.data.activeSession?.lessonId))
         }
       })
-      .catch(() => {
-        setActiveClassroomId(null)
-        setNextLessonStartAt(null)
-      })
+      .catch(() => setClassroomInCall(false))
   }, [])
 
   useEffect(() => {
-    checkActiveClassroom()
-    const interval = setInterval(checkActiveClassroom, 60_000)
-    return () => clearInterval(interval)
-  }, [checkActiveClassroom, pathname])
-
-  useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  const sidebarMinutesUntilNext =
-    nextLessonStartAt != null ? (nextLessonStartAt - tick) / (1000 * 60) : null
+    checkClassroomSession()
+    const interval = setInterval(checkClassroomSession, 60_000)
+    const onChanged = () => checkClassroomSession()
+    window.addEventListener('professor-classroom-changed', onChanged)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('professor-classroom-changed', onChanged)
+    }
+  }, [checkClassroomSession, pathname])
 
   useLayoutEffect(() => {
     const mq = window.matchMedia('(min-width: 768px)')
@@ -163,11 +147,7 @@ export default function DashboardProfessoresMainLayout({
   const displayName = professor?.nomePreferido || professor?.nome || 'Professor'
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">{t('professor.home.loading')}</p>
-      </div>
-    )
+    return <SeidmannLoading message={t('professor.home.loading')} variant="page" />
   }
 
   return (
@@ -215,10 +195,7 @@ export default function DashboardProfessoresMainLayout({
             const showUnreadDot = 'showUnreadDot' in item ? item.showUnreadDot : undefined
             const showChatDot = 'showChatDot' in item ? item.showChatDot : undefined
             const isClassroom = href === '/dashboard-professores/aula'
-            const linkHref =
-              isClassroom && activeClassroomId
-                ? `/dashboard-professores/aula/${activeClassroomId}`
-                : href
+            const linkHref = href
             const isActive =
               linkHref === '/dashboard-professores'
                 ? pathname === linkHref
@@ -229,28 +206,6 @@ export default function DashboardProfessoresMainLayout({
                     : pathname.startsWith(href)
             const showDot =
               (showUnreadDot && unreadAlertsCount > 0) || (showChatDot && unreadChatCount > 0)
-
-            if (isClassroom && !activeClassroomId) {
-              const showAvailableIn =
-                sidebarMinutesUntilNext != null && sidebarMinutesUntilNext > 0
-              return (
-                <div
-                  key={href}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 cursor-not-allowed opacity-50"
-                >
-                  <Icon className="w-5 h-5 shrink-0" />
-                  <span className="flex-1 min-w-0 truncate">
-                    {t(labelKey)}
-                    {showAvailableIn && (
-                      <span className="block text-xs font-normal text-gray-500 mt-0.5 truncate">
-                        Disponível em {Math.ceil(sidebarMinutesUntilNext)} min
-                      </span>
-                    )}
-                  </span>
-                  <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
-                </div>
-              )
-            }
 
             return (
               <Link
@@ -269,7 +224,7 @@ export default function DashboardProfessoresMainLayout({
               >
                 <Icon className="w-5 h-5 shrink-0" />
                 <span className="flex-1 min-w-0 truncate">{t(labelKey)}</span>
-                {isClassroom && activeClassroomId && (
+                {isClassroom && classroomInCall && (
                   <span className="ml-auto w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
                 )}
                 {showDot && (

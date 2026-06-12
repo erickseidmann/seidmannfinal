@@ -13,6 +13,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import Button from '@/components/ui/Button'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import { Plus, Search, BookOpen, Upload, X, Headphones, Trash2, Loader2, Check } from 'lucide-react'
 
 const MAX_BATCH_AUDIOS = 10
@@ -913,10 +914,7 @@ export default function AdminLivrosPage() {
                 </div>
                 <div className="border border-gray-200 rounded-lg max-h-[min(60vh,520px)] overflow-y-auto">
                   {releaseUsersLoading ? (
-                    <div className="flex items-center justify-center gap-2 p-6 text-gray-500 text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Carregando...
-                    </div>
+                    <SeidmannLoading variant="compact" className="p-6" />
                   ) : filteredReleaseUsers.length === 0 ? (
                     <p className="p-4 text-gray-500 text-sm text-center">
                       Nenhum usuário encontrado.
@@ -996,10 +994,7 @@ export default function AdminLivrosPage() {
                     </div>
 
                     {userReleasesLoading ? (
-                      <div className="flex items-center justify-center gap-2 py-16 text-gray-500">
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Carregando liberações...
-                      </div>
+                      <SeidmannLoading message="Carregando liberações..." variant="section" className="py-16" />
                     ) : !hasReleaseBooksToShow ? (
                       <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                         <p className="text-gray-600">
@@ -1390,10 +1385,7 @@ onClick={() => void handleCreateBook({ preventDefault: () => {} } as React.FormE
                   único pendente (se houver), e atualiza o livro.
                 </p>
                 {editAudiosLoading ? (
-                  <p className="text-sm text-gray-500 flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
-                    Carregando áudios…
-                  </p>
+                  <SeidmannLoading message="Carregando áudios…" variant="compact" layout="row" className="py-1" />
                 ) : editBookAudios.length === 0 ? (
                   <p className="text-xs text-gray-500 mb-3">Nenhum áudio cadastrado.</p>
                 ) : (

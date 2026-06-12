@@ -11,6 +11,7 @@ import TableScrollArea from '@/components/admin/TableScrollArea'
 import { Card } from '@/components/ui/Card'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface Enrollment {
   id: string
@@ -77,7 +78,7 @@ export default function AdminEnrollmentsPage() {
 
             {loading ? (
               <Card className="p-6">
-                <div className="text-center py-12 text-gray-600">Carregando...</div>
+                <SeidmannLoading />
               </Card>
             ) : error ? (
               <Card className="p-6">

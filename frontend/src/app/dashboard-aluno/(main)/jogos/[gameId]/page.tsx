@@ -27,6 +27,7 @@ import {
   isValidGameSlug,
   LEVELS_PER_GAME,
 } from '@/lib/english-games-content'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   isSpeechSynthesisAvailable,
   playGentleWrongFeedback,
@@ -113,9 +114,7 @@ export default function JogoPorIdPage() {
 
   if (!mounted || !gameId || !isValidGameSlug(gameId)) {
     return (
-      <div className="flex justify-center py-16">
-        <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-      </div>
+      <SeidmannLoading variant="section" className="py-16" />
     )
   }
 

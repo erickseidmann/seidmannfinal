@@ -23,7 +23,9 @@ import {
 import Button from '@/components/ui/Button'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { useLessonAttendance } from '@/hooks/useLessonAttendance'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { formatLessonDateLongInTZ, formatTimeInTZ } from '@/lib/datetime'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 // ——— Tipos ———
 interface LessonData {
@@ -67,6 +69,7 @@ interface ClassroomAccess {
   windowStart: string
   windowEnd: string
   reason: string | null
+  callEndedByProfessor?: boolean
 }
 
 interface NextLessonRef {
@@ -133,7 +136,11 @@ export default function AulaProfessorPage() {
   const router = useRouter()
   const params = useParams()
   const lessonId = typeof params?.id === 'string' ? params.id : ''
-  const { registerJoin, registerLeave, isTracking } = useLessonAttendance(lessonId, 'professor')
+  const { confirm, ConfirmDialog } = useConfirmDialog()
+  const { registerJoin, registerLeave, syncActiveAttendance, isTracking } = useLessonAttendance(
+    lessonId,
+    'professor'
+  )
 
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [classroom, setClassroom] = useState<ClassroomAccess | null>(null)
@@ -162,6 +169,10 @@ export default function AulaProfessorPage() {
       setLesson(json.data.lesson)
       setClassroom(json.data.classroom)
       setNextLesson(json.data.nextLesson ?? null)
+      const activeId = json.data.activeAttendance?.id as string | undefined
+      if (activeId) {
+        syncActiveAttendance(activeId)
+      }
     } catch (e) {
       setError('Erro de conexão. Tente novamente.')
       setLesson(null)
@@ -170,7 +181,27 @@ export default function AulaProfessorPage() {
     } finally {
       setLoading(false)
     }
-  }, [lessonId, router])
+  }, [lessonId, router, syncActiveAttendance])
+
+  const handleEndLesson = async () => {
+    const confirmed = await confirm({
+      title: 'Encerrar aula',
+      message:
+        'Ao encerrar esta aula, você não poderá reabri-la. A próxima aula da sua agenda ficará disponível automaticamente. Deseja continuar?',
+      confirmLabel: 'Encerrar aula',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    const { nextLesson: nextFromLeave } = await registerLeave({ finalizeCall: true })
+    window.dispatchEvent(new Event('professor-classroom-changed'))
+    await fetchLesson()
+    const target = nextFromLeave ?? nextLesson
+    if (target?.id && target.id !== lessonId) {
+      router.push(`/dashboard-professores/aula/${target.id}`)
+    }
+  }
 
   useEffect(() => {
     fetchLesson()
@@ -188,9 +219,7 @@ export default function AulaProfessorPage() {
 
   if (loading && !lesson) {
     return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <Loader2 className="w-10 h-10 animate-spin text-brand-orange" />
-      </div>
+      <SeidmannLoading variant="inline" className="flex items-center justify-center min-h-[300px]" />
     )
   }
 
@@ -214,8 +243,10 @@ export default function AulaProfessorPage() {
   const windowStartTime = new Date(classroom.windowStart).getTime()
   const windowEndTime = new Date(classroom.windowEnd).getTime()
   const lessonEnded = now > windowEndTime
-  const showJoin = classroom.canJoin && !lessonEnded
-  const showCountdown = !lessonEnded && !showJoin && now < windowStartTime
+  const callEnded = classroom.callEndedByProfessor === true
+  const showJoin = classroom.canJoin && !lessonEnded && !callEnded
+  const showCountdown = !lessonEnded && !showJoin && !callEnded && now < windowStartTime
+  const inCall = isTracking
   const isGroup = lesson.enrollment.tipoAula === 'GRUPO'
   const groupMembers = lesson.enrollment.groupMemberNames ?? []
 
@@ -264,7 +295,29 @@ export default function AulaProfessorPage() {
               </h2>
               <p className="text-sm text-gray-500 mb-4">Você entrará como moderador da sala.</p>
 
-              {lessonEnded ? (
+              {callEnded && !lessonEnded ? (
+                <div className="flex flex-col items-center text-center py-4">
+                  <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-3">
+                    <VideoOff className="w-8 h-8 text-brand-orange" />
+                  </div>
+                  <p className="text-lg font-semibold text-gray-900">Aula encerrada</p>
+                  <p className="text-gray-600 mt-1">
+                    Você encerrou esta aula e não pode reabri-la.
+                  </p>
+                  {nextLesson && nextLesson.id !== lesson.id ? (
+                    <Link
+                      href={`/dashboard-professores/aula/${nextLesson.id}`}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
+                    >
+                      <Video className="w-5 h-5" />
+                      Ir para a próxima aula
+                      <span className="text-sm font-normal opacity-90">
+                        ({formatTimeInTZ(nextLesson.startAt)})
+                      </span>
+                    </Link>
+                  ) : null}
+                </div>
+              ) : lessonEnded ? (
                 <div className="flex flex-col items-center text-center py-4">
                   <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-3">
                     <VideoOff className="w-8 h-8 text-brand-orange" />
@@ -320,17 +373,17 @@ export default function AulaProfessorPage() {
                     <p className="text-xs text-gray-400 mt-3">
                       {lesson.teacher.linkSala ? 'A aula abrirá em uma nova aba do navegador' : 'A aula abrirá via Jitsi Meet em uma nova aba'}
                     </p>
-                    {isTracking && (
+                    {inCall && (
                       <div className="mt-4 w-full max-w-md rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left">
                         <p className="text-sm text-amber-900">
-                          Ao sair do Google Meet, clique em <strong>Encerrar participação</strong> para registrar sua saída.
+                          Ao sair da chamada, clique em <strong>Encerrar aula</strong> para finalizar esta sessão.
                         </p>
                         <button
                           type="button"
-                          onClick={() => void registerLeave()}
-                          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+                          onClick={() => void handleEndLesson()}
+                          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-50 transition-colors"
                         >
-                          Encerrar participação
+                          Encerrar aula
                         </button>
                       </div>
                     )}
@@ -447,6 +500,8 @@ export default function AulaProfessorPage() {
             )}
           </div>
         </div>
+
+      <ConfirmDialog />
     </div>
   )
 }

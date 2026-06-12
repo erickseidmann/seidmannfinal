@@ -308,6 +308,20 @@ export function startOfCalendarDayBrazilDateKey(dateKey: string): Date | null {
   return new Date(Date.UTC(y, mo - 1, d, 3, 0, 0, 0))
 }
 
+/** Soma dias a uma chave AAAA-MM-DD no calendário de São Paulo. */
+export function addDaysToBrazilDateKey(dateKey: string, days: number): string {
+  const start = startOfCalendarDayBrazilDateKey(dateKey)
+  if (!start) return dateKey
+  return ymdInTZ(addDaysInTZ(start, days))
+}
+
+/** Rótulo longo do dia (ex.: quinta-feira, 12 de junho) em SP a partir de AAAA-MM-DD. */
+export function formatBrazilDateKeyLong(dateKey: string, locale: string = 'pt-BR'): string {
+  const start = startOfCalendarDayBrazilDateKey(dateKey)
+  if (!start) return dateKey
+  return formatLessonDayLongInTZ(start.toISOString(), locale)
+}
+
 /** Parâmetro da API (AAAA-MM-DD ou ISO) → chave AAAA-MM-DD no calendário de São Paulo. */
 export function inactiveFromParamToBrazilDateKey(inactiveFrom: unknown): string {
   if (typeof inactiveFrom === 'string') {

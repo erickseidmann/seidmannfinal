@@ -20,7 +20,15 @@ export async function POST(
       )
     }
 
-    const result = await registerLeave(params.attendanceId, resolved.identity)
+    let finalizeCall = false
+    try {
+      const body = await request.json()
+      finalizeCall = body?.finalizeCall === true
+    } catch {
+      // corpo vazio é válido (saída simples)
+    }
+
+    const result = await registerLeave(params.attendanceId, resolved.identity, { finalizeCall })
     if (!result.ok) {
       return NextResponse.json(
         { ok: false, message: result.message },

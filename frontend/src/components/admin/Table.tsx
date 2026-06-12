@@ -10,6 +10,7 @@ import { ReactNode, useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronUp, Columns } from 'lucide-react'
 import TableScrollArea from '@/components/admin/TableScrollArea'
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 export interface Column<T> {
   key: string
@@ -131,9 +132,7 @@ export default function Table<T extends { id: string }>({
   }
 
   if (loading) {
-    return (
-      <div className="text-center py-12 text-gray-600">Carregando...</div>
-    )
+    return <SeidmannLoading />
   }
 
   if (data.length === 0) {
