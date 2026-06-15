@@ -314,6 +314,7 @@ export async function POST(request: NextRequest) {
         numero: numero?.trim()?.slice(0, 20) || null,
         complemento: complemento?.trim()?.slice(0, 255) || null,
           status: 'ACTIVE',
+          dataInicio: new Date(),
           pendenteAdicionarAulas: true,
           trackingCode,
         }

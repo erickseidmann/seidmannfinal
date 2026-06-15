@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { ymdInTZ } from '@/lib/datetime'
 
 /** Retorna a próxima data de vencimento dado o dia do mês (1-31), após uma data. Só avança para o mês seguinte se afterDate já passou do dia. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate: Date): Date {
@@ -116,6 +117,7 @@ export async function GET(request: NextRequest) {
         status: true,
         inactiveAt: true,
         dataInicio: true,
+        criadoEm: true,
         valorMensalidade: true,
         frequenciaSemanal: true,
         tempoAulaMinutos: true,
@@ -176,10 +178,12 @@ export async function GET(request: NextRequest) {
     const filteredEnrollments =
       hasMonthFilter && year != null && month != null
         ? enrollments.filter((e) => {
-            // 1) Com data de início preenchida: só aparece no financeiro a partir desse mês (ano/mês em UTC para bater com o calendário salvo)
-            const dataInicio = (e as { dataInicio?: Date | null }).dataInicio
-            if (dataInicio) {
-              const { year: y0, month: m0 } = getYearMonthUtc(new Date(dataInicio))
+            // 1) Só aparece a partir do mês de início: dataInicio (UTC, date-only do admin) ou criadoEm (America/Sao_Paulo)
+            if (e.dataInicio) {
+              const { year: y0, month: m0 } = getYearMonthUtc(new Date(e.dataInicio))
+              if (year < y0 || (year === y0 && month < m0)) return false
+            } else if (e.criadoEm) {
+              const [y0, m0] = ymdInTZ(new Date(e.criadoEm)).split('-').map(Number)
               if (year < y0 || (year === y0 && month < m0)) return false
             }
             // Inativos: não constar a partir do mês de inativação
