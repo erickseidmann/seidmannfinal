@@ -363,7 +363,7 @@ export default function FinanceiroAlunoPage() {
             </div>
           )}
 
-          {pixData?.state === 'unpaid' && pixData && (
+          {pixData?.state === 'unpaid' && pixData && data.statusMes !== 'PAGO' && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
                 <h2 className="text-lg font-semibold text-gray-800">
