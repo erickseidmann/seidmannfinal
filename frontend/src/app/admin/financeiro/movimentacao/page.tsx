@@ -393,7 +393,12 @@ export default function FinanceiroMovimentacaoPage() {
   }, [selectedAno, selectedMes, fetchData, fetchExtratos])
 
   const movimentacoes = useMemo(() => {
-    const rows = expenses.filter((e) => e.year === selectedAno && e.month === selectedMes)
+    const rows = expenses.filter(
+      (e) =>
+        e.year === selectedAno &&
+        e.month === selectedMes &&
+        (e.description || '').includes('[EXTRATO_ID:')
+    )
     if (movementFilter === 'TODAS') return rows
     return rows.filter((row) => {
       const editableTipo = editable[row.id]?.tipo ?? null
@@ -404,7 +409,12 @@ export default function FinanceiroMovimentacaoPage() {
   }, [expenses, selectedAno, selectedMes, movementFilter, editable])
 
   const totaisEntradasSaidas = useMemo(() => {
-    const rows = expenses.filter((e) => e.year === selectedAno && e.month === selectedMes)
+    const rows = expenses.filter(
+      (e) =>
+        e.year === selectedAno &&
+        e.month === selectedMes &&
+        (e.description || '').includes('[EXTRATO_ID:')
+    )
     const rowsUnicas = dedupeLinhasMovimentacaoParaSoma(rows)
     let entradas = 0
     let saidas = 0

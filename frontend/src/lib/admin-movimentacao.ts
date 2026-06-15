@@ -31,18 +31,27 @@ export function isCreditoComoNaTelaMovimentacoes(
   description: string | null | undefined,
   editableTipo?: 'ENTRADA' | 'SAIDA' | null
 ): boolean {
-  const tt = extractTipoTransacaoMarker(description)
-  if (tt) return isCreditoFromTipoTransacaoValor(tt)
+  // 1) Edição ao vivo do admin no dropdown tem prioridade máxima
   if (editableTipo === 'ENTRADA') return true
   if (editableTipo === 'SAIDA') return false
-  return extractTipoMovimentacao(description) === 'ENTRADA'
+  // 2) Decisão persistida do sistema ([TIPO:ENTRADA/SAIDA] do parser/admin)
+  if (/\[TIPO:\s*(ENTRADA|SAIDA)\s*\]/i.test(description || '')) {
+    return extractTipoMovimentacao(description) === 'ENTRADA'
+  }
+  // 3) Fallback (linha legada sem [TIPO]): usa o tipo de transação do banco
+  const tt = extractTipoTransacaoMarker(description)
+  if (tt) return isCreditoFromTipoTransacaoValor(tt)
+  return false
 }
 
 /** Relatório / API: só descrição persistida (sem estado do formulário). */
 export function shouldIncludeValorInTotalEntradaRegis(description: string | null | undefined): boolean {
+  if (/\[TIPO:\s*(ENTRADA|SAIDA)\s*\]/i.test(description || '')) {
+    return extractTipoMovimentacao(description) === 'ENTRADA'
+  }
   const tt = extractTipoTransacaoMarker(description)
   if (tt) return isCreditoFromTipoTransacaoValor(tt)
-  return extractTipoMovimentacao(description) === 'ENTRADA'
+  return false
 }
 
 /** Marcadores de extrato em `AdminExpense.description` (DATA, TRANSACAO, IDENTIFICACAO). */
