@@ -97,11 +97,11 @@ export async function POST(request: NextRequest) {
     if (!user) {
       const [enrollment, teacher] = await Promise.all([
         prisma.enrollment.findFirst({
-          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          where: { email: normalizedEmail },
           select: { id: true },
         }),
         prisma.teacher.findFirst({
-          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          where: { email: normalizedEmail },
           select: { id: true, userId: true },
         }),
       ])
