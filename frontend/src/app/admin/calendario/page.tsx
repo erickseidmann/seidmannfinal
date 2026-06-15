@@ -23,7 +23,7 @@ import {
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronDown, CheckCircle, XCircle, RotateCcw, AlertTriangle, Trash2, Loader2, CalendarOff, Users, Check, UserPlus, X, ArrowRightLeft } from 'lucide-react'
 import { formatTimeInTZ, getDayOfWeekInTZ, getTimeInTZ, toDateKeyInTZ, isSameDayInTZ } from '@/lib/datetime'
 import { DEFAULT_LESSON_REPEAT_WEEKS } from '@/lib/lesson-series'
 import {
@@ -431,6 +431,18 @@ export default function AdminCalendarioPage() {
   const [canDirectEditPastLessons, setCanDirectEditPastLessons] = useState(false)
   const [canApprovePastLessonEdits, setCanApprovePastLessonEdits] = useState(false)
   const [pendingPastEditLessonIds, setPendingPastEditLessonIds] = useState<Set<string>>(new Set())
+  const [pendingPastEditRequests, setPendingPastEditRequests] = useState<
+    Array<{
+      id: string
+      lessonId: string
+      studentName: string
+      teacherName: string
+      lessonStartAt: string
+      requestedByName: string
+      payload: Record<string, unknown>
+    }>
+  >([])
+  const [pendingPastEditBannerOpen, setPendingPastEditBannerOpen] = useState(false)
   const [pastEditApprovalRequest, setPastEditApprovalRequest] = useState<{
     id: string
     lessonId: string
@@ -567,12 +579,23 @@ export default function AdminCalendarioPage() {
 
   const fetchPendingPastEditLessons = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/lesson-past-edit-requests?lessonIdsOnly=1', {
+      const res = await fetch('/api/admin/lesson-past-edit-requests?status=PENDING', {
         credentials: 'include',
       })
       const json = await res.json()
-      if (json.ok && Array.isArray(json.data?.lessonIds)) {
-        setPendingPastEditLessonIds(new Set(json.data.lessonIds as string[]))
+      if (json.ok && Array.isArray(json.data?.requests)) {
+        const requests = json.data.requests as Array<{
+          id: string
+          lessonId: string
+          studentName: string
+          teacherName: string
+          lessonStartAt: string
+          requestedByName: string
+          payload: Record<string, unknown>
+        }>
+        setPendingPastEditRequests(requests)
+        setPendingPastEditLessonIds(new Set(requests.map((r) => r.lessonId)))
+        if (requests.length === 0) setPendingPastEditBannerOpen(false)
       }
     } catch {
       /* ignore */
@@ -834,19 +857,28 @@ export default function AdminCalendarioPage() {
   }, [weekStartForStats])
 
   const processPastEditApproval = useCallback(
-    async (action: 'APPROVE' | 'REJECT') => {
-      if (!pastEditApprovalRequest) return
+    async (
+      action: 'APPROVE' | 'REJECT',
+      request?: {
+        id: string
+        lessonId: string
+        studentName: string
+        teacherName: string
+        lessonStartAt: string
+        requestedByName: string
+        payload: Record<string, unknown>
+      }
+    ) => {
+      const target = request ?? pastEditApprovalRequest
+      if (!target) return
       setPastEditActionLoading(true)
       try {
-        const res = await fetch(
-          `/api/admin/lesson-past-edit-requests/${pastEditApprovalRequest.id}`,
-          {
-            method: 'PATCH',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action }),
-          }
-        )
+        const res = await fetch(`/api/admin/lesson-past-edit-requests/${target.id}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action }),
+        })
         const json = await res.json()
         if (!res.ok || !json.ok) {
           setToast({ message: json.message || 'Erro ao processar solicitação', type: 'error' })
@@ -2593,9 +2625,74 @@ export default function AdminCalendarioPage() {
         </div>
 
         {canApprovePastLessonEdits && pendingPastEditLessonIds.size > 0 ? (
-          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <strong>{pendingPastEditLessonIds.size}</strong> aula(s) com alteração tardia pendente de
-            aprovação — clique na aula <strong>piscando</strong> no calendário para aprovar ou rejeitar.
+          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 text-sm text-amber-900 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setPendingPastEditBannerOpen((open) => !open)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-amber-100/70 transition-colors"
+            >
+              <span>
+                <strong>{pendingPastEditLessonIds.size}</strong> aula(s) com alteração tardia pendente de
+                aprovação — clique na aula <strong>piscando</strong> no calendário ou expanda a lista para liberar.
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 shrink-0 transition-transform duration-200 ${pendingPastEditBannerOpen ? 'rotate-180' : ''}`}
+                aria-hidden
+              />
+            </button>
+            {pendingPastEditBannerOpen ? (
+              <div className="border-t border-amber-200 px-4 py-3 space-y-2">
+                {pendingPastEditRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-lg bg-white/90 border border-amber-200 px-3 py-2.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setPastEditApprovalRequest(req)}
+                      className="min-w-0 text-left hover:opacity-80 transition-opacity"
+                    >
+                      <p className="font-medium text-amber-950">
+                        {req.studentName} · {req.teacherName}
+                      </p>
+                      <p className="text-xs text-amber-800 mt-0.5">
+                        {new Date(req.lessonStartAt).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}{' '}
+                        — solicitado por {req.requestedByName}
+                      </p>
+                    </button>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPastEditApprovalRequest(req)}
+                        disabled={pastEditActionLoading}
+                      >
+                        Ver detalhes
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void processPastEditApproval('APPROVE', req)}
+                        disabled={pastEditActionLoading}
+                      >
+                        {pastEditActionLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          'Liberar'
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
