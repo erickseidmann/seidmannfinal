@@ -240,12 +240,16 @@ export default function AulaProfessorPage() {
 
   if (!lesson || !classroom) return null
 
-  const windowStartTime = new Date(classroom.windowStart).getTime()
-  const windowEndTime = new Date(classroom.windowEnd).getTime()
-  const lessonEnded = now > windowEndTime
   const callEnded = classroom.callEndedByProfessor === true
-  const showJoin = classroom.canJoin && !lessonEnded && !callEnded
-  const showCountdown = !lessonEnded && !showJoin && !callEnded && now < windowStartTime
+  const windowStartTime = new Date(classroom.windowStart).getTime()
+
+  // Encerramento por tempo vem do servidor (reason), não do relógio local.
+  const lessonEnded =
+    !classroom.canJoin &&
+    classroom.reason === 'O tempo de acesso à sala expirou'
+
+  const showJoin = classroom.canJoin && !callEnded
+  const showCountdown = !showJoin && !callEnded && now < windowStartTime
   const inCall = isTracking
   const isGroup = lesson.enrollment.tipoAula === 'GRUPO'
   const groupMembers = lesson.enrollment.groupMemberNames ?? []
