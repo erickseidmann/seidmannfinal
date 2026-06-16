@@ -16,6 +16,7 @@ import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
+import { ensureBolsistaPaymentMonthPaid } from '@/lib/bolsista-payment'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -298,6 +299,15 @@ export async function PATCH(
           ...auditFieldsForUpdate(adminActor),
         },
       })
+
+      if (updatedEnrollment.bolsista && updatedEnrollment.status === 'ACTIVE') {
+        const now = new Date()
+        await ensureBolsistaPaymentMonthPaid(
+          updatedEnrollment.id,
+          now.getFullYear(),
+          now.getMonth() + 1
+        )
+      }
 
       // Se o aluno tem conta (userId) e o e-mail foi alterado, atualizar também o e-mail de login do User
       if (enrollment.userId && newEmail && newEmail !== currentEmail) {

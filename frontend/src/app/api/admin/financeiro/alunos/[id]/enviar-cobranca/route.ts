@@ -71,6 +71,14 @@ Equipe Seidmann Institute`
   return { subject, text }
 }
 
+function bolsistaBlockResponse(enrollment: { bolsista?: boolean | null; nome: string }) {
+  if (!enrollment.bolsista) return null
+  return NextResponse.json(
+    { ok: false, message: `Aluno bolsista (${enrollment.nome}) não deve receber cobrança.` },
+    { status: 400 }
+  )
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
@@ -94,6 +102,8 @@ export async function GET(
         { status: 404 }
       )
     }
+    const bolsistaBlocked = bolsistaBlockResponse(enrollment)
+    if (bolsistaBlocked) return bolsistaBlocked
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()
     if (!email) {
@@ -137,6 +147,9 @@ export async function POST(
         { status: 404 }
       )
     }
+
+    const bolsistaBlocked = bolsistaBlockResponse(enrollment)
+    if (bolsistaBlocked) return bolsistaBlocked
 
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()

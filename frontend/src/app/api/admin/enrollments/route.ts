@@ -19,6 +19,7 @@ import {
   pickHighestBookName,
 } from '@/lib/student-book-level'
 import bcrypt from 'bcryptjs'
+import { ensureBolsistaPaymentMonthPaid } from '@/lib/bolsista-payment'
 
 const SENHA_PADRAO_ALUNO = '123456'
 
@@ -766,6 +767,11 @@ export async function POST(request: NextRequest) {
         where: { id: enrollment.id },
         data: { userId: user.id },
       })
+    }
+
+    if (isBolsista && statusFinal === 'ACTIVE') {
+      const now = new Date()
+      await ensureBolsistaPaymentMonthPaid(enrollment.id, now.getFullYear(), now.getMonth() + 1)
     }
 
     return NextResponse.json(

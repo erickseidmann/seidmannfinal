@@ -26,6 +26,7 @@ type EnrollmentWithPayment = {
   id: string
   nome: string
   email: string
+  bolsista?: boolean | null
   valorMensalidade: unknown
   diaPagamento: number | null
   paymentInfo: {
@@ -117,6 +118,9 @@ export async function sendPaymentReminder(
   year: number,
   month: number
 ): Promise<{ sent: boolean; error?: string }> {
+  if (enrollment.bolsista) {
+    return { sent: false, error: 'Aluno bolsista' }
+  }
   const finance = getEnrollmentFinanceData(enrollment)
   const email = finance.email?.trim()
   if (!email) {
@@ -163,6 +167,9 @@ export async function sendPaymentOverdueReminder(
   year: number,
   month: number
 ): Promise<{ sent: boolean; error?: string }> {
+  if (enrollment.bolsista) {
+    return { sent: false, error: 'Aluno bolsista' }
+  }
   const finance = getEnrollmentFinanceData(enrollment)
   const email = finance.email?.trim()
   if (!email) {

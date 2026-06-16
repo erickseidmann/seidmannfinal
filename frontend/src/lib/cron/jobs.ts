@@ -17,6 +17,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import type { SyncStatementPaymentsResult } from '@/lib/payments/sync-statement-payments'
 import { syncNormalizedPayments } from '@/lib/payments/sync-statement-payments'
+import { syncActiveBolsistasPaymentMonth } from '@/lib/bolsista-payment'
 
 const TOLERANCE_DAYS = 3
 const BATCH_SIZE = 50
@@ -42,8 +43,10 @@ export async function runMarkOverdue(): Promise<{
   const month = now.getMonth() + 1
   const dayOfMonth = now.getDate()
 
+  await syncActiveBolsistasPaymentMonth(year, month)
+
   const enrollments = await prisma.enrollment.findMany({
-    where: { status: 'ACTIVE' },
+    where: { status: 'ACTIVE', bolsista: false },
     select: {
       id: true,
       nome: true,
@@ -304,8 +307,10 @@ export async function runPaymentNotifications(): Promise<{
   const month = now.getMonth() + 1
   const today = new Date(year, month - 1, now.getDate())
 
+  await syncActiveBolsistasPaymentMonth(year, month)
+
   const enrollments = await prisma.enrollment.findMany({
-    where: { status: 'ACTIVE' },
+    where: { status: 'ACTIVE', bolsista: false },
     include: {
       paymentInfo: { select: { dueDay: true, dueDate: true, paidAt: true, valorMensal: true } },
       user: { select: { email: true } },
@@ -435,6 +440,7 @@ export async function runGenerateInvoices(): Promise<{
   const enrollments = await prisma.enrollment.findMany({
     where: {
       status: 'ACTIVE',
+      bolsista: false,
       AND: [
         { OR: [{ diaPagamento: { not: null } }, { paymentInfo: { dueDay: { not: null } } }] },
         { OR: [{ valorMensalidade: { not: null } }, { paymentInfo: { valorMensal: { not: null } } }] },

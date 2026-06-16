@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
       prisma.enrollment.findMany({
         where: {
           status: 'ACTIVE',
+          bolsista: false,
           paymentMonths: {
             none: {
               year: now.getFullYear(),

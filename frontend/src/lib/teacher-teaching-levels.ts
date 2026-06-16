@@ -28,6 +28,31 @@ export function normalizeTeacherNiveisEnsina(
   return sanitizeTeacherNiveisEnsina([value])
 }
 
+/**
+ * Catálogo Admin → Livros (A1…C2) vs níveis do professor (A1, A2, B1.1, B1.2…).
+ * Um aluno com livro cadastrado como "B1" deve ser aceito por professor com B1.1 e/ou B1.2.
+ */
+const CATALOG_LEVEL_TO_TEACHER_LEVELS: Record<string, string[]> = {
+  A1: ['A1'],
+  A2: ['A2'],
+  A3: ['A2', 'B1.1'],
+  B1: ['B1.1', 'B1.2'],
+  B2: ['B2.1', 'B2.2'],
+  B3: ['B2.2'],
+  B4: ['C1.1'],
+  C1: ['C1.1', 'C1.2'],
+  C2: ['C1.2'],
+}
+
+/** Níveis do professor que satisfazem o nível efetivo do aluno (catálogo ou fase decimal). */
+export function studentLevelVariantsForTeacherMatch(studentNivel: string): string[] {
+  const nivel = studentNivel.trim()
+  if (VALID_TEACHER_CEFR_LEVELS.has(nivel)) return [nivel]
+  const mapped = CATALOG_LEVEL_TO_TEACHER_LEVELS[nivel]
+  if (mapped?.length) return mapped
+  return [nivel]
+}
+
 /** Aluno sem nível definido → não bloqueia (ainda não há referência de livro). */
 export function teacherCanTeachStudentLevel(
   teacherNiveis: string[] | null | undefined,
@@ -36,8 +61,10 @@ export function teacherCanTeachStudentLevel(
   const nivel = studentNivel?.trim()
   if (!nivel || nivel === NIVEL_LIVRO_NAO_DEFINIDO) return true
   const niveis = normalizeTeacherNiveisEnsina(teacherNiveis)
-  if (niveis.length === 0) return false
-  return niveis.includes(nivel)
+  // Legado: professor sem níveis cadastrados → não restringe (evita bloqueio em massa).
+  if (niveis.length === 0) return true
+  const studentVariants = studentLevelVariantsForTeacherMatch(nivel)
+  return studentVariants.some((variant) => niveis.includes(variant))
 }
 
 export const TEACHER_LEVEL_MISMATCH_MESSAGE =
