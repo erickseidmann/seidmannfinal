@@ -380,6 +380,28 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const catalogLevelByBookName: Record<string, string> = {}
+    const allBookNames = [
+      ...new Set([
+        ...Object.values(bookByEnrollment),
+        ...Object.values(bookByUserId),
+      ].filter((name): name is string => Boolean(name?.trim()))),
+    ]
+    if (allBookNames.length > 0 && prisma.book) {
+      try {
+        const catalogBooks = await prisma.book.findMany({
+          where: { nome: { in: allBookNames } },
+          select: { nome: true, level: true },
+        })
+        for (const b of catalogBooks) {
+          const level = b.level?.trim()
+          if (level) catalogLevelByBookName[b.nome] = level
+        }
+      } catch (_) {
+        // ignora erro
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -387,7 +409,9 @@ export async function GET(request: NextRequest) {
           enrollments: enrollments.map((e) => {
             const livroAtual =
               bookByEnrollment[e.id] ?? (e.userId ? bookByUserId[e.userId] : null) ?? null
-            const nivelLivro = cefrLevelFromBookName(livroAtual)
+            const nivelLivro = livroAtual
+              ? (catalogLevelByBookName[livroAtual] ?? cefrLevelFromBookName(livroAtual))
+              : cefrLevelFromBookName(null)
             return {
             id: e.id,
             nome: e.nome,

@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    instrumentationHook: true,
+  },
   async redirects() {
     return [{ source: '/admin/kanban', destination: '/admin/todos', permanent: true }]
   },

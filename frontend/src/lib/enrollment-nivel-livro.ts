@@ -21,6 +21,9 @@ type PrismaLessonRecordClient = {
       }>
     >
   }
+  book?: {
+    findFirst: (args: unknown) => Promise<{ level: string } | null>
+  }
 }
 
 /** Nível CEFR efetivo do aluno com base em registros de aula e liberações de livro. */
@@ -72,6 +75,18 @@ export async function getEnrollmentNivelLivro(
   }
 
   if (livroAtual) {
+    if (prismaClient.book) {
+      try {
+        const catalog = await prismaClient.book.findFirst({
+          where: { nome: livroAtual },
+          select: { level: true },
+        })
+        const catalogLevel = catalog?.level?.trim()
+        if (catalogLevel) return catalogLevel
+      } catch {
+        // ignora
+      }
+    }
     const nivel = cefrLevelFromBookName(livroAtual)
     return nivel !== NIVEL_LIVRO_NAO_DEFINIDO ? nivel : null
   }

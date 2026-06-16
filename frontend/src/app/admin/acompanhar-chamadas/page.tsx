@@ -13,6 +13,7 @@ import { Loader2, RefreshCw, ChevronDown, ChevronUp, AlertTriangle, FileDown } f
 import { downloadLessonAttendancePdf } from '@/lib/lesson-attendance-pdf-export'
 import { TEACHER_ABSENCE_GRACE_MINUTES } from '@/lib/lesson-attendance-summary'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 
 interface AttendanceSession {
   id: string
@@ -48,6 +49,7 @@ interface LessonSummary {
   teacherMetScheduledTime: boolean
   callStatus: 'ACTIVE' | 'ENDED'
   teacherAbsent: boolean
+  teacherAbsenceReportId: string | null
   sessions: AttendanceSession[]
 }
 
@@ -111,26 +113,39 @@ export default function AdminAcompanharChamadasPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [releasingReportId, setReleasingReportId] = useState<string | null>(null)
   const [retentionDays, setRetentionDays] = useState(60)
   const [retentionNotices, setRetentionNotices] = useState<RetentionNotice[]>([])
   const [downloadingDateKey, setDownloadingDateKey] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const today = useMemo(() => new Date(), [])
+
+  const { confirm, ConfirmDialog } = useConfirmDialog()
 
   const [startDate, setStartDate] = useState(() => toDateInputValue(today))
   const [endDate, setEndDate] = useState(() => toDateInputValue(today))
   const [statusFilter, setStatusFilter] = useState<LessonStatusFilter>('ALL')
+  const [nameFilter, setNameFilter] = useState('')
 
   const filteredSummaries = useMemo(() => {
-    if (statusFilter === 'ALL') return summaries
+    let rows = summaries
     if (statusFilter === 'TEACHER_ABSENT') {
-      return summaries.filter((s) => s.teacherAbsent)
+      rows = rows.filter((s) => s.teacherAbsent)
+    } else if (statusFilter === 'ACTIVE') {
+      rows = rows.filter((s) => !s.teacherAbsent && s.callStatus === 'ACTIVE')
+    } else if (statusFilter === 'ENDED') {
+      rows = rows.filter((s) => !s.teacherAbsent && s.callStatus === 'ENDED')
     }
-    if (statusFilter === 'ACTIVE') {
-      return summaries.filter((s) => !s.teacherAbsent && s.callStatus === 'ACTIVE')
-    }
-    return summaries.filter((s) => !s.teacherAbsent && s.callStatus === 'ENDED')
-  }, [summaries, statusFilter])
+
+    const query = nameFilter.trim().toLowerCase()
+    if (!query) return rows
+    return rows.filter((s) => {
+      const student = s.studentName?.toLowerCase() ?? ''
+      const teacher = s.teacherName?.toLowerCase() ?? ''
+      return student.includes(query) || teacher.includes(query)
+    })
+  }, [summaries, statusFilter, nameFilter])
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -201,6 +216,45 @@ export default function AdminAcompanharChamadasPage() {
     fetchRecords()
     fetchRetentionNotices()
   }, [fetchRecords, fetchRetentionNotices])
+
+  const handleReleaseRegistration = useCallback(
+    async (reportId: string) => {
+      const ok = await confirm({
+        title: 'Liberar registro',
+        message:
+          'Isso encerra o alerta de ausência incorreto e libera o professor para registrar a aula normalmente. Continuar?',
+        confirmLabel: 'Liberar',
+        cancelLabel: 'Cancelar',
+        variant: 'default',
+      })
+      if (!ok) return
+
+      setReleasingReportId(reportId)
+      setSuccessMessage(null)
+      setError(null)
+      try {
+        const res = await fetch(`/api/admin/teacher-absence-reports/${reportId}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'RELEASE_REGISTRATION' }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setError(json.message || 'Erro ao liberar registro')
+          return
+        }
+
+        setSuccessMessage('Registro liberado com sucesso.')
+        await fetchRecords()
+      } catch {
+        setError('Erro de rede ao liberar registro')
+      } finally {
+        setReleasingReportId(null)
+      }
+    },
+    [confirm, fetchRecords]
+  )
 
   return (
     <AdminLayout>
@@ -283,6 +337,16 @@ export default function AdminAcompanharChamadasPage() {
               ))}
             </select>
           </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Aluno ou professor</label>
+            <input
+              type="text"
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              placeholder="Digite um nome..."
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[220px]"
+            />
+          </div>
           <Button variant="primary" onClick={() => fetchRecords()} disabled={loading}>
             {loading ? (
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -296,6 +360,12 @@ export default function AdminAcompanharChamadasPage() {
         {error && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {successMessage}
           </div>
         )}
 
@@ -329,12 +399,13 @@ export default function AdminAcompanharChamadasPage() {
                   <td colSpan={10} className="px-4 py-12 text-center text-gray-500">
                     {summaries.length === 0
                       ? 'Nenhum registro de presença no período selecionado.'
-                      : 'Nenhuma aula com o status selecionado.'}
+                      : 'Nenhuma aula encontrada com os filtros selecionados.'}
                   </td>
                 </tr>
               ) : (
                 filteredSummaries.map((s) => {
                   const isExpanded = expandedId === s.lessonId
+                  const hasOpenAbsenceAlert = s.teacherAbsent && !!s.teacherAbsenceReportId
                   const rowClass = s.teacherAbsent
                     ? 'bg-red-50 hover:bg-red-100/80'
                     : 'hover:bg-gray-50/80'
@@ -376,9 +447,30 @@ export default function AdminAcompanharChamadasPage() {
                         </td>
                         <td className="px-4 py-3">
                           {s.teacherAbsent ? (
-                            <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-red-200 text-red-900">
-                              Ausência do professor
-                            </span>
+                            <div className="flex flex-col items-start gap-2">
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-red-200 text-red-900">
+                                Ausência do professor
+                              </span>
+                              {hasOpenAbsenceAlert ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={releasingReportId != null}
+                                  onClick={() => {
+                                    const rid = s.teacherAbsenceReportId
+                                    if (!rid) return
+                                    void handleReleaseRegistration(rid)
+                                  }}
+                                  className="border-red-200 text-red-700 hover:bg-red-50"
+                                >
+                                  {releasingReportId === s.teacherAbsenceReportId ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    'Liberar registro'
+                                  )}
+                                </Button>
+                              ) : null}
+                            </div>
                           ) : (
                             <span
                               className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -479,6 +571,8 @@ export default function AdminAcompanharChamadasPage() {
               : ''}
           </p>
         )}
+
+        <ConfirmDialog />
 
       </div>
     </AdminLayout>
