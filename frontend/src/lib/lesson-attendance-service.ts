@@ -16,6 +16,8 @@ export const STALE_MS = 90 * 1000 // 90s (heartbeat a cada 30s, tolera 3 perdido
 
 /** Minutos após o fim da aula em que a sala ainda aceita entrada/saída rastreada */
 export const LESSON_ATTENDANCE_TOLERANCE_MINUTES = 15
+export const STUDENT_WAITING_FOR_TEACHER_MESSAGE =
+  'Seu professor ainda não encerrou a aula anterior. Assim que terminar, você poderá entrar.'
 
 export function lessonAttendanceWindowEndAt(startAt: Date, durationMinutes: number): Date {
   const durationMin = durationMinutes ?? 60
@@ -135,6 +137,22 @@ export async function registerJoin(
         ok: false,
         message: 'Encerre a chamada da outra aula antes de entrar nesta.',
         status: 400,
+      }
+    }
+  } else if (lesson.teacherId) {
+    const teacherBusyElsewhere = await prisma.lessonAttendance.findFirst({
+      where: {
+        teacherId: lesson.teacherId,
+        status: LessonAttendanceStatus.ACTIVE,
+        lessonId: { not: lessonId },
+      },
+      select: { lessonId: true },
+    })
+    if (teacherBusyElsewhere) {
+      return {
+        ok: false,
+        message: STUDENT_WAITING_FOR_TEACHER_MESSAGE,
+        status: 403,
       }
     }
   }

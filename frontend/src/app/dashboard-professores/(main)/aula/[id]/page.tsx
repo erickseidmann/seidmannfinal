@@ -139,7 +139,8 @@ export default function AulaProfessorPage() {
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const { registerJoin, registerLeave, syncActiveAttendance, isTracking } = useLessonAttendance(
     lessonId,
-    'professor'
+    'professor',
+    { autoLeaveOnUnload: false }
   )
 
   const [lesson, setLesson] = useState<LessonData | null>(null)

@@ -15,7 +15,8 @@ import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { Plus, Pencil, Trash2, Loader2, CalendarX, Unlock, Check, X, FileDown, Search } from 'lucide-react'
 import { LESSON_RECORD_UNLOCK_STATUS_LABELS } from '@/lib/lesson-record-unlock'
-import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE } from '@/lib/lesson-status'
+import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE, LESSON_STATUS_LABELS } from '@/lib/lesson-status'
+import { isCancelledNoReplacementLessonRecord } from '@/lib/lesson-cancel-no-replacement-release'
 import {
   bookAdvanceConfirmMessage,
   checkBookProgression,
@@ -81,6 +82,7 @@ interface GroupMember {
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  ...LESSON_STATUS_LABELS,
   CONFIRMED: 'Confirmada',
   CANCELLED: 'Cancelada',
   REPOSICAO: 'Reposição',
@@ -264,6 +266,7 @@ export default function AdminRegistrosAulasPage() {
   const [unlocksLoading, setUnlocksLoading] = useState(false)
   const [processingUnlockId, setProcessingUnlockId] = useState<string | null>(null)
   const [unlockNotesById, setUnlockNotesById] = useState<Record<string, string>>({})
+  const [releasingRecordId, setReleasingRecordId] = useState<string | null>(null)
 
   const fetchUnlockRequests = useCallback(async () => {
     setUnlocksLoading(true)
@@ -772,6 +775,37 @@ export default function AdminRegistrosAulasPage() {
     }
   }
 
+  const handleReleaseCancelledNoReplacement = async (record: LessonRecord) => {
+    const ok = await confirm({
+      title: 'Liberar aula',
+      message:
+        'Isso remove o registro automático de falta, confirma a aula novamente e libera o professor para registrar normalmente (incluindo após o prazo de 3 dias). Continuar?',
+      confirmLabel: 'Liberar',
+      cancelLabel: 'Cancelar',
+      variant: 'default',
+    })
+    if (!ok) return
+
+    setReleasingRecordId(record.id)
+    try {
+      const res = await fetch(`/api/admin/lesson-records/${record.id}/release`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setToast({ message: json.message || 'Erro ao liberar aula', type: 'error' })
+        return
+      }
+      setToast({ message: json.message || 'Aula liberada com sucesso', type: 'success' })
+      fetchRecords()
+    } catch {
+      setToast({ message: 'Erro ao liberar aula', type: 'error' })
+    } finally {
+      setReleasingRecordId(null)
+    }
+  }
+
   const handleDelete = async (id: string) => {
     const ok = await confirm({
       title: 'Excluir registro',
@@ -984,6 +1018,22 @@ export default function AdminRegistrosAulasPage() {
                       <td className="px-4 py-3 text-sm max-w-[200px]" title={isGroup && r.studentPresences?.length ? presenceLabel : undefined}>{presenceLabel}</td>
                       <td className="px-4 py-3 text-sm">{LESSON_TYPE_LABELS[r.lessonType] ?? r.lessonType}</td>
                       <td className="px-4 py-3 text-right">
+                        {isCancelledNoReplacementLessonRecord(r) ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleReleaseCancelledNoReplacement(r)}
+                            disabled={releasingRecordId === r.id}
+                            className="text-emerald-600 hover:text-emerald-800 mr-3 disabled:opacity-50"
+                            aria-label="Liberar aula"
+                            title="Liberar para o professor registrar"
+                          >
+                            {releasingRecordId === r.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Unlock className="w-4 h-4" />
+                            )}
+                          </button>
+                        ) : null}
                         {canRegisterLesson(r.lesson.status ?? '') ? (
                         <button
                           type="button"

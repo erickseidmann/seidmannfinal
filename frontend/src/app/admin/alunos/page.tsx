@@ -17,7 +17,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, ClipboardList, BookOpen } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, ClipboardList, BookOpen, Clock } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
@@ -299,6 +299,21 @@ const initialForm = {
   inactiveReasonOther: '',
 }
 
+function getStudentEscolaGroup(s: Student): string {
+  if (!s.escolaMatricula) return 'SEM_ESCOLA'
+  return s.escolaMatricula
+}
+
+const BULK_CANCELAMENTO_ESCOLAS = [
+  { value: 'SEIDMANN', label: 'Seidmann' },
+  { value: 'YOUBECOME', label: 'Youbecome' },
+  { value: 'HIGHWAY', label: 'Highway' },
+  { value: 'OUTRO', label: 'Outros' },
+  { value: 'SEM_ESCOLA', label: 'Sem escola' },
+] as const
+
+type BulkCancelamentoEscola = (typeof BULK_CANCELAMENTO_ESCOLAS)[number]['value']
+
 export default function AdminAlunosPage() {
   const router = useRouter()
   const [students, setStudents] = useState<Student[]>([])
@@ -403,6 +418,9 @@ export default function AdminAlunosPage() {
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
   const [bulkEscola, setBulkEscola] = useState<string>('')
+  const [bulkCancelamentoModalOpen, setBulkCancelamentoModalOpen] = useState(false)
+  const [bulkCancelamentoEscola, setBulkCancelamentoEscola] = useState<BulkCancelamentoEscola | ''>('')
+  const [bulkCancelamentoHoras, setBulkCancelamentoHoras] = useState('')
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [reportColumnKeys, setReportColumnKeys] = useState<string[]>(() => REPORT_COLUMNS.map((c) => c.key))
   const [reportFilters, setReportFilters] = useState({ escola: '', status: '', tipo: '', mes: '', ano: '' })
@@ -1169,6 +1187,24 @@ export default function AdminAlunosPage() {
     return list
   }, [students, filters.escola, filters.tipo, filters.professor, sortKey, sortDir])
 
+  const selectedStudentsForBulk = useMemo(
+    () => students.filter((s) => selectedStudentIds.has(s.id)),
+    [students, selectedStudentIds]
+  )
+
+  const bulkCancelamentoEscolaCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const s of selectedStudentsForBulk) {
+      const group = getStudentEscolaGroup(s)
+      counts[group] = (counts[group] ?? 0) + 1
+    }
+    return counts
+  }, [selectedStudentsForBulk])
+
+  const bulkCancelamentoTargetCount = bulkCancelamentoEscola
+    ? bulkCancelamentoEscolaCounts[bulkCancelamentoEscola] ?? 0
+    : 0
+
   const handleSort = useCallback((key: string) => {
     setSortKey((prev) => {
       if (prev === key) {
@@ -1288,6 +1324,71 @@ export default function AdminAlunosPage() {
       setToast({ message: `Escola definida para ${ok} aluno(s).`, type: 'success' })
     } catch {
       setToast({ message: 'Erro ao definir escola', type: 'error' })
+    } finally {
+      setBulkActionLoading(false)
+    }
+  }
+
+  const openBulkCancelamentoModal = () => {
+    if (selectedStudentIds.size === 0) {
+      setToast({ message: 'Selecione pelo menos um aluno.', type: 'error' })
+      return
+    }
+    const firstWithStudents = BULK_CANCELAMENTO_ESCOLAS.find(
+      (opt) => (bulkCancelamentoEscolaCounts[opt.value] ?? 0) > 0
+    )
+    setBulkCancelamentoEscola(firstWithStudents?.value ?? '')
+    setBulkCancelamentoHoras('')
+    setBulkCancelamentoModalOpen(true)
+  }
+
+  const handleBulkSetCancelamentoHoras = async () => {
+    if (!bulkCancelamentoEscola) {
+      setToast({ message: 'Selecione para qual escola aplicar o tempo.', type: 'error' })
+      return
+    }
+    const horas = Number(bulkCancelamentoHoras)
+    if (bulkCancelamentoHoras.trim() === '' || Number.isNaN(horas) || horas < 0) {
+      setToast({ message: 'Informe um tempo de cancelamento válido (em horas).', type: 'error' })
+      return
+    }
+    const targets = selectedStudentsForBulk.filter(
+      (s) => getStudentEscolaGroup(s) === bulkCancelamentoEscola
+    )
+    if (targets.length === 0) {
+      setToast({ message: 'Nenhum aluno selecionado nesta escola.', type: 'error' })
+      return
+    }
+    setBulkActionLoading(true)
+    try {
+      let ok = 0
+      for (const s of targets) {
+        const res = await fetch(`/api/admin/enrollments/${s.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            action: 'update',
+            nome: s.nome ?? '',
+            email: s.email ?? '',
+            whatsapp: s.whatsapp ?? '',
+            cancelamentoAntecedenciaHoras: horas,
+          }),
+        })
+        const json = await res.json()
+        if (res.ok && json.ok) ok++
+      }
+      fetchStudents()
+      setSelectedStudentIds(new Set())
+      setBulkCancelamentoModalOpen(false)
+      setBulkCancelamentoEscola('')
+      setBulkCancelamentoHoras('')
+      setToast({
+        message: `Tempo de cancelamento definido para ${ok} aluno(s).`,
+        type: 'success',
+      })
+    } catch {
+      setToast({ message: 'Erro ao definir tempo de cancelamento', type: 'error' })
     } finally {
       setBulkActionLoading(false)
     }
@@ -2056,6 +2157,16 @@ export default function AdminAlunosPage() {
                 >
                   Excluir selecionados
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openBulkCancelamentoModal}
+                  disabled={bulkActionLoading}
+                >
+                  <Clock className="w-4 h-4 mr-1" />
+                  Adicionar tempo de cancelamento
+                </Button>
                 <span className="inline-flex items-center gap-2">
                   <label className="text-sm text-gray-600">Definir escola:</label>
                   <select
@@ -2269,6 +2380,122 @@ export default function AdminAlunosPage() {
               )}
             </div>
           )}
+        </Modal>
+
+        {/* Modal tempo de cancelamento em massa */}
+        <Modal
+          isOpen={bulkCancelamentoModalOpen}
+          onClose={() => {
+            if (bulkActionLoading) return
+            setBulkCancelamentoModalOpen(false)
+          }}
+          title="Adicionar tempo de cancelamento"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setBulkCancelamentoModalOpen(false)}
+                disabled={bulkActionLoading}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleBulkSetCancelamentoHoras()}
+                disabled={
+                  bulkActionLoading ||
+                  !bulkCancelamentoEscola ||
+                  bulkCancelamentoTargetCount === 0 ||
+                  bulkCancelamentoHoras.trim() === ''
+                }
+              >
+                {bulkActionLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Aplicando...
+                  </>
+                ) : (
+                  'Aplicar'
+                )}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-5">
+            <p className="text-sm text-gray-600">
+              Você selecionou <strong>{selectedStudentsForBulk.length}</strong> aluno(s). Escolha
+              para qual grupo de escola deseja definir o tempo de antecedência para cancelamento:
+            </p>
+            <div className="space-y-2">
+              {BULK_CANCELAMENTO_ESCOLAS.map((opt) => {
+                const count = bulkCancelamentoEscolaCounts[opt.value] ?? 0
+                if (count === 0) return null
+                return (
+                  <label
+                    key={opt.value}
+                    className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                      bulkCancelamentoEscola === opt.value
+                        ? 'border-brand-orange bg-orange-50'
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      <input
+                        type="radio"
+                        name="bulkCancelamentoEscola"
+                        value={opt.value}
+                        checked={bulkCancelamentoEscola === opt.value}
+                        onChange={() => setBulkCancelamentoEscola(opt.value)}
+                        className="text-brand-orange focus:ring-brand-orange"
+                      />
+                      <span className="text-sm font-medium text-gray-900">{opt.label}</span>
+                    </span>
+                    <span className="text-sm text-gray-600">
+                      {count} aluno{count === 1 ? '' : 's'}
+                    </span>
+                  </label>
+                )
+              })}
+              {BULK_CANCELAMENTO_ESCOLAS.every(
+                (opt) => (bulkCancelamentoEscolaCounts[opt.value] ?? 0) === 0
+              ) && (
+                <p className="text-sm text-gray-500">Nenhum aluno selecionado.</p>
+              )}
+            </div>
+            {bulkCancelamentoEscola && bulkCancelamentoTargetCount > 0 && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Tempo de antecedência para cancelamento (horas)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={bulkCancelamentoHoras}
+                  onChange={(e) => setBulkCancelamentoHoras(e.target.value)}
+                  className="input w-full"
+                  placeholder={
+                    bulkCancelamentoEscola === 'YOUBECOME'
+                      ? 'Ex: 24'
+                      : bulkCancelamentoEscola === 'SEM_ESCOLA'
+                        ? 'Ex: 6'
+                        : 'Ex: 6'
+                  }
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Será aplicado a <strong>{bulkCancelamentoTargetCount}</strong> aluno
+                  {bulkCancelamentoTargetCount === 1 ? '' : 's'} em{' '}
+                  <strong>
+                    {BULK_CANCELAMENTO_ESCOLAS.find((o) => o.value === bulkCancelamentoEscola)?.label}
+                  </strong>
+                  .
+                  {bulkCancelamentoEscola === 'YOUBECOME'
+                    ? ' Alunos Youbecome costumam usar 24 horas (1 dia).'
+                    : ' Sugerido: 6 horas.'}
+                </p>
+              </div>
+            )}
+          </div>
         </Modal>
 
         {/* Modal Inativar alunos em massa (data + motivo) */}

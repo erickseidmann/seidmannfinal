@@ -85,7 +85,8 @@ export default function ProfessorClassroomHubPage() {
   const trackingLessonId = activeSession?.lessonId ?? pendingActiveLessonId ?? ''
   const { registerLeave, syncActiveAttendance, isTracking } = useLessonAttendance(
     trackingLessonId,
-    'professor'
+    'professor',
+    { autoLeaveOnUnload: false }
   )
 
   const fetchData = useCallback(async () => {

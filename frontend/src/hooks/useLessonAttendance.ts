@@ -6,12 +6,17 @@ type Role = 'professor' | 'student'
 
 const HEARTBEAT_MS = 30 * 1000
 
-export function useLessonAttendance(lessonId: string, role: Role) {
+export function useLessonAttendance(
+  lessonId: string,
+  role: Role,
+  options?: { autoLeaveOnUnload?: boolean }
+) {
   const attendanceIdRef = useRef<string | null>(null)
   const leaveSentRef = useRef(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const base = `/api/${role}/lessons`
   const [isTracking, setIsTracking] = useState(false)
+  const autoLeaveOnUnload = options?.autoLeaveOnUnload ?? true
 
   const stopHeartbeat = useCallback(() => {
     if (intervalRef.current) {
@@ -109,6 +114,11 @@ export function useLessonAttendance(lessonId: string, role: Role) {
   )
 
   useEffect(() => {
+    if (!autoLeaveOnUnload) {
+      return () => {
+        stopHeartbeat()
+      }
+    }
     const handleLeave = () => sendLeave()
     window.addEventListener('pagehide', handleLeave)
     window.addEventListener('beforeunload', handleLeave)
@@ -118,7 +128,7 @@ export function useLessonAttendance(lessonId: string, role: Role) {
       stopHeartbeat()
       sendLeave()
     }
-  }, [sendLeave, stopHeartbeat])
+  }, [autoLeaveOnUnload, sendLeave, stopHeartbeat])
 
   return { registerJoin, registerLeave, syncActiveAttendance, isTracking }
 }

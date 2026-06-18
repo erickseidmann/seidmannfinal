@@ -8,6 +8,8 @@ import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
 import { isLessonScheduledStatus } from '@/lib/lesson-status'
 import { resolveStudentEnrollmentForLesson } from '@/lib/student-group-lesson-access'
+import { LessonAttendanceStatus } from '@prisma/client'
+import { STUDENT_WAITING_FOR_TEACHER_MESSAGE } from '@/lib/lesson-attendance-service'
 
 const TOLERANCE_MINUTES = 15
 
@@ -97,8 +99,19 @@ export async function GET(
     const windowEnd = new Date(lessonEnd.getTime() + TOLERANCE_MINUTES * 60 * 1000)
 
     const callEnded = lesson.professorCallEndedAt != null
+    const teacherBusyElsewhere = lesson.teacherId
+      ? await prisma.lessonAttendance.findFirst({
+          where: {
+            teacherId: lesson.teacherId,
+            status: LessonAttendanceStatus.ACTIVE,
+            lessonId: { not: lessonId },
+          },
+          select: { lessonId: true },
+        })
+      : null
     const canJoin =
       !callEnded &&
+      !teacherBusyElsewhere &&
       now >= windowStart &&
       now <= windowEnd &&
       isLessonScheduledStatus(lesson.status)
@@ -107,6 +120,8 @@ export async function GET(
     if (!canJoin) {
       if (callEnded) {
         reason = 'O professor encerrou esta aula'
+      } else if (teacherBusyElsewhere) {
+        reason = STUDENT_WAITING_FOR_TEACHER_MESSAGE
       } else if (!isLessonScheduledStatus(lesson.status)) {
         reason = 'Aula não está confirmada'
       } else if (now < windowStart) {
