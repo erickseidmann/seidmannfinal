@@ -6,8 +6,8 @@ import {
 describe('teacher absence grace period', () => {
   const start = new Date('2026-06-11T14:00:00.000Z')
 
-  it('não marca ausência antes de 5 minutos', () => {
-    const now = new Date(start.getTime() + 4 * 60 * 1000)
+  it('não marca ausência antes do prazo de tolerância', () => {
+    const now = new Date(start.getTime() + (TEACHER_ABSENCE_GRACE_MINUTES - 1) * 60 * 1000)
     expect(
       isTeacherAbsentFromLesson({
         lessonStartAt: start,
@@ -20,7 +20,7 @@ describe('teacher absence grace period', () => {
     ).toBe(false)
   })
 
-  it('marca ausência após 5 minutos sem entrada do professor', () => {
+  it('marca ausência após o prazo de tolerância sem entrada do professor', () => {
     const now = new Date(start.getTime() + TEACHER_ABSENCE_GRACE_MINUTES * 60 * 1000)
     expect(
       isTeacherAbsentFromLesson({

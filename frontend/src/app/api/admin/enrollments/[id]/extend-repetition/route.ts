@@ -8,6 +8,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
+import {
+  SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE,
+  enrollmentPaymentRowHasCompleteInfo,
+} from '@/lib/enrollment-payment-info'
 
 function overlap(
   startA: Date,
@@ -37,13 +41,29 @@ export async function PATCH(
 
     const enrollment = await prisma.enrollment.findUnique({
       where: { id: enrollmentId },
-      select: { id: true, nome: true, status: true },
+      select: {
+        id: true,
+        nome: true,
+        status: true,
+        bolsista: true,
+        valorMensalidade: true,
+        metodoPagamento: true,
+        diaPagamento: true,
+        paymentInfo: { select: { valorMensal: true, metodo: true, dueDay: true } },
+      },
     })
 
     if (!enrollment || enrollment.status !== 'ACTIVE') {
       return NextResponse.json(
         { ok: false, message: 'Enrollment não encontrado ou não está ativo' },
         { status: 404 }
+      )
+    }
+
+    if (!enrollmentPaymentRowHasCompleteInfo(enrollment)) {
+      return NextResponse.json(
+        { ok: false, message: SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE },
+        { status: 400 }
       )
     }
 

@@ -188,9 +188,6 @@ export function getMissingRequiredEnrollmentFields(row: EnrollmentForRequiredChe
 
   if (!(row.melhoresHorarios ?? '').trim()) missing.push('Melhores horários')
   if (!(row.melhoresDiasSemana ?? '').trim()) missing.push('Melhores dias da semana')
-  if (!(row.nomeVendedor ?? '').trim()) missing.push('Nome do vendedor')
-  if (!(row.nomeEmpresaOuIndicador ?? '').trim()) missing.push('Nome da empresa ou indicador')
-  if (!(row.observacoes ?? '').trim()) missing.push('Observações')
 
   const st = (row.status ?? '').trim()
   if (st === 'PAUSED' && !row.activationDate) missing.push('Data de ativação (pausado)')
@@ -203,4 +200,23 @@ export function getMissingRequiredEnrollmentFields(row: EnrollmentForRequiredChe
   }
 
   return missing
+}
+
+/** Campos de pagamento em falta (valor, método e dia — bolsista isento de valor). */
+export function getMissingPaymentEnrollmentFields(row: EnrollmentForRequiredCheck): string[] {
+  const missing: string[] = []
+  const bolsista = Boolean(row.bolsista)
+  if (!bolsista) {
+    const valor = parseValorMensal(row)
+    if (valor == null || valor <= 0) missing.push('Valor mensalidade')
+  }
+  const metodo = metodoEfetivo(row)
+  if (!metodo) missing.push('Método de pagamento')
+  const dia = diaPagamentoEfetivo(row)
+  if (dia == null || dia < 1 || dia > 31) missing.push('Dia de pagamento')
+  return missing
+}
+
+export function enrollmentHasCompletePaymentInfo(row: EnrollmentForRequiredCheck): boolean {
+  return getMissingPaymentEnrollmentFields(row).length === 0
 }

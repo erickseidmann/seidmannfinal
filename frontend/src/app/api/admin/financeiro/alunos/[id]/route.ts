@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { logFinanceAction, updateStudentPaymentSchema } from '@/lib/finance'
 import { confirmEnrollmentPayment } from '@/lib/payments'
+import { cancelLessonsIfMissingPaymentInfo } from '@/lib/enrollment-payment-info'
 
 async function saveEnrollmentMonthReceiptUrl(
   enrollmentId: string,
@@ -223,6 +224,8 @@ export async function PATCH(
         })
       }
     }
+
+    await cancelLessonsIfMissingPaymentInfo(enrollmentId)
 
     return NextResponse.json({ ok: true, message: 'Dados atualizados' })
   } catch (error) {

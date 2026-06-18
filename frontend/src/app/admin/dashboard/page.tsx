@@ -15,6 +15,7 @@ import Modal from '@/components/admin/Modal'
 import TableScrollArea from '@/components/admin/TableScrollArea'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
 import { toDateKeyInTZ } from '@/lib/datetime'
+import { TEACHER_ABSENCE_GRACE_MINUTES } from '@/lib/lesson-attendance-summary'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   UserCheck,
@@ -1178,7 +1179,7 @@ export default function AdminDashboardPage() {
               <p className="text-sm text-gray-600">
                 <strong>Regra:</strong> professor ausente confirmado → a aula é cancelada pelo professor
                 e a gestão agenda uma <strong>reposição</strong> no calendário. Ausência na videochamada
-                é detectada automaticamente após 5 min sem entrada do professor.
+                é detectada automaticamente após {TEACHER_ABSENCE_GRACE_MINUTES} min sem entrada do professor.
               </p>
               <TableScrollArea>
                 <table className="w-full text-left border-collapse">

@@ -8,6 +8,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireTeacher } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
+import {
+  SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE,
+  enrollmentPaymentRowHasCompleteInfo,
+} from '@/lib/enrollment-payment-info'
 
 const DIAS_SEMANA = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
 
@@ -189,6 +193,23 @@ export async function PATCH(
       // Criar nova aula se há data/professor solicitado
       let newLesson = null
       if (lessonRequest.requestedStartAt) {
+        const enrollmentPayment = await prisma.enrollment.findUnique({
+          where: { id: enrollment.id },
+          select: {
+            bolsista: true,
+            valorMensalidade: true,
+            metodoPagamento: true,
+            diaPagamento: true,
+            paymentInfo: { select: { valorMensal: true, metodo: true, dueDay: true } },
+          },
+        })
+        if (!enrollmentPayment || !enrollmentPaymentRowHasCompleteInfo(enrollmentPayment)) {
+          return NextResponse.json(
+            { ok: false, message: SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE },
+            { status: 400 }
+          )
+        }
+
         const newTeacherId = lessonRequest.requestedTeacherId || lessonRequest.teacherId
         
         console.log('[api/lesson-requests/[id]/teacher-approval] Criando nova aula:', {

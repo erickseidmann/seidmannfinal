@@ -21,6 +21,10 @@ import {
 import { LESSON_STATUSES_SCHEDULED, lessonStatusValidOriginForReposicao } from '@/lib/lesson-status'
 import { sendEmail, mensagemAulaConfirmada, mensagemReposicaoAgendada, mensagemCancelamentoComReposicao } from '@/lib/email'
 import { assertTeacherTeachesEnrollmentLevel } from '@/lib/enrollment-nivel-livro'
+import {
+  SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE,
+  enrollmentPaymentRowHasCompleteInfo,
+} from '@/lib/enrollment-payment-info'
 
 export async function GET(request: NextRequest) {
   try {
@@ -182,7 +186,17 @@ export async function POST(request: NextRequest) {
     const [enrollment, teacher] = await Promise.all([
       prisma.enrollment.findUnique({
         where: { id: enrollmentId },
-        select: { curso: true, status: true, pausedAt: true, activationDate: true },
+        select: {
+          curso: true,
+          status: true,
+          pausedAt: true,
+          activationDate: true,
+          bolsista: true,
+          valorMensalidade: true,
+          metodoPagamento: true,
+          diaPagamento: true,
+          paymentInfo: { select: { valorMensal: true, metodo: true, dueDay: true } },
+        },
       }),
       prisma.teacher.findUnique({
         where: { id: teacherId },
@@ -205,6 +219,13 @@ export async function POST(request: NextRequest) {
           message:
             'Não é possível agendar aulas para alunos em Matriculado ou Contrato aceito. Avance o status após pagamento/início.',
         },
+        { status: 400 }
+      )
+    }
+
+    if (enrollment && !enrollmentPaymentRowHasCompleteInfo(enrollment)) {
+      return NextResponse.json(
+        { ok: false, message: SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE },
         { status: 400 }
       )
     }

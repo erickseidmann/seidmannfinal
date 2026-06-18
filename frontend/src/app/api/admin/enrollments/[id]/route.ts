@@ -17,6 +17,10 @@ import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
 import { ensureBolsistaPaymentMonthPaid } from '@/lib/bolsista-payment'
+import {
+  cancelLessonsIfMissingPaymentInfo,
+  enrollmentPaymentRowHasCompleteInfo,
+} from '@/lib/enrollment-payment-info'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -309,6 +313,21 @@ export async function PATCH(
         )
       }
 
+      const enrollmentWithPayment = await prisma.enrollment.findUnique({
+        where: { id },
+        select: {
+          bolsista: true,
+          valorMensalidade: true,
+          metodoPagamento: true,
+          diaPagamento: true,
+          paymentInfo: { select: { valorMensal: true, metodo: true, dueDay: true } },
+        },
+      })
+      let cancelledLessonsForMissingPayment = 0
+      if (enrollmentWithPayment && !enrollmentPaymentRowHasCompleteInfo(enrollmentWithPayment)) {
+        cancelledLessonsForMissingPayment = await cancelLessonsIfMissingPaymentInfo(id)
+      }
+
       // Se o aluno tem conta (userId) e o e-mail foi alterado, atualizar também o e-mail de login do User
       if (enrollment.userId && newEmail && newEmail !== currentEmail) {
         await prisma.user.update({
@@ -319,7 +338,11 @@ export async function PATCH(
 
       return NextResponse.json({
         ok: true,
-        data: { enrollment: updatedEnrollment, message: 'Aluno atualizado com sucesso' },
+        data: {
+          enrollment: updatedEnrollment,
+          message: 'Aluno atualizado com sucesso',
+          cancelledLessonsForMissingPayment,
+        },
       })
     }
 

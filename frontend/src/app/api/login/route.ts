@@ -4,7 +4,7 @@
  * Valida email e senha, retorna dados do usuário.
  *
  * Proteções:
- * - Rate limiting por IP (5 tentativas / 15 min) — desativado em NODE_ENV=development
+ * - Rate limiting por IP após senha incorreta (10 erros / 15 min) — desativado em NODE_ENV=development
  * - Mensagens específicas: e-mail sem cadastro vs senha incorreta
  *
  * Endpoint usado pela página /login
@@ -59,20 +59,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Rate limiting por IP (5 tentativas / 15 minutos)
     const clientIP = getClientIP(request)
-    const rateLimit = checkRateLimit(clientIP, 5, 15 * 60 * 1000)
-
-    if (!rateLimit.allowed) {
-      const minutesUntilReset = Math.ceil((rateLimit.resetAt - Date.now()) / 60000)
-      return NextResponse.json(
-        { 
-          ok: false,
-          message: `Muitas tentativas. Tente novamente em ${minutesUntilReset} minuto(s).`
-        },
-        { status: 429 }
-      )
-    }
 
     // Normalizar email
     const normalizedEmail = email.trim().toLowerCase()
@@ -122,6 +109,19 @@ export async function POST(request: NextRequest) {
     const senhaValida = await bcrypt.compare(senha, user.senha)
 
     if (!senhaValida) {
+      const rateLimit = checkRateLimit(`login-pwd:${clientIP}`, 10, 15 * 60 * 1000)
+
+      if (!rateLimit.allowed) {
+        const minutesUntilReset = Math.ceil((rateLimit.resetAt - Date.now()) / 60000)
+        return NextResponse.json(
+          {
+            ok: false,
+            message: `Muitas tentativas de senha incorreta. Tente novamente em ${minutesUntilReset} minuto(s).`,
+          },
+          { status: 429 }
+        )
+      }
+
       return NextResponse.json(
         { ok: false, message: LOGIN_ERROR_WRONG_PASSWORD },
         { status: 401 }

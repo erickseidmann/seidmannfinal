@@ -17,7 +17,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmModal from '@/components/admin/ConfirmModal'
 import DesignarAulaModal from '@/components/admin/DesignarAulaModal'
-import { Plus, Edit, Bell, Trash2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, ClipboardList, BookOpen, Clock } from 'lucide-react'
+import { Plus, Edit, Bell, Trash2, Key, UserPlus, Users, UserCheck, UserX, GraduationCap, AlertTriangle, FileDown, Loader2, Search, ChevronDown, ChevronRight, X, Mail, CalendarPlus, Award, ClipboardList, BookOpen, Clock, CreditCard } from 'lucide-react'
 import StatCard from '@/components/admin/StatCard'
 import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
@@ -392,6 +392,19 @@ export default function AdminAlunosPage() {
     }[]
   }>({ count: 0, list: [] })
   const [missingRequiredLoading, setMissingRequiredLoading] = useState(true)
+  const [missingPaymentStats, setMissingPaymentStats] = useState<{
+    count: number
+    totalCancelledLessons: number
+    list: {
+      enrollmentId: string
+      nome: string
+      escolaLabel: string
+      missing: string[]
+      cancelledLessons: number
+      student: Student
+    }[]
+  }>({ count: 0, totalCancelledLessons: 0, list: [] })
+  const [missingPaymentLoading, setMissingPaymentLoading] = useState(true)
   const [bookAdvanceStats, setBookAdvanceStats] = useState<{
     count: number
     list: {
@@ -450,6 +463,36 @@ export default function AdminAlunosPage() {
       setMissingRequiredStats({ count: 0, list: [] })
     } finally {
       setMissingRequiredLoading(false)
+    }
+  }, [])
+
+  const fetchMissingPaymentStats = useCallback(async () => {
+    setMissingPaymentLoading(true)
+    try {
+      const res = await fetch('/api/admin/enrollments/missing-payment-info', { credentials: 'include' })
+      const json = await res.json()
+      if (res.ok && json.ok && Array.isArray(json.data?.items)) {
+        setMissingPaymentStats({
+          count: typeof json.data.count === 'number' ? json.data.count : json.data.items.length,
+          totalCancelledLessons:
+            typeof json.data.totalCancelledLessons === 'number' ? json.data.totalCancelledLessons : 0,
+          list: json.data.items as {
+            enrollmentId: string
+            nome: string
+            escolaLabel: string
+            missing: string[]
+            cancelledLessons: number
+            student: Student
+          }[],
+        })
+      } else {
+        setMissingPaymentStats({ count: 0, totalCancelledLessons: 0, list: [] })
+      }
+    } catch (e) {
+      console.error(e)
+      setMissingPaymentStats({ count: 0, totalCancelledLessons: 0, list: [] })
+    } finally {
+      setMissingPaymentLoading(false)
     }
   }, [])
 
@@ -617,8 +660,9 @@ export default function AdminAlunosPage() {
     void fetchWrongFrequencyStats()
     void fetchWrongFrequencyStatsProximaSemana()
     void fetchMissingRequiredStats()
+    void fetchMissingPaymentStats()
     void fetchBookAdvanceStats()
-  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchMissingRequiredStats, fetchBookAdvanceStats])
+  }, [filters, fetchStats, fetchWrongFrequencyStats, fetchWrongFrequencyStatsProximaSemana, fetchMissingRequiredStats, fetchMissingPaymentStats, fetchBookAdvanceStats])
 
   const handleOpenModal = useCallback(() => {
     setEditingStudent(null)
@@ -1072,7 +1116,15 @@ export default function AdminAlunosPage() {
         setEditingStudent(null)
         fetchStudents()
         void fetchMissingRequiredStats()
-        setToast({ message: 'Aluno atualizado com sucesso!', type: 'success' })
+        void fetchMissingPaymentStats()
+        const cancelled = json.data?.cancelledLessonsForMissingPayment
+        setToast({
+          message:
+            typeof cancelled === 'number' && cancelled > 0
+              ? `Aluno atualizado. ${cancelled} aula(s) futura(s) cancelada(s) por falta de dados de pagamento.`
+              : 'Aluno atualizado com sucesso!',
+          type: 'success',
+        })
       } else {
         const res = await fetch('/api/admin/enrollments', {
           method: 'POST',
@@ -1087,6 +1139,7 @@ export default function AdminAlunosPage() {
         setIsModalOpen(false)
         fetchStudents()
         void fetchMissingRequiredStats()
+        void fetchMissingPaymentStats()
         setToast({ message: 'Aluno adicionado com sucesso!', type: 'success' })
       }
     } catch (err) {
@@ -1857,6 +1910,32 @@ export default function AdminAlunosPage() {
               icon={<ClipboardList className="w-5 h-5" />}
               color="orange"
               subtitle="Clique para ver o que falta em cada aluno"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setListLoading(false)
+              setListModal({ title: 'Alunos sem info de pagamento', type: 'missingPayment' })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setListLoading(false)
+                setListModal({ title: 'Alunos sem info de pagamento', type: 'missingPayment' })
+              }
+            }}
+            className={`cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0 ${
+              !missingPaymentLoading && missingPaymentStats.count > 0 ? 'stat-cube-blink' : ''
+            }`}
+          >
+            <StatCard
+              variant="finance"
+              title="Alunos sem info de pagamento"
+              value={missingPaymentLoading ? '...' : missingPaymentStats.count}
+              icon={<CreditCard className="w-5 h-5" />}
+              color="red"
+              subtitle="Sem dados completos — aulas bloqueadas/canceladas"
             />
           </div>
           {/* Total por escola */}
@@ -3425,7 +3504,7 @@ export default function AdminAlunosPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Nome do vendedor <span className="text-red-500">*</span>
+                    Nome do vendedor
                   </label>
                   <input
                     type="text"
@@ -3434,12 +3513,11 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, nomeVendedor: e.target.value })
                     }
                     className="input w-full"
-                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Nome da empresa ou indicador <span className="text-red-500">*</span>
+                    Nome da empresa ou indicador
                   </label>
                   <input
                     type="text"
@@ -3448,13 +3526,12 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, nomeEmpresaOuIndicador: e.target.value })
                     }
                     className="input w-full"
-                    required
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Observações <span className="text-red-500">*</span>
+                  Observações
                 </label>
                 <textarea
                   value={formData.observacoes}
@@ -3464,7 +3541,6 @@ export default function AdminAlunosPage() {
                   className="input w-full min-h-[80px]"
                   placeholder="Observações gerais..."
                   rows={3}
-                  required
                 />
               </div>
             </div>
@@ -3607,8 +3683,76 @@ export default function AdminAlunosPage() {
           title={listModal?.title || ''}
           size="xl"
         >
-          {listLoading && listModal?.type !== 'missingRequired' && listModal?.type !== 'bookAdvances' ? (
+          {listLoading && listModal?.type !== 'missingRequired' && listModal?.type !== 'missingPayment' && listModal?.type !== 'bookAdvances' ? (
             <SeidmannLoading variant="inline" />
+          ) : listModal?.type === 'missingPayment' ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-gray-600 max-w-3xl">
+                  Alunos sem valor da mensalidade, método de pagamento ou dia de pagamento preenchidos. Não é
+                  possível agendar novas aulas; aulas futuras já agendadas são canceladas automaticamente.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 inline-flex items-center gap-2"
+                  onClick={() => void fetchMissingPaymentStats()}
+                  disabled={missingPaymentLoading}
+                >
+                  {missingPaymentLoading ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : null}
+                  Atualizar lista
+                </Button>
+              </div>
+              {missingPaymentLoading ? (
+                <SeidmannLoading variant="section" />
+              ) : missingPaymentStats.list.length === 0 ? (
+                <p className="text-center text-gray-600 py-8">
+                  Nenhum aluno com dados de pagamento incompletos.
+                </p>
+              ) : (
+                <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+                  {missingPaymentStats.totalCancelledLessons > 0 ? (
+                    <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                      {missingPaymentStats.totalCancelledLessons} aula(s) futura(s) cancelada(s) nesta verificação.
+                    </p>
+                  ) : null}
+                  {missingPaymentStats.list.map((row) => (
+                    <div
+                      key={row.enrollmentId}
+                      className="border border-rose-200 rounded-lg bg-rose-50/50 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                        <div>
+                          <p className="font-semibold text-gray-900">{row.nome}</p>
+                          <p className="text-xs text-gray-600">Escola: {row.escolaLabel}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => {
+                            setListModal(null)
+                            handleEdit(row.student)
+                          }}
+                        >
+                          Editar
+                        </Button>
+                      </div>
+                      <p className="text-xs font-semibold text-rose-900 uppercase tracking-wide mb-1">
+                        Dados de pagamento em falta
+                      </p>
+                      <ul className="list-disc list-inside text-sm text-gray-800 space-y-0.5">
+                        {row.missing.map((label, idx) => (
+                          <li key={`${row.enrollmentId}-${idx}-${label}`}>{label}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : listModal?.type === 'missingRequired' ? (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">

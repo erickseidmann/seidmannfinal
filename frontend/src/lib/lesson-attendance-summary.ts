@@ -7,7 +7,7 @@ import { lessonAttendanceWindowEndAt } from '@/lib/lesson-attendance-service'
 export const LESSON_ATTENDANCE_TRACKING_SINCE = new Date('2026-06-11T03:00:00.000Z')
 
 /** Minutos após o início da aula para marcar ausência do professor (monitoramento / dashboard). */
-export const TEACHER_ABSENCE_GRACE_MINUTES = 5
+export const TEACHER_ABSENCE_GRACE_MINUTES = 7
 
 export const TEACHER_ATTENDANCE_REQUIRED_MESSAGE =
   'Você não entrou na videochamada desta aula. Só é possível registrar aulas em que você participou da chamada.'

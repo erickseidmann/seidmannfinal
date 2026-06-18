@@ -12,6 +12,10 @@ import {
   LESSON_PAST_EDIT_DENIED_MESSAGE,
 } from '@/lib/lesson-past-edit'
 import { sendEmail } from '@/lib/email'
+import {
+  SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE,
+  enrollmentPaymentRowHasCompleteInfo,
+} from '@/lib/enrollment-payment-info'
 
 const DIAS_SEMANA = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
 
@@ -159,6 +163,23 @@ export async function PATCH(
       // Determinar novo professor e data
       const finalTeacherId = newTeacherId || lessonRequest.requestedTeacherId || lessonRequest.teacherId
       const finalStartAt = newStartAt ? new Date(newStartAt) : lessonRequest.requestedStartAt || lesson.startAt
+
+      const enrollmentPayment = await prisma.enrollment.findUnique({
+        where: { id: enrollment.id },
+        select: {
+          bolsista: true,
+          valorMensalidade: true,
+          metodoPagamento: true,
+          diaPagamento: true,
+          paymentInfo: { select: { valorMensal: true, metodo: true, dueDay: true } },
+        },
+      })
+      if (!enrollmentPayment || !enrollmentPaymentRowHasCompleteInfo(enrollmentPayment)) {
+        return NextResponse.json(
+          { ok: false, message: SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE },
+          { status: 400 }
+        )
+      }
 
       // Criar nova aula como REPOSICAO (amarelo)
       // Se a solicitação foi criada por um aluno, usar formato detalhado
