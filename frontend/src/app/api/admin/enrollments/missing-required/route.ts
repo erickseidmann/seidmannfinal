@@ -1,6 +1,6 @@
 /**
  * GET /api/admin/enrollments/missing-required
- * Matrículas com pelo menos um campo obrigatório em falta (regras do formulário admin).
+ * Matrículas ativas com pelo menos um campo obrigatório em falta (regras do formulário admin).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -230,6 +230,7 @@ export async function GET(request: NextRequest) {
     }
 
     const enrollments = await prisma.enrollment.findMany({
+      where: { status: 'ACTIVE' },
       include: enrollmentMissingInclude,
       orderBy: { nome: 'asc' },
       take: 5000,

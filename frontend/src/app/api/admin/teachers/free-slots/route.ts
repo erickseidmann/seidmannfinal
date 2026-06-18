@@ -9,18 +9,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
-
-/** Retorna a próxima data para um dayOfWeek (0-6) a partir de hoje */
-function nextDateForDayOfWeek(dayOfWeek: number): Date {
-  const now = new Date()
-  const currentDay = now.getDay()
-  let daysAhead = dayOfWeek - currentDay
-  if (daysAhead <= 0) daysAhead += 7
-  const d = new Date(now)
-  d.setDate(now.getDate() + daysAhead)
-  d.setHours(0, 0, 0, 0)
-  return d
-}
+import { startOfCalendarDayBrazilDateKey, ymdInTZ } from '@/lib/datetime'
+import {
+  lessonConflictsWithWeeklySlot,
+  teacherMatchesAvailabilitySlots,
+} from '@/lib/teacher-free-slots'
 
 export async function GET(request: NextRequest) {
   try {
@@ -53,6 +46,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    if (endMinutes <= startMinutes) {
+      return NextResponse.json(
+        { ok: false, message: 'O horário final deve ser depois do horário inicial' },
+        { status: 400 }
+      )
+    }
+
     const teachers = await prisma.teacher.findMany({
       where: { status: 'ACTIVE' },
       select: { id: true, nome: true, idiomasFala: true, idiomasEnsina: true },
@@ -71,57 +71,50 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Professores que têm o slot em TODOS os dias selecionados na disponibilidade
-    const teachersWithSlot: string[] = []
-    for (const t of teachers) {
-      const teacherSlots = slotsByTeacher.get(t.id) ?? []
-      const hasSlotForAllDays = dayOfWeeks.every((dow) =>
-        teacherSlots.some(
-          (slot) =>
-            slot.dayOfWeek === dow &&
-            startMinutes >= slot.startMinutes &&
-            endMinutes <= slot.endMinutes
+    const teachersWithSlot = teachers
+      .filter((t) =>
+        teacherMatchesAvailabilitySlots(
+          slotsByTeacher.get(t.id) ?? [],
+          dayOfWeeks,
+          startMinutes,
+          endMinutes
         )
       )
-      if (hasSlotForAllDays) teachersWithSlot.push(t.id)
-    }
+      .map((t) => t.id)
 
-    // Para cada (teacherId, dayOfWeek) em teachersWithSlot, calcular próxima data e verificar se tem aula
+    const todayKey = ymdInTZ(new Date())
+    const lessonsFromToday = startOfCalendarDayBrazilDateKey(todayKey) ?? new Date()
+
+    const lessons = await prisma.lesson.findMany({
+      where: {
+        teacherId: { in: teachersWithSlot },
+        status: { in: [...LESSON_STATUSES_SCHEDULED] },
+        startAt: { gte: lessonsFromToday },
+      },
+      select: { teacherId: true, startAt: true, durationMinutes: true },
+    })
+
     const teacherIdsWithConflict = new Set<string>()
-    for (const teacherId of teachersWithSlot) {
-      for (const dow of dayOfWeeks) {
-        const date = nextDateForDayOfWeek(dow)
-        const startAt = new Date(date)
-        startAt.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0)
-        const endAt = new Date(startAt.getTime() + (endMinutes - startMinutes) * 60 * 1000)
-        const dayStart = new Date(date)
-        dayStart.setHours(0, 0, 0, 0)
-        const dayEnd = new Date(date)
-        dayEnd.setHours(23, 59, 59, 999)
-        const lessonsOnDay = await prisma.lesson.findMany({
-          where: {
-            teacherId,
-            status: { in: [...LESSON_STATUSES_SCHEDULED] },
-            startAt: { gte: dayStart, lte: dayEnd },
-          },
-          select: { startAt: true, durationMinutes: true },
+    for (const lesson of lessons) {
+      if (!lesson.teacherId) continue
+      if (
+        lessonConflictsWithWeeklySlot({
+          lessonStartAt: lesson.startAt,
+          durationMinutes: lesson.durationMinutes ?? 60,
+          dayOfWeeks,
+          slotStartMinutes: startMinutes,
+          slotEndMinutes: endMinutes,
         })
-        const hasOverlap = lessonsOnDay.some((lesson) => {
-          const lessonEnd = new Date(
-            lesson.startAt.getTime() + (lesson.durationMinutes ?? 60) * 60 * 1000
-          )
-          return startAt < lessonEnd && endAt > lesson.startAt
-        })
-        if (hasOverlap) {
-          teacherIdsWithConflict.add(teacherId)
-          break
-        }
+      ) {
+        teacherIdsWithConflict.add(lesson.teacherId)
       }
     }
 
-    const freeTeacherIds = teachersWithSlot.filter((id) => !teacherIdsWithConflict.has(id))
+    const freeTeacherIds = new Set(
+      teachersWithSlot.filter((id) => !teacherIdsWithConflict.has(id))
+    )
     const result = teachers
-      .filter((t) => freeTeacherIds.includes(t.id))
+      .filter((t) => freeTeacherIds.has(t.id))
       .map((t) => ({
         id: t.id,
         nome: t.nome,

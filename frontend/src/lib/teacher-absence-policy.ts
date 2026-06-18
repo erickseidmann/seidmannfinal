@@ -3,7 +3,8 @@ import type { TeacherAbsenceReportType } from '@prisma/client'
 /**
  * Regra operacional: professor ausente confirmado → aluno tem direito à reposição;
  * a gestão cancela a aula (CANCELLED_BY_TEACHER) e reagenda no calendário (REPOSICAO).
- * Atraso do professor é tratado caso a caso, sem reposição automática.
+ * CANCELLED_BY_TEACHER nunca vira cancelada sem reposição, mesmo em cima da hora.
+ * Atraso (sem ausência): registrar e acompanhar; reposição só se a aula não puder ser realizada.
  */
 export const TEACHER_ABSENCE_REPLACEMENT_RULE =
   'Professor ausente confirmado: a aula é cancelada pelo professor e a gestão deve agendar uma reposição para o aluno.'

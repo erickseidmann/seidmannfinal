@@ -1,6 +1,6 @@
 /**
  * Regras alinhadas ao formulário admin de aluno (campos obrigatórios).
- * Usado no cubo «Alunos com infos obrigatórias faltantes» e na API correspondente.
+ * Usado no cubo «Alunos com infos obrigatórias faltantes» (somente alunos ativos) e na API correspondente.
  */
 
 import { isValidEmail, isValidWhatsApp } from '@/lib/validators'

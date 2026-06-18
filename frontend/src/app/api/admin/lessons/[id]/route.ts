@@ -422,10 +422,11 @@ export async function PATCH(
     const agora = new Date()
     let cancelamentoTardioApplied = false
 
+    // Cancelamento tardio → sem reposição só quando o aluno cancela (CANCELLED).
+    // CANCELLED_BY_TEACHER sempre permite reposição e o professor não recebe pela aula.
     if (
       statusChanged &&
-      newStatus &&
-      (newStatus === 'CANCELLED' || newStatus === 'CANCELLED_BY_TEACHER') &&
+      newStatus === 'CANCELLED' &&
       cancelamentoExcecao !== true
     ) {
       const cancelamentoTardio = await resolveLessonCancelamentoTardio(
