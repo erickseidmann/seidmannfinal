@@ -103,10 +103,21 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (moraNoExterior !== undefined) update.moraNoExterior = Boolean(moraNoExterior)
   if (enderecoExterior !== undefined) update.enderecoExterior = enderecoExterior ? String(enderecoExterior).trim() : null
   if (bolsista !== undefined) update.bolsista = Boolean(bolsista)
-  if (valorMensalidade !== undefined && valorMensalidade !== '') update.valorMensalidade = Number(String(valorMensalidade).replace(',', '.'))
-  if (Boolean(bolsista)) update.valorMensalidade = 0
-  if (metodoPagamento !== undefined) update.metodoPagamento = metodoPagamento ? String(metodoPagamento).trim() : null
-  if (diaPagamento !== undefined && diaPagamento !== '') update.diaPagamento = Math.min(31, Math.max(1, Number(diaPagamento)))
+  if (bolsista !== undefined && Boolean(bolsista)) {
+    update.valorMensalidade = 0
+    update.metodoPagamento = null
+    update.diaPagamento = null
+  } else {
+    if (valorMensalidade !== undefined && valorMensalidade !== '') {
+      update.valorMensalidade = Number(String(valorMensalidade).replace(',', '.'))
+    }
+    if (metodoPagamento !== undefined) {
+      update.metodoPagamento = metodoPagamento ? String(metodoPagamento).trim() : null
+    }
+    if (diaPagamento !== undefined && diaPagamento !== '') {
+      update.diaPagamento = Math.min(31, Math.max(1, Number(diaPagamento)))
+    }
+  }
   if (melhoresHorarios !== undefined) update.melhoresHorarios = melhoresHorarios ? String(melhoresHorarios).trim() : null
   if (melhoresDiasSemana !== undefined) update.melhoresDiasSemana = melhoresDiasSemana ? String(melhoresDiasSemana).trim() : null
   if (nomeVendedor !== undefined) update.nomeVendedor = nomeVendedor ? String(nomeVendedor).trim() : null

@@ -714,9 +714,10 @@ export async function POST(request: NextRequest) {
             : valorMensalidade != null && valorMensalidade !== ''
             ? Number(String(valorMensalidade).replace(',', '.'))
             : null,
-        metodoPagamento: metodoPagamento?.trim() || null,
-        diaPagamento:
-          diaPagamento != null && diaPagamento !== ''
+        metodoPagamento: isBolsista ? null : (metodoPagamento?.trim() || null),
+        diaPagamento: isBolsista
+          ? null
+          : diaPagamento != null && diaPagamento !== ''
             ? Math.min(31, Math.max(1, Number(diaPagamento)))
             : null,
         melhoresHorarios: melhoresHorarios?.trim() || null,

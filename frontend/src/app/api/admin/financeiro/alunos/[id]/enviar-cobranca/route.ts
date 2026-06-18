@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
 import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
+import { enrollmentReceivesBillingMessages } from '@/lib/bolsista-payment'
 
 /** Próxima data de vencimento dado o dia do mês (1-31). Se o dia já passou neste mês, retorna o mês que vem. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate?: Date): Date {
@@ -71,10 +72,16 @@ Equipe Seidmann Institute`
   return { subject, text }
 }
 
-function bolsistaBlockResponse(enrollment: { bolsista?: boolean | null; nome: string }) {
-  if (!enrollment.bolsista) return null
+function billingBlockResponse(enrollment: {
+  bolsista?: boolean | null
+  status?: string | null
+  nome: string
+}) {
+  const gate = enrollmentReceivesBillingMessages(enrollment)
+  if (gate.ok) return null
+  const label = gate.reason === 'Aluno bolsista' ? 'bolsista' : 'inativo'
   return NextResponse.json(
-    { ok: false, message: `Aluno bolsista (${enrollment.nome}) não deve receber cobrança.` },
+    { ok: false, message: `Aluno ${label} (${enrollment.nome}) não deve receber cobrança.` },
     { status: 400 }
   )
 }
@@ -102,8 +109,8 @@ export async function GET(
         { status: 404 }
       )
     }
-    const bolsistaBlocked = bolsistaBlockResponse(enrollment)
-    if (bolsistaBlocked) return bolsistaBlocked
+    const billingBlocked = billingBlockResponse(enrollment)
+    if (billingBlocked) return billingBlocked
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()
     if (!email) {
@@ -148,8 +155,8 @@ export async function POST(
       )
     }
 
-    const bolsistaBlocked = bolsistaBlockResponse(enrollment)
-    if (bolsistaBlocked) return bolsistaBlocked
+    const billingBlocked = billingBlockResponse(enrollment)
+    if (billingBlocked) return billingBlocked
 
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()

@@ -14,6 +14,7 @@ import { generateMonthlyBilling } from '@/lib/cora/billing'
 import {
   enrollmentEligibleForBoleto,
 } from '@/lib/boleto-eligibility'
+import { enrollmentReceivesBillingMessages } from '@/lib/bolsista-payment'
 
 const bodySchema = z.object({
   year: z.number().int().min(2020).max(2100),
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
     const enrollments = await prisma.enrollment.findMany({
       where: {
         status: 'ACTIVE',
+        bolsista: false,
         OR: [
           { valorMensalidade: { not: null } },
           { paymentInfo: { valorMensal: { not: null } } },
@@ -174,6 +176,7 @@ export async function POST(request: NextRequest) {
         include: { paymentInfo: true, user: { select: { email: true } } },
       })
       if (!enrollment) continue
+      if (!enrollmentReceivesBillingMessages(enrollment).ok) continue
       const finance = getEnrollmentFinanceData(enrollment)
       const email = finance.email?.trim()
       if (!email) continue

@@ -6,6 +6,7 @@
 import { prisma } from '@/lib/prisma'
 import { sendEmail } from '@/lib/email'
 import { getEnrollmentFinanceData } from '@/lib/finance'
+import { enrollmentReceivesBillingMessages } from '@/lib/bolsista-payment'
 import {
   buildPaymentReminderEmail,
   buildPaymentOverdueReminderEmail,
@@ -26,6 +27,7 @@ type EnrollmentWithPayment = {
   id: string
   nome: string
   email: string
+  status?: string | null
   bolsista?: boolean | null
   valorMensalidade: unknown
   diaPagamento: number | null
@@ -118,8 +120,9 @@ export async function sendPaymentReminder(
   year: number,
   month: number
 ): Promise<{ sent: boolean; error?: string }> {
-  if (enrollment.bolsista) {
-    return { sent: false, error: 'Aluno bolsista' }
+  const billingGate = enrollmentReceivesBillingMessages(enrollment)
+  if (!billingGate.ok) {
+    return { sent: false, error: billingGate.reason }
   }
   const finance = getEnrollmentFinanceData(enrollment)
   const email = finance.email?.trim()
@@ -167,8 +170,9 @@ export async function sendPaymentOverdueReminder(
   year: number,
   month: number
 ): Promise<{ sent: boolean; error?: string }> {
-  if (enrollment.bolsista) {
-    return { sent: false, error: 'Aluno bolsista' }
+  const billingGate = enrollmentReceivesBillingMessages(enrollment)
+  if (!billingGate.ok) {
+    return { sent: false, error: billingGate.reason }
   }
   const finance = getEnrollmentFinanceData(enrollment)
   const email = finance.email?.trim()

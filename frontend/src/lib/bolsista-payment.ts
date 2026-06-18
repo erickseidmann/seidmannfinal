@@ -5,6 +5,19 @@
 
 import { prisma } from '@/lib/prisma'
 
+export function enrollmentReceivesBillingMessages(enrollment: {
+  bolsista?: boolean | null
+  status?: string | null
+}): { ok: true } | { ok: false; reason: string } {
+  if (enrollment.bolsista) {
+    return { ok: false, reason: 'Aluno bolsista' }
+  }
+  if (enrollment.status === 'INACTIVE') {
+    return { ok: false, reason: 'Aluno inativo' }
+  }
+  return { ok: true }
+}
+
 export async function ensureBolsistaPaymentMonthPaid(
   enrollmentId: string,
   year: number,

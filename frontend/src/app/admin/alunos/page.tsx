@@ -1074,8 +1074,8 @@ export default function AdminAlunosPage() {
         moraNoExterior: formData.moraNoExterior,
         enderecoExterior: formData.moraNoExterior ? (formData.enderecoExterior.trim() || null) : null,
         valorMensalidade: formData.bolsista ? '0' : (formData.valorMensalidade ? String(formData.valorMensalidade).replace(',', '.') : null),
-        metodoPagamento: formData.metodoPagamento.trim() || null,
-        diaPagamento: formData.diaPagamento ? Number(formData.diaPagamento) : null,
+        metodoPagamento: formData.bolsista ? null : (formData.metodoPagamento.trim() || null),
+        diaPagamento: formData.bolsista ? null : (formData.diaPagamento ? Number(formData.diaPagamento) : null),
         melhoresHorarios: formData.melhoresHorarios.trim() || null,
         melhoresDiasSemana: formData.melhoresDiasSemana.trim() || null,
         nomeVendedor: formData.nomeVendedor.trim() || null,
@@ -3402,6 +3402,8 @@ export default function AdminAlunosPage() {
                           ...formData,
                           bolsista: e.target.checked,
                           valorMensalidade: e.target.checked ? '0' : formData.valorMensalidade,
+                          metodoPagamento: e.target.checked ? '' : formData.metodoPagamento,
+                          diaPagamento: e.target.checked ? '' : formData.diaPagamento,
                         })
                       }
                       className="rounded border-gray-300 text-brand-orange focus:ring-orange-500"
@@ -3409,7 +3411,7 @@ export default function AdminAlunosPage() {
                     Este aluno é bolsista
                   </label>
                   <p className="text-xs text-gray-500">
-                    Quando marcado, o valor da mensalidade fica R$ 0,00 e não emite boleto/NF.
+                    Quando marcado, o valor da mensalidade fica R$ 0,00, não emite boleto/NF e não exige método nem dia de pagamento.
                   </p>
                 </div>
                 <div>
@@ -3434,7 +3436,7 @@ export default function AdminAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Método de pagamento <span className="text-red-500">*</span>
+                    Método de pagamento {!formData.bolsista && <span className="text-red-500">*</span>}
                   </label>
                   <select
                     value={formData.metodoPagamento}
@@ -3442,7 +3444,8 @@ export default function AdminAlunosPage() {
                       setFormData({ ...formData, metodoPagamento: e.target.value })
                     }
                     className="input w-full"
-                    required
+                    required={!formData.bolsista}
+                    disabled={!!formData.bolsista}
                   >
                     <option value="">Selecione</option>
                     <option value="PIX">PIX</option>
@@ -3453,7 +3456,7 @@ export default function AdminAlunosPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Dia de pagamento (1-31) <span className="text-red-500">*</span>
+                    Dia de pagamento (1-31) {!formData.bolsista && <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="number"
@@ -3465,7 +3468,8 @@ export default function AdminAlunosPage() {
                     }
                     className="input w-full"
                     placeholder="Ex: 10"
-                    required
+                    required={!formData.bolsista}
+                    disabled={!!formData.bolsista}
                   />
                 </div>
               </div>

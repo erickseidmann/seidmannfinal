@@ -178,13 +178,13 @@ export function getMissingRequiredEnrollmentFields(row: EnrollmentForRequiredChe
   if (!bolsista) {
     const valor = parseValorMensal(row)
     if (valor == null || valor <= 0) missing.push('Valor mensalidade')
+
+    const metodo = metodoEfetivo(row)
+    if (!metodo) missing.push('Método de pagamento')
+
+    const dia = diaPagamentoEfetivo(row)
+    if (dia == null || dia < 1 || dia > 31) missing.push('Dia de pagamento')
   }
-
-  const metodo = metodoEfetivo(row)
-  if (!metodo) missing.push('Método de pagamento')
-
-  const dia = diaPagamentoEfetivo(row)
-  if (dia == null || dia < 1 || dia > 31) missing.push('Dia de pagamento')
 
   if (!(row.melhoresHorarios ?? '').trim()) missing.push('Melhores horários')
   if (!(row.melhoresDiasSemana ?? '').trim()) missing.push('Melhores dias da semana')
@@ -202,16 +202,17 @@ export function getMissingRequiredEnrollmentFields(row: EnrollmentForRequiredChe
   return missing
 }
 
-/** Campos de pagamento em falta (valor, método e dia — bolsista isento de valor). */
+/** Campos de pagamento em falta (valor, método e dia — bolsista isento de todos). */
 export function getMissingPaymentEnrollmentFields(row: EnrollmentForRequiredCheck): string[] {
   const missing: string[] = []
-  const bolsista = Boolean(row.bolsista)
-  if (!bolsista) {
-    const valor = parseValorMensal(row)
-    if (valor == null || valor <= 0) missing.push('Valor mensalidade')
-  }
+  if (Boolean(row.bolsista)) return missing
+
+  const valor = parseValorMensal(row)
+  if (valor == null || valor <= 0) missing.push('Valor mensalidade')
+
   const metodo = metodoEfetivo(row)
   if (!metodo) missing.push('Método de pagamento')
+
   const dia = diaPagamentoEfetivo(row)
   if (dia == null || dia < 1 || dia > 31) missing.push('Dia de pagamento')
   return missing
