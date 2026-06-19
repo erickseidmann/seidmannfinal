@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ProfessorJoinResult } from '@/lib/professor-classroom-join'
 
 type Role = 'professor' | 'student'
 
@@ -25,6 +26,16 @@ export function useLessonAttendance(
     }
   }, [])
 
+  const sendHeartbeat = useCallback(() => {
+    const id = attendanceIdRef.current
+    if (!id) return
+    fetch(`${base}/attendance/${id}/heartbeat`, {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+    }).catch(() => {})
+  }, [base])
+
   const sendLeave = useCallback(() => {
     const id = attendanceIdRef.current
     if (!id || leaveSentRef.current) return
@@ -43,34 +54,59 @@ export function useLessonAttendance(
   const startHeartbeat = useCallback(() => {
     stopHeartbeat()
     intervalRef.current = setInterval(() => {
-      const id = attendanceIdRef.current
-      if (!id) return
-      fetch(`${base}/attendance/${id}/heartbeat`, {
-        method: 'POST',
-        credentials: 'include',
-        keepalive: true,
-      }).catch(() => {})
+      sendHeartbeat()
     }, HEARTBEAT_MS)
-  }, [base, stopHeartbeat])
+  }, [sendHeartbeat, stopHeartbeat])
 
-  const registerJoin = useCallback(async () => {
-    if (!lessonId || attendanceIdRef.current) return
+  const clearTracking = useCallback(() => {
+    stopHeartbeat()
+    attendanceIdRef.current = null
+    leaveSentRef.current = false
+    setIsTracking(false)
+  }, [stopHeartbeat])
+
+  const registerJoin = useCallback(async (): Promise<ProfessorJoinResult> => {
+    if (!lessonId) {
+      return { ok: false, message: 'Aula inválida.' }
+    }
+    if (attendanceIdRef.current) {
+      return {
+        ok: true,
+        attendanceId: attendanceIdRef.current,
+        reused: true,
+      }
+    }
     try {
       const res = await fetch(`${base}/${lessonId}/join`, {
         method: 'POST',
         credentials: 'include',
       })
       const data = await res.json()
-      if (data?.ok && data.attendanceId) {
+      if (!res.ok || !data?.ok) {
+        return {
+          ok: false,
+          message: data?.message || 'Não foi possível entrar na aula.',
+          code: data?.code,
+          blockingSession: data?.blockingSession,
+        }
+      }
+      if (data.attendanceId) {
         attendanceIdRef.current = data.attendanceId
         leaveSentRef.current = false
         setIsTracking(true)
         startHeartbeat()
+        sendHeartbeat()
+        return {
+          ok: true,
+          attendanceId: data.attendanceId as string,
+          reused: Boolean(data.reused),
+        }
       }
+      return { ok: false, message: 'Resposta inválida ao entrar na aula.' }
     } catch {
-      // falha de tracking não deve impedir o usuário de entrar na aula
+      return { ok: false, message: 'Erro de conexão ao entrar na aula.' }
     }
-  }, [base, lessonId, startHeartbeat])
+  }, [base, lessonId, sendHeartbeat, startHeartbeat])
 
   const registerLeave = useCallback(
     async (options?: { finalizeCall?: boolean }): Promise<{ nextLesson?: { id: string; startAt: string } | null }> => {
@@ -101,17 +137,33 @@ export function useLessonAttendance(
     [base, stopHeartbeat]
   )
 
-  /** Retoma heartbeat quando a API já indica sessão ACTIVE (ex.: lista de salas). */
   const syncActiveAttendance = useCallback(
-    (attendanceId: string) => {
-      if (!attendanceId || attendanceIdRef.current === attendanceId) return
+    (attendanceId: string | null | undefined) => {
+      if (!attendanceId) {
+        if (attendanceIdRef.current) {
+          clearTracking()
+        }
+        return
+      }
+      if (attendanceIdRef.current === attendanceId) return
       attendanceIdRef.current = attendanceId
       leaveSentRef.current = false
       setIsTracking(true)
       startHeartbeat()
+      sendHeartbeat()
     },
-    [startHeartbeat]
+    [clearTracking, sendHeartbeat, startHeartbeat]
   )
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && attendanceIdRef.current) {
+        sendHeartbeat()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [sendHeartbeat])
 
   useEffect(() => {
     if (!autoLeaveOnUnload) {
@@ -130,5 +182,5 @@ export function useLessonAttendance(
     }
   }, [autoLeaveOnUnload, sendLeave, stopHeartbeat])
 
-  return { registerJoin, registerLeave, syncActiveAttendance, isTracking }
+  return { registerJoin, registerLeave, syncActiveAttendance, clearTracking, isTracking }
 }

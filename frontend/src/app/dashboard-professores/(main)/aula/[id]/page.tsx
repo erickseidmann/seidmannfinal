@@ -24,6 +24,12 @@ import Button from '@/components/ui/Button'
 import { useTranslation } from '@/contexts/LanguageContext'
 import { useLessonAttendance } from '@/hooks/useLessonAttendance'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import {
+  postProfessorAttendanceLeave,
+  professorMeetUrl,
+  openProfessorMeet,
+  type BlockingActiveSession,
+} from '@/lib/professor-classroom-join'
 import { formatLessonDateLongInTZ, formatTimeInTZ } from '@/lib/datetime'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
@@ -137,7 +143,7 @@ export default function AulaProfessorPage() {
   const params = useParams()
   const lessonId = typeof params?.id === 'string' ? params.id : ''
   const { confirm, ConfirmDialog } = useConfirmDialog()
-  const { registerJoin, registerLeave, syncActiveAttendance, isTracking } = useLessonAttendance(
+  const { registerJoin, registerLeave, syncActiveAttendance, clearTracking, isTracking } = useLessonAttendance(
     lessonId,
     'professor',
     { autoLeaveOnUnload: false }
@@ -148,6 +154,9 @@ export default function AulaProfessorPage() {
   const [nextLesson, setNextLesson] = useState<NextLessonRef | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [joining, setJoining] = useState(false)
+  const [blockingSession, setBlockingSession] = useState<BlockingActiveSession | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const fetchLesson = useCallback(async () => {
@@ -171,9 +180,7 @@ export default function AulaProfessorPage() {
       setClassroom(json.data.classroom)
       setNextLesson(json.data.nextLesson ?? null)
       const activeId = json.data.activeAttendance?.id as string | undefined
-      if (activeId) {
-        syncActiveAttendance(activeId)
-      }
+      syncActiveAttendance(activeId ?? null)
     } catch (e) {
       setError('Erro de conexão. Tente novamente.')
       setLesson(null)
@@ -183,6 +190,72 @@ export default function AulaProfessorPage() {
       setLoading(false)
     }
   }, [lessonId, router, syncActiveAttendance])
+
+  const openMeetForLesson = useCallback(() => {
+    if (!lesson || !classroom) return
+    const url = professorMeetUrl(lesson.teacher.linkSala, classroom.roomName)
+    if (url) openProfessorMeet(url)
+  }, [lesson, classroom])
+
+  const handleEnterLesson = async () => {
+    if (!lesson || !classroom) return
+    setJoinError(null)
+    setBlockingSession(null)
+    setJoining(true)
+    try {
+      const result = await registerJoin()
+      if (!result.ok) {
+        setJoinError(result.message)
+        if (result.code === 'OTHER_ACTIVE_LESSON' && result.blockingSession) {
+          setBlockingSession(result.blockingSession)
+        }
+        return
+      }
+      openMeetForLesson()
+    } finally {
+      setJoining(false)
+    }
+  }
+
+  const handleEndPreviousAndEnter = async () => {
+    if (!blockingSession) return
+    const confirmed = await confirm({
+      title: 'Encerrar aula anterior e entrar nesta?',
+      message: `A chamada com ${blockingSession.studentLabel} será encerrada e não poderá ser reaberta. Deseja continuar?`,
+      confirmLabel: 'Encerrar anterior e entrar',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    setJoining(true)
+    setJoinError(null)
+    try {
+      const leaveResult = await postProfessorAttendanceLeave(blockingSession.attendanceId, {
+        finalizeCall: true,
+      })
+      if (!leaveResult.ok) {
+        setJoinError(leaveResult.message || 'Não foi possível encerrar a aula anterior.')
+        return
+      }
+      clearTracking()
+      setBlockingSession(null)
+      window.dispatchEvent(new Event('professor-classroom-changed'))
+
+      const joinResult = await registerJoin()
+      if (!joinResult.ok) {
+        setJoinError(joinResult.message)
+        if (joinResult.code === 'OTHER_ACTIVE_LESSON' && joinResult.blockingSession) {
+          setBlockingSession(joinResult.blockingSession)
+        }
+        return
+      }
+      openMeetForLesson()
+      await fetchLesson()
+    } finally {
+      setJoining(false)
+    }
+  }
 
   const handleEndLesson = async () => {
     const confirmed = await confirm({
@@ -363,18 +436,37 @@ export default function AulaProfessorPage() {
                         ? `Aula em grupo com ${groupMembers.length} aluno(s).`
                         : `Aula particular com ${lesson.enrollment.nome}.`}
                     </p>
-                    <a
-                      href={lesson.teacher.linkSala || `https://meet.jit.si/${classroom.roomName}#config.prejoinPageEnabled=false`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() => {
-                        void registerJoin()
-                      }}
-                      className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4"
+                    <button
+                      type="button"
+                      onClick={() => void handleEnterLesson()}
+                      disabled={joining}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-brand-orange text-white font-semibold rounded-lg hover:bg-brand-orange-dark transition-colors shadow-sm mt-4 disabled:opacity-60"
                     >
-                      <Video className="w-5 h-5" />
-                      Entrar na Aula
-                    </a>
+                      {joining ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Video className="w-5 h-5" />
+                      )}
+                      {joining ? 'Entrando...' : 'Entrar na Aula'}
+                    </button>
+                    {joinError && (
+                      <p className="text-sm text-red-700 mt-3 max-w-md">{joinError}</p>
+                    )}
+                    {blockingSession && (
+                      <div className="mt-4 w-full max-w-md rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-left">
+                        <p className="text-sm text-amber-950">
+                          Você ainda está em chamada com <strong>{blockingSession.studentLabel}</strong>.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void handleEndPreviousAndEnter()}
+                          disabled={joining}
+                          className="mt-3 inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                        >
+                          Encerrar aula anterior e entrar aqui
+                        </button>
+                      </div>
+                    )}
                     <p className="text-xs text-gray-400 mt-3">
                       {lesson.teacher.linkSala ? 'A aula abrirá em uma nova aba do navegador' : 'A aula abrirá via Jitsi Meet em uma nova aba'}
                     </p>

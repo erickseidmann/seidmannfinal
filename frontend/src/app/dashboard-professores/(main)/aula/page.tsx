@@ -18,9 +18,6 @@ import {
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import { useTranslation } from '@/contexts/LanguageContext'
-import { useLessonAttendance } from '@/hooks/useLessonAttendance'
-import { useConfirmDialog } from '@/hooks/useConfirmDialog'
-import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   addDaysToBrazilDateKey,
   formatBrazilDateKeyLong,
@@ -28,6 +25,17 @@ import {
   formatTimeInTZ,
   ymdInTZ,
 } from '@/lib/datetime'
+import { useLessonAttendance } from '@/hooks/useLessonAttendance'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import {
+  postProfessorLessonJoin,
+  postProfessorAttendanceLeave,
+  professorMeetUrl,
+  openProfessorMeet,
+  type BlockingActiveSession,
+} from '@/lib/professor-classroom-join'
+
+import SeidmannLoading from '@/components/ui/SeidmannLoading'
 
 interface ClassroomLesson {
   id: string
@@ -83,7 +91,7 @@ export default function ProfessorClassroomHubPage() {
   const dayLabel = formatBrazilDateKeyLong(selectedDateKey)
 
   const trackingLessonId = activeSession?.lessonId ?? pendingActiveLessonId ?? ''
-  const { registerLeave, syncActiveAttendance, isTracking } = useLessonAttendance(
+  const { registerLeave, syncActiveAttendance, clearTracking, isTracking } = useLessonAttendance(
     trackingLessonId,
     'professor',
     { autoLeaveOnUnload: false }
@@ -134,12 +142,38 @@ export default function ProfessorClassroomHubPage() {
     return () => clearTimeout(t)
   }, [toast])
 
-  const meetUrlFor = (lesson: ClassroomLesson) => {
-    if (teacherLinkSala?.trim()) return teacherLinkSala.trim()
-    const room = lesson.classroom.roomName
-    if (!room) return null
-    return `https://meet.jit.si/${room}#config.prejoinPageEnabled=false`
-  }
+  const meetUrlFor = (lesson: ClassroomLesson) =>
+    professorMeetUrl(teacherLinkSala, lesson.classroom.roomName)
+
+  const completeJoin = useCallback(
+    async (lesson: ClassroomLesson) => {
+      const url = meetUrlFor(lesson)
+      if (!url) {
+        setToast('Sala indisponível no momento.')
+        return false
+      }
+
+      const joinResult = await postProfessorLessonJoin(lesson.id)
+      if (!joinResult.ok) {
+        setToast(joinResult.message)
+        return false
+      }
+
+      setPendingActiveLessonId(lesson.id)
+      setActiveSession({
+        attendanceId: joinResult.attendanceId,
+        lessonId: lesson.id,
+        startAt: lesson.startAt,
+        studentLabel: lesson.studentLabel,
+      })
+      syncActiveAttendance(joinResult.attendanceId)
+      openProfessorMeet(url)
+      await fetchData()
+      window.dispatchEvent(new Event('professor-classroom-changed'))
+      return true
+    },
+    [fetchData, syncActiveAttendance, teacherLinkSala]
+  )
 
   const handleJoin = async (lesson: ClassroomLesson) => {
     if (activeSession && activeSession.lessonId !== lesson.id) {
@@ -162,38 +196,44 @@ export default function ProfessorClassroomHubPage() {
       return
     }
 
-    const url = meetUrlFor(lesson)
-    if (!url) {
-      setToast('Sala indisponível no momento.')
-      return
+    setActionLessonId(lesson.id)
+    try {
+      await completeJoin(lesson)
+    } catch {
+      setToast('Erro ao entrar na aula.')
+    } finally {
+      setActionLessonId(null)
     }
+  }
+
+  const handleEndPreviousAndJoin = async (
+    lesson: ClassroomLesson,
+    blocking: BlockingActiveSession
+  ) => {
+    const confirmed = await confirm({
+      title: 'Encerrar aula anterior e entrar nesta?',
+      message: `A chamada com ${blocking.studentLabel} será encerrada e não poderá ser reaberta. Em seguida você entrará na aula de ${lesson.studentLabel}.`,
+      confirmLabel: 'Encerrar anterior e entrar',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+    })
+    if (!confirmed) return
 
     setActionLessonId(lesson.id)
     try {
-      const res = await fetch(`/api/professor/lessons/${lesson.id}/join`, {
-        method: 'POST',
-        credentials: 'include',
+      const leaveResult = await postProfessorAttendanceLeave(blocking.attendanceId, {
+        finalizeCall: true,
       })
-      const json = await res.json()
-      if (!res.ok || !json.ok) {
-        setToast(json.message || 'Não foi possível entrar na aula.')
+      if (!leaveResult.ok) {
+        setToast(leaveResult.message || 'Não foi possível encerrar a aula anterior.')
         return
       }
-      if (json.attendanceId) {
-        setPendingActiveLessonId(lesson.id)
-        setActiveSession({
-          attendanceId: json.attendanceId,
-          lessonId: lesson.id,
-          startAt: lesson.startAt,
-          studentLabel: lesson.studentLabel,
-        })
-        syncActiveAttendance(json.attendanceId)
-      }
-      window.open(url, '_blank', 'noopener,noreferrer')
-      await fetchData()
-      window.dispatchEvent(new Event('professor-classroom-changed'))
+      setPendingActiveLessonId(null)
+      setActiveSession(null)
+      clearTracking()
+      await completeJoin(lesson)
     } catch {
-      setToast('Erro ao entrar na aula.')
+      setToast('Erro ao trocar de aula.')
     } finally {
       setActionLessonId(null)
     }
@@ -397,6 +437,23 @@ export default function ProfessorClassroomHubPage() {
                       >
                         <PhoneOff className="w-4 h-4" />
                         Encerrar aula
+                      </button>
+                    ) : otherActive && phase === 'live' && activeSession ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleEndPreviousAndJoin(lesson, {
+                            attendanceId: activeSession.attendanceId,
+                            lessonId: activeSession.lessonId,
+                            studentLabel: activeSession.studentLabel,
+                            startAt: activeSession.startAt,
+                          })
+                        }
+                        disabled={actionLessonId === lesson.id}
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+                      >
+                        <PhoneOff className="w-4 h-4" />
+                        Encerrar anterior e entrar
                       </button>
                     ) : canEnter ? (
                       <button

@@ -5,6 +5,7 @@ import {
   LESSON_ATTENDANCE_TRACKING_SINCE,
   TEACHER_ABSENCE_GRACE_MINUTES,
   attendanceSessionDurationSeconds,
+  teacherAttendanceDurationSeconds,
   isTeacherAbsentFromLesson,
 } from '@/lib/lesson-attendance-summary'
 import { createTeacherAbsenceReportWithTodo } from '@/lib/teacher-absence-report'
@@ -77,7 +78,7 @@ export async function syncTeacherAttendanceAbsenceReports(now = new Date()): Pro
       .reduce(
         (sum, r) =>
           sum +
-          attendanceSessionDurationSeconds(
+          teacherAttendanceDurationSeconds(
             r.joinedAt,
             r.leftAt,
             r.lastSeen,

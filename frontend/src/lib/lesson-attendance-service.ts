@@ -12,7 +12,10 @@ export type StudentIdentity = { role: 'STUDENT'; enrollmentIds: string[] }
 export type Identity = TeacherIdentity | StudentIdentity
 
 /** Janela máxima sem heartbeat antes de considerar que saiu (ms) */
-export const STALE_MS = 90 * 1000 // 90s (heartbeat a cada 30s, tolera 3 perdidos)
+export const STALE_MS = 5 * 60 * 1000 // 5 min (aba em background pode atrasar heartbeat)
+
+/** Crédito mínimo de presença quando houve join registrado mas sessão encerrou sem heartbeat. */
+export const MIN_JOIN_PRESENCE_SECONDS = 60
 
 /** Minutos após o fim da aula em que a sala ainda aceita entrada/saída rastreada */
 export const LESSON_ATTENDANCE_TOLERANCE_MINUTES = 15
@@ -25,7 +28,20 @@ export function lessonAttendanceWindowEndAt(startAt: Date, durationMinutes: numb
   return new Date(lessonEnd.getTime() + LESSON_ATTENDANCE_TOLERANCE_MINUTES * 60 * 1000)
 }
 
-type ServiceFail = { ok: false; message: string; status: 400 | 403 | 404 }
+export type BlockingActiveSession = {
+  attendanceId: string
+  lessonId: string
+  studentLabel: string
+  startAt: string
+}
+
+type ServiceFail = {
+  ok: false
+  message: string
+  status: 400 | 403 | 404
+  code?: 'OTHER_ACTIVE_LESSON'
+  blockingSession?: BlockingActiveSession
+}
 type JoinOk = { ok: true; attendanceId: string; reused: boolean }
 type SimpleOk = { ok: true }
 type LeaveOk = { ok: true; nextLesson: { id: string; startAt: string } | null }
@@ -130,13 +146,36 @@ export async function registerJoin(
         status: LessonAttendanceStatus.ACTIVE,
         lessonId: { not: lessonId },
       },
-      select: { lessonId: true },
+      select: {
+        id: true,
+        lessonId: true,
+        lesson: {
+          select: {
+            startAt: true,
+            enrollment: {
+              select: { nome: true, tipoAula: true, nomeGrupo: true },
+            },
+          },
+        },
+      },
     })
     if (otherActive) {
+      const enr = otherActive.lesson.enrollment
+      const studentLabel =
+        enr.tipoAula === 'GRUPO' && enr.nomeGrupo?.trim()
+          ? enr.nomeGrupo.trim()
+          : enr.nome || '—'
       return {
         ok: false,
         message: 'Encerre a chamada da outra aula antes de entrar nesta.',
         status: 400,
+        code: 'OTHER_ACTIVE_LESSON',
+        blockingSession: {
+          attendanceId: otherActive.id,
+          lessonId: otherActive.lessonId,
+          studentLabel,
+          startAt: otherActive.lesson.startAt.toISOString(),
+        },
       }
     }
   } else if (lesson.teacherId) {

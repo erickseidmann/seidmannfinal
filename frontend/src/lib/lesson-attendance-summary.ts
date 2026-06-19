@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { lessonAttendanceWindowEndAt } from '@/lib/lesson-attendance-service'
+import { lessonAttendanceWindowEndAt, MIN_JOIN_PRESENCE_SECONDS } from '@/lib/lesson-attendance-service'
 
 /** Presença em chamada passou a ser rastreada a partir desta data (migration lesson_attendance). */
 // Rastreamento de presença/ausência vale a partir de 11/06/2026 (meia-noite BRT = 03:00 UTC).
@@ -25,6 +25,30 @@ export function attendanceSessionDurationSeconds(
     endMs = Math.min(endMs, windowEndAt.getTime())
   }
   return Math.max(0, Math.floor((endMs - joinedAt.getTime()) / 1000))
+}
+
+/** Duração efetiva do professor na chamada (crédito mínimo se houve join registrado). */
+export function teacherAttendanceDurationSeconds(
+  joinedAt: Date,
+  leftAt: Date | null,
+  lastSeen: Date,
+  status: string,
+  now = new Date(),
+  windowEndAt?: Date
+): number {
+  const raw = attendanceSessionDurationSeconds(
+    joinedAt,
+    leftAt,
+    lastSeen,
+    status,
+    now,
+    windowEndAt
+  )
+  if (raw > 0) return raw
+  if (status === 'ENDED' || leftAt != null) {
+    return MIN_JOIN_PRESENCE_SECONDS
+  }
+  return 0
 }
 
 export type AttendanceSessionRow = {
@@ -149,7 +173,21 @@ export function summarizeLessonAttendance(
   const teacherSessions = sessions.filter((s) => s.role === 'TEACHER')
   const studentSessions = sessions.filter((s) => s.role === 'STUDENT')
 
-  const teacherTimeSeconds = teacherSessions.reduce((sum, s) => sum + s.durationSeconds, 0)
+  const teacherTimeSeconds = teacherSessions.reduce((sum, s) => {
+    const row = lessonRows.find((r) => r.id === s.id)
+    if (!row) return sum
+    return (
+      sum +
+      teacherAttendanceDurationSeconds(
+        row.joinedAt,
+        row.leftAt,
+        row.lastSeen,
+        row.status,
+        now,
+        windowEnd
+      )
+    )
+  }, 0)
   const studentTimeSeconds = studentSessions.reduce((sum, s) => sum + s.durationSeconds, 0)
 
   const teacherJoinedAt =
@@ -302,7 +340,7 @@ export function teacherAbsentFlagsByLessonId(
       .reduce(
         (sum, r) =>
           sum +
-          attendanceSessionDurationSeconds(
+          teacherAttendanceDurationSeconds(
             r.joinedAt,
             r.leftAt,
             r.lastSeen,
@@ -357,7 +395,7 @@ export async function assertTeacherAttendedLessonForRecord(
     .reduce(
       (sum, r) =>
         sum +
-        attendanceSessionDurationSeconds(
+        teacherAttendanceDurationSeconds(
           r.joinedAt,
           r.leftAt,
           r.lastSeen,

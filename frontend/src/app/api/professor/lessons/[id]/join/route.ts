@@ -23,7 +23,12 @@ export async function POST(
     const result = await registerJoin(params.id, resolved.identity)
     if (!result.ok) {
       return NextResponse.json(
-        { ok: false, message: result.message },
+        {
+          ok: false,
+          message: result.message,
+          code: result.code,
+          blockingSession: result.blockingSession,
+        },
         { status: result.status }
       )
     }
