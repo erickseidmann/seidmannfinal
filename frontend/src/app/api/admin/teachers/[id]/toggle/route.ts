@@ -56,6 +56,23 @@ export async function POST(
     }
 
     const newStatus = teacher.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+
+    if (teacher.status === 'PENDING' && newStatus === 'ACTIVE') {
+      const slotsCount = await prisma.teacherAvailabilitySlot.count({
+        where: { teacherId: id },
+      })
+      if (slotsCount === 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              'Defina pelo menos um horário disponível para o professor antes de ativá-lo.',
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     const result = await applyTeacherStatusChange(id, newStatus, {
       inactiveFrom: newStatus === 'INACTIVE' ? inactiveFrom : undefined,
       userId: teacher.userId,

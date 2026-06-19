@@ -18,7 +18,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus, UserX, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus, UserX, ChevronDown, ChevronRight, UserPlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import StatCard from '@/components/admin/StatCard'
 import { validateMeetingLink } from '@/lib/meeting-link'
@@ -175,6 +175,7 @@ export default function AdminProfessoresPage() {
   const [alterarSenhaConfirmar, setAlterarSenhaConfirmar] = useState('')
   const [alterarSenhaLoading, setAlterarSenhaLoading] = useState(false)
   const [availabilityModalTeacher, setAvailabilityModalTeacher] = useState<Teacher | null>(null)
+  const [availabilityActivationMode, setAvailabilityActivationMode] = useState(false)
   const [availabilitySlots, setAvailabilitySlots] = useState<{ id: string; dayOfWeek: number; startMinutes: number; endMinutes: number }[]>([])
   const [availabilityLoading, setAvailabilityLoading] = useState(false)
   const [availabilitySaving, setAvailabilitySaving] = useState(false)
@@ -218,6 +219,7 @@ export default function AdminProfessoresPage() {
     nota45: number
     inativos: number
     teacherRequests: number
+    novosProfessores: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [listModal, setListModal] = useState<{ type: 'nota1' | 'nota2' | 'nota45'; title: string } | null>(null)
@@ -238,6 +240,10 @@ export default function AdminProfessoresPage() {
   const [teacherRequests, setTeacherRequests] = useState<{ id: string; horarios: string; idiomas: string; criadoEm: string }[]>([])
   const [teacherRequestsModalOpen, setTeacherRequestsModalOpen] = useState(false)
   const [teacherRequestsLoading, setTeacherRequestsLoading] = useState(false)
+  const [novosProfessoresModalOpen, setNovosProfessoresModalOpen] = useState(false)
+  const [pendingTeachers, setPendingTeachers] = useState<Teacher[]>([])
+  const [pendingTeachersLoading, setPendingTeachersLoading] = useState(false)
+  const [activatingTeacherId, setActivatingTeacherId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchTeachers({ useCurrentFilters: true })
@@ -384,6 +390,52 @@ export default function AdminProfessoresPage() {
     } finally {
       setTeacherRequestsLoading(false)
     }
+  }
+
+  const fetchPendingTeachers = async () => {
+    setPendingTeachersLoading(true)
+    try {
+      const res = await fetch('/api/admin/teachers?status=PENDING&limit=500', { credentials: 'include' })
+      const json = await res.json()
+      if (res.ok && json.ok && json.data?.teachers) {
+        setPendingTeachers(json.data.teachers)
+      } else {
+        setPendingTeachers([])
+      }
+    } catch {
+      setPendingTeachers([])
+    } finally {
+      setPendingTeachersLoading(false)
+    }
+  }
+
+  const closeAvailabilityModal = () => {
+    setAvailabilityModalTeacher(null)
+    setAvailabilityConflicts(null)
+    setAvailabilityActivationMode(false)
+    setActivatingTeacherId(null)
+  }
+
+  const openActivatePendingTeacher = (teacher: Teacher) => {
+    setNovosProfessoresModalOpen(false)
+    setAvailabilityActivationMode(true)
+    setActivatingTeacherId(teacher.id)
+    setAvailabilityModalTeacher(teacher)
+  }
+
+  const tryCloseAvailabilityModal = () => {
+    if (availabilityActivationMode) {
+      setConfirmModal({
+        title: 'Cancelar ativação?',
+        message:
+          'Para ativar o professor é obrigatório definir os horários disponíveis. Deseja cancelar a ativação?',
+        variant: 'danger',
+        confirmLabel: 'Sim, cancelar',
+        onConfirm: () => closeAvailabilityModal(),
+      })
+      return
+    }
+    closeAvailabilityModal()
   }
 
   const handleCreate = () => {
@@ -863,11 +915,20 @@ export default function AdminProfessoresPage() {
 
   const handleSaveAvailabilityGrid = async () => {
     if (!availabilityModalTeacher) return
+    const slots = buildSlotsFromGrid()
+    if (slots.length === 0) {
+      setToast({
+        message: availabilityActivationMode
+          ? 'Marque pelo menos um horário disponível para ativar o professor.'
+          : 'Marque pelo menos um horário disponível antes de salvar.',
+        type: 'error',
+      })
+      return
+    }
     setAvailabilitySaving(true)
     setToast(null)
     setAvailabilityConflicts(null)
     try {
-      const slots = buildSlotsFromGrid()
       const res = await fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/availability`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -883,9 +944,33 @@ export default function AdminProfessoresPage() {
         return
       }
       if (json.data?.slots) setAvailabilitySlots(json.data.slots)
+
+      if (availabilityActivationMode) {
+        const toggleRes = await fetch(`/api/admin/teachers/${availabilityModalTeacher.id}/toggle`, {
+          method: 'POST',
+          credentials: 'include',
+        })
+        const toggleJson = await toggleRes.json()
+        if (!toggleRes.ok || !toggleJson.ok) {
+          setToast({
+            message: toggleJson.message || 'Horários salvos, mas não foi possível ativar o professor.',
+            type: 'error',
+          })
+          return
+        }
+        setToast({
+          message: `Professor ${availabilityModalTeacher.nome} ativado com sucesso.`,
+          type: 'success',
+        })
+        closeAvailabilityModal()
+        fetchTeachers({ useCurrentFilters: true })
+        fetchStats()
+        if (novosProfessoresModalOpen) void fetchPendingTeachers()
+        return
+      }
+
       setToast({ message: 'Horários salvos.', type: 'success' })
-      setAvailabilityModalTeacher(null)
-      setAvailabilityConflicts(null)
+      closeAvailabilityModal()
     } catch {
       setToast({ message: 'Erro ao salvar horários', type: 'error' })
     } finally {
@@ -1240,7 +1325,7 @@ export default function AdminProfessoresPage() {
         </div>
 
         {/* Cubos de métricas (estilo financeiro) */}
-        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
           <div
             role="button"
             tabIndex={0}
@@ -1286,6 +1371,30 @@ export default function AdminProfessoresPage() {
               icon={<AlertCircle className="w-5 h-5" />}
               color="orange"
               subtitle="2 estrelas"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setNovosProfessoresModalOpen(true)
+              void fetchPendingTeachers()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setNovosProfessoresModalOpen(true)
+                void fetchPendingTeachers()
+              }
+            }}
+            className="cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0"
+          >
+            <StatCard
+              variant="finance"
+              title="Novos professores"
+              value={statsLoading ? '...' : (stats?.novosProfessores ?? 0)}
+              icon={<UserPlus className="w-5 h-5" />}
+              color="purple"
+              subtitle="Cadastro público"
             />
           </div>
           <div
@@ -1668,6 +1777,78 @@ export default function AdminProfessoresPage() {
             variant={confirmModal.variant ?? 'default'}
           />
         )}
+
+        {/* Modal Novos professores (cadastro público — status PENDING) */}
+        <Modal
+          isOpen={novosProfessoresModalOpen}
+          onClose={() => setNovosProfessoresModalOpen(false)}
+          title="Novos professores"
+          size="lg"
+          footer={
+            <Button variant="outline" onClick={() => setNovosProfessoresModalOpen(false)}>
+              Fechar
+            </Button>
+          }
+        >
+          <p className="text-sm text-gray-600 mb-4">
+            Professores que se cadastraram pela página pública e aguardam ativação. Para ativar, é
+            obrigatório revisar e confirmar os horários disponíveis.
+          </p>
+          {pendingTeachersLoading ? (
+            <SeidmannLoading variant="inline" />
+          ) : pendingTeachers.length === 0 ? (
+            <p className="text-gray-500">Nenhum professor pendente no momento.</p>
+          ) : (
+            <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
+              {pendingTeachers.map((t) => {
+                const idiomasEnsina = (t.idiomasEnsina ?? [])
+                  .map((id) => IDIOMAS_OPCOES.find((o) => o.value === id)?.label ?? id)
+                  .join(', ')
+                return (
+                  <li
+                    key={t.id}
+                    className="flex flex-col sm:flex-row sm:items-center gap-3 py-3 border-b border-gray-100 last:border-0"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-gray-900">{t.nome}</p>
+                      <p className="text-sm text-gray-600">{t.email}</p>
+                      {t.whatsapp && (
+                        <p className="text-sm text-gray-500">WhatsApp: {t.whatsapp}</p>
+                      )}
+                      {idiomasEnsina && (
+                        <p className="text-xs text-gray-500 mt-1">Ensina: {idiomasEnsina}</p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-1">
+                        Cadastro:{' '}
+                        {new Date(t.criadoEm).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="shrink-0 inline-flex items-center gap-2"
+                      disabled={activatingTeacherId === t.id}
+                      onClick={() => openActivatePendingTeacher(t)}
+                    >
+                      {activatingTeacherId === t.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Power className="w-4 h-4" />
+                      )}
+                      Ativar professor
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Modal>
 
         {/* Modal lista por cubo (nota 1, 2, 4-5) */}
         <Modal
@@ -2359,33 +2540,33 @@ export default function AdminProfessoresPage() {
         {/* Modal Horários disponíveis – tabela de dias e horários para ticar */}
         <Modal
           isOpen={!!availabilityModalTeacher}
-          onClose={() => {
-            setAvailabilityModalTeacher(null)
-            setAvailabilityConflicts(null)
-          }}
-          title={`Horários disponíveis – ${availabilityModalTeacher?.nome ?? ''}`}
+          onClose={tryCloseAvailabilityModal}
+          title={
+            availabilityActivationMode
+              ? `Ativar professor – definir horários – ${availabilityModalTeacher?.nome ?? ''}`
+              : `Horários disponíveis – ${availabilityModalTeacher?.nome ?? ''}`
+          }
           size="lg"
           footer={
             <>
+              {!availabilityActivationMode && (
+                <Button
+                  variant="outline"
+                  onClick={() => setCopyAvailabilityModalOpen(true)}
+                  disabled={availabilityLoading || availabilitySaving}
+                  className="flex items-center gap-2 text-xs sm:text-sm w-full sm:w-auto justify-center"
+                >
+                  <Copy className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Copiar de outro professor</span>
+                  <span className="sm:hidden">Copiar</span>
+                </Button>
+              )}
               <Button
                 variant="outline"
-                onClick={() => setCopyAvailabilityModalOpen(true)}
-                disabled={availabilityLoading || availabilitySaving}
-                className="flex items-center gap-2 text-xs sm:text-sm w-full sm:w-auto justify-center"
-              >
-                <Copy className="w-3 h-3 sm:w-4 sm:h-4" />
-                <span className="hidden sm:inline">Copiar de outro professor</span>
-                <span className="sm:hidden">Copiar</span>
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setAvailabilityModalTeacher(null)
-                  setAvailabilityConflicts(null)
-                }}
+                onClick={tryCloseAvailabilityModal}
                 className="w-full sm:w-auto"
               >
-                Fechar
+                {availabilityActivationMode ? 'Cancelar ativação' : 'Fechar'}
               </Button>
               <Button
                 variant="primary"
@@ -2394,13 +2575,23 @@ export default function AdminProfessoresPage() {
                 className="flex items-center gap-2 w-full sm:w-auto justify-center"
               >
                 {availabilitySaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {availabilitySaving ? 'Salvando...' : 'Salvar horários'}
+                {availabilitySaving
+                  ? 'Salvando...'
+                  : availabilityActivationMode
+                    ? 'Salvar horários e ativar'
+                    : 'Salvar horários'}
               </Button>
             </>
           }
         >
           {availabilityModalTeacher && (
             <div className="space-y-4">
+              {availabilityActivationMode && (
+                <div className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-900">
+                  Para ativar este professor, marque pelo menos um horário disponível e clique em{' '}
+                  <strong>Salvar horários e ativar</strong>.
+                </div>
+              )}
               <p className="text-sm text-gray-600">
                 Por padrão o professor está disponível em <strong>todos os horários</strong>. Marque os horários em que ele pode dar aula; fora desses períodos aparecerá como &quot;Indisponível&quot; ao agendar.
               </p>

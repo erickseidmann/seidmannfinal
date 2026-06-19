@@ -1,6 +1,6 @@
 /**
  * GET /api/admin/teachers/stats
- * Contagens para os cubos: substituídos (nota 1), 4-5 estrelas, problemas (nota 2), solicitações de professor.
+ * Contagens para os cubos: substituídos (nota 1), 4-5 estrelas, problemas (nota 2), novos (PENDING), solicitações.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     }
 
     const activeOnly = { status: { not: 'INACTIVE' as const } }
-    const [nota1Count, nota2Count, nota45Count, inactiveCount, teacherRequestsCount] =
+    const [nota1Count, nota2Count, nota45Count, inactiveCount, teacherRequestsCount, novosProfessoresCount] =
       await Promise.all([
       prisma.teacher.count({ where: { nota: 1, ...activeOnly } }),
       prisma.teacher.count({ where: { nota: 2, ...activeOnly } }),
@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
           return 0
         }
       })(),
+      prisma.teacher.count({ where: { status: 'PENDING' } }),
     ])
 
     return NextResponse.json({
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest) {
         nota45: nota45Count,
         inativos: inactiveCount,
         teacherRequests: teacherRequestsCount,
+        novosProfessores: novosProfessoresCount,
       },
     })
   } catch (error) {
