@@ -21,6 +21,11 @@ import {
   cancelLessonsIfMissingPaymentInfo,
   enrollmentPaymentRowHasCompleteInfo,
 } from '@/lib/enrollment-payment-info'
+import {
+  EnrollmentEmailConflictError,
+  sendStudentCredentialsEmail,
+  syncLoginOnEnrollmentEmailChange,
+} from '@/lib/enrollment-email-sync'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -243,7 +248,7 @@ export async function PATCH(
         if (outroUser && outroUser.id !== enrollment.userId) {
           return NextResponse.json(
             { ok: false, message: 'Este e-mail já está em uso por outro usuário (admin, professor ou outro aluno).' },
-            { status: 400 }
+            { status: 409 }
           )
         }
       }
@@ -307,13 +312,61 @@ export async function PATCH(
       }
 
       const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
-      updatedEnrollment = await prisma.enrollment.update({
-        where: { id },
-        data: {
-          ...updateData,
-          ...auditFieldsForUpdate(adminActor),
-        },
-      })
+      const emailChanged = Boolean(newEmail && newEmail !== currentEmail)
+      let emailSyncAction: string = 'none'
+      let loginEmailAlterado = false
+      let novaContaCriada = false
+      let credentialsEmailSent: boolean | undefined
+
+      try {
+        updatedEnrollment = await prisma.$transaction(async (tx) => {
+          const enrollmentUpdateData = {
+            ...updateData,
+            ...auditFieldsForUpdate(adminActor),
+          } as Record<string, unknown>
+
+          if (emailChanged && newEmail) {
+            const syncOutcome = await syncLoginOnEnrollmentEmailChange(tx, {
+              enrollmentId: id,
+              userId: enrollment.userId,
+              currentEmail,
+              newEmail,
+              nome: String(updateData.nome ?? enrollment.nome),
+              whatsapp: String(updateData.whatsapp ?? enrollment.whatsapp),
+            })
+            emailSyncAction = syncOutcome.action
+            if (syncOutcome.newUserId) {
+              enrollmentUpdateData.userId = syncOutcome.newUserId
+            }
+            if (syncOutcome.action === 'synced-exclusive') {
+              loginEmailAlterado = true
+            }
+            if (syncOutcome.action === 'created-new-user') {
+              novaContaCriada = true
+            }
+          }
+
+          return tx.enrollment.update({
+            where: { id },
+            data: enrollmentUpdateData,
+          })
+        })
+      } catch (err) {
+        if (err instanceof EnrollmentEmailConflictError) {
+          return NextResponse.json({ ok: false, message: err.message }, { status: 409 })
+        }
+        throw err
+      }
+
+      if (emailSyncAction === 'created-new-user' && newEmail) {
+        credentialsEmailSent = await sendStudentCredentialsEmail({
+          nomeAluno: String(updateData.nome ?? enrollment.nome),
+          loginEmail: newEmail,
+        })
+        console.log(
+          `[enrollment-email-sync] enrollment ${id}: credenciais ${credentialsEmailSent ? 'enviadas' : 'falharam'} para ${newEmail}`
+        )
+      }
 
       if (updatedEnrollment.bolsista && updatedEnrollment.status === 'ACTIVE') {
         const now = new Date()
@@ -339,20 +392,28 @@ export async function PATCH(
         cancelledLessonsForMissingPayment = await cancelLessonsIfMissingPaymentInfo(id)
       }
 
-      // Se o aluno tem conta (userId) e o e-mail foi alterado, atualizar também o e-mail de login do User
-      if (enrollment.userId && newEmail && newEmail !== currentEmail) {
-        await prisma.user.update({
-          where: { id: enrollment.userId },
-          data: { email: newEmail },
-        })
+      let message = 'Aluno atualizado com sucesso'
+      if (loginEmailAlterado) {
+        message =
+          'Aluno atualizado. O e-mail de login foi sincronizado — o aluno deve entrar com o novo e-mail e a mesma senha.'
+      } else if (novaContaCriada) {
+        message = credentialsEmailSent
+          ? 'Aluno atualizado. Nova conta de login criada; credenciais (senha 123456) enviadas por e-mail.'
+          : 'Aluno atualizado. Nova conta de login criada com senha padrão 123456 — falha ao enviar e-mail; informe o aluno manualmente.'
       }
 
       return NextResponse.json({
         ok: true,
         data: {
           enrollment: updatedEnrollment,
-          message: 'Aluno atualizado com sucesso',
+          message,
           cancelledLessonsForMissingPayment,
+          emailSync: {
+            action: emailSyncAction,
+            loginEmailAlterado,
+            novaContaCriada,
+            ...(credentialsEmailSent !== undefined ? { credentialsEmailSent } : {}),
+          },
         },
       })
     }
