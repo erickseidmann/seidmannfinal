@@ -89,6 +89,7 @@ const FINANCEIRO_SUB_KEYS = [
   'financeiro-geral',
   'financeiro-alunos',
   'financeiro-professores',
+  'financeiro-pagamentos',
   'financeiro-administracao',
   'financeiro-movimentacao',
   'financeiro-saidas',

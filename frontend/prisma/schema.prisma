@@ -1495,6 +1495,7 @@ model TeacherAbsenceReport {
 
 enum LessonPastEditRequestStatus {
   PENDING
+  RELEASED
   APPROVED
   REJECTED
 }

@@ -431,19 +431,7 @@ export default function AdminCalendarioPage() {
   const [canDirectEditPastLessons, setCanDirectEditPastLessons] = useState(false)
   const [canApprovePastLessonEdits, setCanApprovePastLessonEdits] = useState(false)
   const [pendingPastEditLessonIds, setPendingPastEditLessonIds] = useState<Set<string>>(new Set())
-  const [pendingPastEditRequests, setPendingPastEditRequests] = useState<
-    Array<{
-      id: string
-      lessonId: string
-      studentName: string
-      teacherName: string
-      lessonStartAt: string
-      requestedByName: string
-      payload: Record<string, unknown>
-    }>
-  >([])
-  const [pendingPastEditBannerOpen, setPendingPastEditBannerOpen] = useState(false)
-  const [pastEditApprovalRequest, setPastEditApprovalRequest] = useState<{
+  type PastEditRequestItem = {
     id: string
     lessonId: string
     studentName: string
@@ -451,7 +439,16 @@ export default function AdminCalendarioPage() {
     lessonStartAt: string
     requestedByName: string
     payload: Record<string, unknown>
-  } | null>(null)
+  }
+  const [pendingPastEditRequests, setPendingPastEditRequests] = useState<PastEditRequestItem[]>([])
+  const [releasedPastEditLessonIds, setReleasedPastEditLessonIds] = useState<Set<string>>(new Set())
+  const [releasedPastEditRequests, setReleasedPastEditRequests] = useState<PastEditRequestItem[]>([])
+  const [releasedPastEditBannerOpen, setReleasedPastEditBannerOpen] = useState(false)
+  const [completingReleasedPastEditRequestId, setCompletingReleasedPastEditRequestId] = useState<
+    string | null
+  >(null)
+  const [pendingPastEditBannerOpen, setPendingPastEditBannerOpen] = useState(false)
+  const [pastEditApprovalRequest, setPastEditApprovalRequest] = useState<PastEditRequestItem | null>(null)
   const [pastEditActionLoading, setPastEditActionLoading] = useState(false)
   const [teacherFilterOpen, setTeacherFilterOpen] = useState(false)
   const [teacherFilterSearch, setTeacherFilterSearch] = useState('')
@@ -572,9 +569,11 @@ export default function AdminCalendarioPage() {
   )
 
   const needsPastEditRequest = useCallback(
-    (lesson: { startAt: string }) =>
-      isLessonOnPastCalendarDay(lesson.startAt) && !canDirectEditPastLessons,
-    [canDirectEditPastLessons]
+    (lesson: { id: string; startAt: string }) =>
+      isLessonOnPastCalendarDay(lesson.startAt) &&
+      !canDirectEditPastLessons &&
+      !releasedPastEditLessonIds.has(lesson.id),
+    [canDirectEditPastLessons, releasedPastEditLessonIds]
   )
 
   const fetchPendingPastEditLessons = useCallback(async () => {
@@ -584,18 +583,31 @@ export default function AdminCalendarioPage() {
       })
       const json = await res.json()
       if (json.ok && Array.isArray(json.data?.requests)) {
-        const requests = json.data.requests as Array<{
-          id: string
-          lessonId: string
-          studentName: string
-          teacherName: string
-          lessonStartAt: string
-          requestedByName: string
-          payload: Record<string, unknown>
-        }>
+        const requests = json.data.requests as PastEditRequestItem[]
         setPendingPastEditRequests(requests)
         setPendingPastEditLessonIds(new Set(requests.map((r) => r.lessonId)))
         if (requests.length === 0) setPendingPastEditBannerOpen(false)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const fetchReleasedPastEditLessons = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/lesson-past-edit-requests?status=RELEASED', {
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (json.ok && Array.isArray(json.data?.requests)) {
+        const requests = json.data.requests as PastEditRequestItem[]
+        setReleasedPastEditRequests(requests)
+        setReleasedPastEditLessonIds(new Set(requests.map((r) => r.lessonId)))
+        if (requests.length === 0) {
+          setReleasedPastEditBannerOpen(false)
+        } else {
+          setReleasedPastEditBannerOpen(true)
+        }
       }
     } catch {
       /* ignore */
@@ -858,16 +870,8 @@ export default function AdminCalendarioPage() {
 
   const processPastEditApproval = useCallback(
     async (
-      action: 'APPROVE' | 'REJECT',
-      request?: {
-        id: string
-        lessonId: string
-        studentName: string
-        teacherName: string
-        lessonStartAt: string
-        requestedByName: string
-        payload: Record<string, unknown>
-      }
+      action: 'RELEASE' | 'REJECT',
+      request?: PastEditRequestItem
     ) => {
       const target = request ?? pastEditApprovalRequest
       if (!target) return
@@ -887,12 +891,13 @@ export default function AdminCalendarioPage() {
         setPastEditApprovalRequest(null)
         setToast({
           message:
-            action === 'APPROVE'
-              ? 'Alteração aprovada e aplicada à aula'
+            action === 'RELEASE'
+              ? 'Remarcação liberada para reagendar'
               : 'Solicitação rejeitada',
           type: 'success',
         })
         await fetchPendingPastEditLessons()
+        await fetchReleasedPastEditLessons()
         fetchLessons()
         fetchStats()
       } catch {
@@ -901,7 +906,37 @@ export default function AdminCalendarioPage() {
         setPastEditActionLoading(false)
       }
     },
-    [pastEditApprovalRequest, fetchPendingPastEditLessons, fetchLessons, fetchStats]
+    [
+      pastEditApprovalRequest,
+      fetchPendingPastEditLessons,
+      fetchReleasedPastEditLessons,
+      fetchLessons,
+      fetchStats,
+    ]
+  )
+
+  const completeReleasedPastEditRequest = useCallback(
+    async (requestId: string) => {
+      try {
+        const res = await fetch(`/api/admin/lesson-past-edit-requests/${requestId}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'COMPLETE' }),
+        })
+        const json = await res.json()
+        if (!res.ok || !json.ok) {
+          setToast({ message: json.message || 'Erro ao concluir remarcação', type: 'error' })
+          return false
+        }
+        await fetchReleasedPastEditLessons()
+        return true
+      } catch {
+        setToast({ message: 'Erro ao concluir remarcação', type: 'error' })
+        return false
+      }
+    },
+    [fetchReleasedPastEditLessons]
   )
 
   const excluirAulaWrongFrequency = useCallback(
@@ -1224,7 +1259,8 @@ export default function AdminCalendarioPage() {
       })
       .catch(() => {})
     void fetchPendingPastEditLessons()
-  }, [fetchPendingPastEditLessons])
+    void fetchReleasedPastEditLessons()
+  }, [fetchPendingPastEditLessons, fetchReleasedPastEditLessons])
 
   useEffect(() => {
     const stored = localStorage.getItem('viewedRescheduledLessons')
@@ -1483,6 +1519,105 @@ export default function AdminCalendarioPage() {
     setLessonModalOpen(true)
   }
 
+  const openReleasedPastEditReschedule = useCallback(
+    async (req: PastEditRequestItem) => {
+      setPastEditActionLoading(true)
+      try {
+        const res = await fetch(`/api/admin/lessons/${req.lessonId}`, { credentials: 'include' })
+        if (!res.ok) {
+          setToast({ message: 'Não foi possível carregar a aula para reagendar', type: 'error' })
+          return
+        }
+        const json = await res.json()
+        if (!json?.ok || !json?.data?.lesson) {
+          setToast({ message: json?.message || 'Aula não encontrada', type: 'error' })
+          return
+        }
+
+        const raw = json.data.lesson
+        const payload = req.payload
+        const payloadStartAt =
+          typeof payload.startAt === 'string' ? new Date(payload.startAt) : new Date(raw.startAt)
+        const payloadStatus =
+          typeof payload.status === 'string' ? (payload.status as LessonStatusUi) : raw.status
+        const payloadTeacherId =
+          typeof payload.teacherId === 'string'
+            ? payload.teacherId
+            : payload.teacherId === null
+              ? null
+              : raw.teacherId
+        const payloadEnrollmentId =
+          typeof payload.enrollmentId === 'string' ? payload.enrollmentId : raw.enrollmentId
+        const payloadDuration =
+          typeof payload.durationMinutes === 'number'
+            ? payload.durationMinutes
+            : raw.durationMinutes ?? 30
+        const payloadNotes =
+          payload.notes !== undefined
+            ? typeof payload.notes === 'string'
+              ? payload.notes
+              : ''
+            : raw.notes ?? ''
+        const payloadCreatedByName =
+          payload.createdByName !== undefined
+            ? typeof payload.createdByName === 'string'
+              ? payload.createdByName
+              : ''
+            : raw.createdByName ?? ''
+
+        const lessonToEdit: Lesson = {
+          id: raw.id,
+          enrollmentId: payloadEnrollmentId,
+          teacherId: payloadTeacherId,
+          status: payloadStatus,
+          startAt: payloadStartAt.toISOString(),
+          durationMinutes: payloadDuration,
+          notes: payloadNotes || null,
+          createdByName: payloadCreatedByName || null,
+          enrollment: {
+            id: raw.enrollment.id,
+            nome: raw.enrollment.nome,
+            frequenciaSemanal: raw.enrollment.frequenciaSemanal ?? null,
+          },
+          teacher: raw.teacher
+            ? { id: raw.teacher.id, nome: raw.teacher.nome }
+            : { id: '', nome: 'Sem professor' },
+        }
+
+        setCompletingReleasedPastEditRequestId(req.id)
+        setEditingLesson(lessonToEdit)
+        setAgendarReposicao(false)
+        setCancelamentoExcecao(false)
+        setReposicaoForm({
+          startAt: '',
+          teacherId: '',
+          durationMinutes: payloadDuration,
+        })
+        setLessonForm({
+          enrollmentId: payloadEnrollmentId,
+          teacherId: payloadTeacherId,
+          status: payloadStatus,
+          startAt: toDatetimeLocal(payloadStartAt),
+          durationMinutes: payloadDuration,
+          notes: payloadNotes,
+          createdByName: payloadCreatedByName,
+          repeatEnabled: false,
+          repeatWeeks: 4,
+          repeatSameWeek: false,
+          repeatSameWeekStartAt: '',
+          repeatFrequencyEnabled: false,
+          repeatFrequencyWeeks: 4,
+        })
+        setLessonModalOpen(true)
+      } catch {
+        setToast({ message: 'Erro ao abrir remarcação', type: 'error' })
+      } finally {
+        setPastEditActionLoading(false)
+      }
+    },
+    []
+  )
+
   const openEditLesson = (
     lesson: Lesson,
     options?: { status?: LessonStatusUi; agendarReposicao?: boolean }
@@ -1497,6 +1632,13 @@ export default function AdminCalendarioPage() {
         type: 'error',
       })
       return
+    }
+    if (releasedPastEditLessonIds.has(lesson.id)) {
+      const req = releasedPastEditRequests.find((r) => r.lessonId === lesson.id)
+      if (req) {
+        void openReleasedPastEditReschedule(req)
+        return
+      }
     }
     if (!options?.agendarReposicao) {
       setCancelamentoExcecao(false)
@@ -1714,7 +1856,7 @@ export default function AdminCalendarioPage() {
           setAgendarReposicao(false)
           await fetchPendingPastEditLessons()
           setToast({
-            message: 'Solicitação enviada. A aula ficará piscando até um administrador autorizado aprovar.',
+            message: 'Solicitação enviada. A aula ficará piscando até um administrador autorizado liberar.',
             type: 'success',
           })
           return
@@ -1740,6 +1882,11 @@ export default function AdminCalendarioPage() {
         if (!res.ok || !json.ok) {
           setToast({ message: json.message || 'Erro ao atualizar', type: 'error' })
           return
+        }
+
+        if (completingReleasedPastEditRequestId) {
+          await completeReleasedPastEditRequest(completingReleasedPastEditRequestId)
+          setCompletingReleasedPastEditRequestId(null)
         }
         
         // Verificar se há solicitação pendente associada a esta aula e processá-la
@@ -1854,6 +2001,7 @@ export default function AdminCalendarioPage() {
       setLessonProfessorDropdownOpen(false)
       setAgendarReposicao(false)
       setCancelamentoExcecao(false)
+      setCompletingReleasedPastEditRequestId(null)
       setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: 30 })
       fetchLessons()
       fetchStats()
@@ -2239,6 +2387,7 @@ export default function AdminCalendarioPage() {
     const canCancel = l.status === 'CONFIRMED' && canDirectEditLesson(l)
     const isCancelling = cancellingLessonId === l.id
     const hasPendingPastEdit = pendingPastEditLessonIds.has(l.id)
+    const hasReleasedPastEdit = releasedPastEditLessonIds.has(l.id)
 
     const cardColorClass = inactivationWarning
       ? 'bg-violet-50 text-violet-900 border-violet-300 hover:bg-violet-100'
@@ -2304,8 +2453,8 @@ export default function AdminCalendarioPage() {
         <button
           type="button"
           onClick={() => openEditLesson(l)}
-          className={`${cfg.btn} ${cardColorClass} ${hasPendingPastEdit ? 'animate-blink-alert ring-2 ring-amber-400' : ''} ${size === 'month' ? 'hover:shadow transition-shadow' : 'hover:shadow'}`}
-          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${titleExtra}${hasPendingPastEdit ? ' (Alteração pendente de aprovação)' : ''}${inactivationWarning && inactiveDateLabel ? ` (Aluno inativado em ${inactiveDateLabel})` : ''}`}
+          className={`${cfg.btn} ${cardColorClass} ${hasPendingPastEdit ? 'animate-blink-alert ring-2 ring-amber-400' : ''} ${hasReleasedPastEdit ? 'ring-2 ring-sky-400' : ''} ${size === 'month' ? 'hover:shadow transition-shadow' : 'hover:shadow'}`}
+          title={`${getLessonStudentLabel(l, enrollments)} – ${l.teacher?.nome ?? 'Sem professor'} – ${statusLabel(l.status)}${titleExtra}${hasPendingPastEdit ? ' (Alteração pendente de aprovação)' : ''}${hasReleasedPastEdit ? ' (Remarcação liberada — clique para reagendar)' : ''}${inactivationWarning && inactiveDateLabel ? ` (Aluno inativado em ${inactiveDateLabel})` : ''}`}
         >
           {showBadge && (
             showCancelledBadge ? (
@@ -2679,13 +2828,73 @@ export default function AdminCalendarioPage() {
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => void processPastEditApproval('APPROVE', req)}
+                        onClick={() => void processPastEditApproval('RELEASE', req)}
                         disabled={pastEditActionLoading}
                       >
                         {pastEditActionLoading ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           'Liberar'
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {releasedPastEditLessonIds.size > 0 ? (
+          <div className="mb-4 rounded-xl border border-sky-300 bg-sky-50 text-sm text-sky-900 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setReleasedPastEditBannerOpen((open) => !open)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-sky-100/70 transition-colors"
+            >
+              <span>
+                <strong>Remarcações liberadas para reagendar</strong> —{' '}
+                <strong>{releasedPastEditLessonIds.size}</strong> aula(s) aguardando reagendamento.
+                Qualquer administrador pode reagendar.
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 shrink-0 transition-transform duration-200 ${releasedPastEditBannerOpen ? 'rotate-180' : ''}`}
+                aria-hidden
+              />
+            </button>
+            {releasedPastEditBannerOpen ? (
+              <div className="border-t border-sky-200 px-4 py-3 space-y-2">
+                {releasedPastEditRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-lg bg-white/90 border border-sky-200 px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-sky-950">
+                        {req.studentName} · {req.teacherName}
+                      </p>
+                      <p className="text-xs text-sky-800 mt-0.5">
+                        {new Date(req.lessonStartAt).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}{' '}
+                        — solicitado por {req.requestedByName}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void openReleasedPastEditReschedule(req)}
+                        disabled={pastEditActionLoading}
+                      >
+                        {pastEditActionLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          'Reagendar'
                         )}
                       </Button>
                     </div>
@@ -4308,7 +4517,7 @@ export default function AdminCalendarioPage() {
         <Modal
           isOpen={!!pastEditApprovalRequest}
           onClose={() => setPastEditApprovalRequest(null)}
-          title="Aprovar alteração tardia de aula"
+          title="Liberar remarcação de aula"
           size="md"
           footer={
             <div className="flex flex-wrap gap-2 justify-end w-full">
@@ -4321,13 +4530,13 @@ export default function AdminCalendarioPage() {
                 Rejeitar
               </Button>
               <Button
-                onClick={() => void processPastEditApproval('APPROVE')}
+                onClick={() => void processPastEditApproval('RELEASE')}
                 disabled={pastEditActionLoading}
               >
                 {pastEditActionLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin mr-1" />
                 ) : null}
-                Aprovar alteração
+                Liberar para reagendar
               </Button>
             </div>
           }
@@ -4338,6 +4547,10 @@ export default function AdminCalendarioPage() {
                 <strong>{pastEditApprovalRequest.requestedByName}</strong> solicitou alterar a aula
                 de <strong>{pastEditApprovalRequest.studentName}</strong> com{' '}
                 <strong>{pastEditApprovalRequest.teacherName}</strong>.
+              </p>
+              <p className="text-gray-600">
+                Ao liberar, a remarcação ficará disponível no topo do calendário para qualquer
+                administrador reagendar.
               </p>
               <p className="text-gray-600">
                 Horário original:{' '}

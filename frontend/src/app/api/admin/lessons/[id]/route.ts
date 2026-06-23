@@ -6,10 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import {
-  canAdminEditLessonOnDate,
-  LESSON_PAST_EDIT_DENIED_MESSAGE,
-} from '@/lib/lesson-past-edit'
+import { LESSON_PAST_EDIT_DENIED_MESSAGE } from '@/lib/lesson-past-edit'
+import { canAdminEditLessonConsideringReleasedRequest } from '@/lib/lesson-past-edit-access'
 import { enrollmentAllowsSchedulingLessons } from '@/lib/enrollment-scheduling'
 import { lessonIntervalsOverlap } from '@/lib/lesson-overlap'
 import {
@@ -206,15 +204,18 @@ export async function PATCH(
       return NextResponse.json({ ok: false, message: 'Aula não encontrada' }, { status: 404 })
     }
 
+    const editorPerms = await prisma.user.findUnique({
+      where: { id: auth.session!.sub },
+      select: { canApproveLateLessonEdits: true },
+    })
+
     if (
-      !canAdminEditLessonOnDate(lessonBefore.startAt, auth.session?.email, {
-        canApproveLateLessonEdits: (
-          await prisma.user.findUnique({
-            where: { id: auth.session!.sub },
-            select: { canApproveLateLessonEdits: true },
-          })
-        )?.canApproveLateLessonEdits,
-      })
+      !(await canAdminEditLessonConsideringReleasedRequest(
+        id,
+        lessonBefore.startAt,
+        auth.session?.email,
+        editorPerms?.canApproveLateLessonEdits ?? false
+      ))
     ) {
       return NextResponse.json(
         {
@@ -818,9 +819,12 @@ export async function DELETE(
     })
 
     if (
-      !canAdminEditLessonOnDate(lesson.startAt, auth.session?.email, {
-        canApproveLateLessonEdits: editorPerms?.canApproveLateLessonEdits,
-      })
+      !(await canAdminEditLessonConsideringReleasedRequest(
+        id,
+        lesson.startAt,
+        auth.session?.email,
+        editorPerms?.canApproveLateLessonEdits ?? false
+      ))
     ) {
       return NextResponse.json(
         { ok: false, message: LESSON_PAST_EDIT_DENIED_MESSAGE, code: 'PAST_EDIT_NEEDS_APPROVAL' },

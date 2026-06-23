@@ -34,6 +34,7 @@ const ADMIN_PAGES = [
   { key: 'financeiro-geral', label: 'Financeiro – Geral' },
   { key: 'financeiro-alunos', label: 'Financeiro – Alunos' },
   { key: 'financeiro-professores', label: 'Financeiro – Professores' },
+  { key: 'financeiro-pagamentos', label: 'Financeiro – Pagamentos' },
   { key: 'financeiro-administracao', label: 'Financeiro – Administração' },
   { key: 'financeiro-movimentacao', label: 'Financeiro – Movimentação' },
   { key: 'financeiro-saidas', label: 'Financeiro – Saídas' },

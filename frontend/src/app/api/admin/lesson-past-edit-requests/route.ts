@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     const where =
       statusFilter === 'ALL'
         ? {}
-        : { status: statusFilter as 'PENDING' | 'APPROVED' | 'REJECTED' }
+        : { status: statusFilter as 'PENDING' | 'RELEASED' | 'APPROVED' | 'REJECTED' }
 
     const requests = await prisma.lessonPastEditRequest.findMany({
       where,

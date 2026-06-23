@@ -1,6 +1,6 @@
 /**
  * PATCH /api/admin/lesson-past-edit-requests/[id]
- * { action: 'APPROVE' | 'REJECT', rejectionNote?: string }
+ * { action: 'RELEASE' | 'COMPLETE' | 'APPROVE' | 'REJECT', rejectionNote?: string }
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -29,17 +29,6 @@ export async function PATCH(
       where: { id: auth.session.sub },
       select: { nome: true, canApproveLateLessonEdits: true },
     })
-    if (
-      !canAdminApprovePastLessonEdit(
-        auth.session.email,
-        adminUser?.canApproveLateLessonEdits ?? false
-      )
-    ) {
-      return NextResponse.json(
-        { ok: false, message: 'Você não está autorizado a aprovar alterações tardias de aulas.' },
-        { status: 403 }
-      )
-    }
 
     const { id } = await params
     if (!id) {
@@ -55,9 +44,14 @@ export async function PATCH(
 
     const action =
       typeof body === 'object' && body !== null ? (body as { action?: unknown }).action : undefined
-    if (action !== 'APPROVE' && action !== 'REJECT') {
+    if (
+      action !== 'APPROVE' &&
+      action !== 'RELEASE' &&
+      action !== 'COMPLETE' &&
+      action !== 'REJECT'
+    ) {
       return NextResponse.json(
-        { ok: false, message: 'Ação inválida. Use APPROVE ou REJECT.' },
+        { ok: false, message: 'Ação inválida. Use RELEASE, COMPLETE, APPROVE ou REJECT.' },
         { status: 400 }
       )
     }
@@ -66,10 +60,45 @@ export async function PATCH(
     if (!existing) {
       return NextResponse.json({ ok: false, message: 'Solicitação não encontrada' }, { status: 404 })
     }
-    if (existing.status !== 'PENDING') {
+
+    if (action === 'REJECT') {
+      if (existing.status !== 'PENDING' && existing.status !== 'RELEASED') {
+        return NextResponse.json(
+          { ok: false, message: 'Esta solicitação já foi processada' },
+          { status: 400 }
+        )
+      }
+    } else if (action === 'RELEASE') {
+      if (existing.status !== 'PENDING') {
+        return NextResponse.json(
+          { ok: false, message: 'Esta solicitação já foi processada' },
+          { status: 400 }
+        )
+      }
+    } else if (action === 'COMPLETE') {
+      if (existing.status !== 'RELEASED') {
+        return NextResponse.json(
+          { ok: false, message: 'Esta remarcação não está liberada para reagendamento' },
+          { status: 400 }
+        )
+      }
+    } else if (action === 'APPROVE') {
+      if (existing.status !== 'PENDING' && existing.status !== 'RELEASED') {
+        return NextResponse.json(
+          { ok: false, message: 'Esta solicitação já foi processada' },
+          { status: 400 }
+        )
+      }
+    }
+
+    const canApprove = canAdminApprovePastLessonEdit(
+      auth.session.email,
+      adminUser?.canApproveLateLessonEdits ?? false
+    )
+    if (action !== 'COMPLETE' && !canApprove) {
       return NextResponse.json(
-        { ok: false, message: 'Esta solicitação já foi processada' },
-        { status: 400 }
+        { ok: false, message: 'Você não está autorizado a aprovar alterações tardias de aulas.' },
+        { status: 403 }
       )
     }
 
@@ -96,6 +125,42 @@ export async function PATCH(
       return NextResponse.json({
         ok: true,
         data: { request: { id: updated.id, status: updated.status } },
+      })
+    }
+
+    if (action === 'RELEASE') {
+      const updated = await prisma.lessonPastEditRequest.update({
+        where: { id },
+        data: {
+          status: 'RELEASED',
+          processedByUserId: auth.session.sub,
+          processedAt: new Date(),
+        },
+      })
+
+      return NextResponse.json({
+        ok: true,
+        data: {
+          request: { id: updated.id, status: updated.status, lessonId: existing.lessonId },
+        },
+      })
+    }
+
+    if (action === 'COMPLETE') {
+      const updated = await prisma.lessonPastEditRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          processedByUserId: auth.session.sub,
+          processedAt: new Date(),
+        },
+      })
+
+      return NextResponse.json({
+        ok: true,
+        data: {
+          request: { id: updated.id, status: updated.status, lessonId: existing.lessonId },
+        },
       })
     }
 
