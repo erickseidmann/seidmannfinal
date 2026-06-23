@@ -517,7 +517,8 @@ export interface PaymentAllocationInput {
 export async function manualLinkReceivedPaymentAllocations(
   receivedPaymentId: string,
   alocacoes: PaymentAllocationInput[],
-  performedBy: string | null
+  performedBy: string | null,
+  options?: { justificativaConciliacao?: string | null }
 ): Promise<ReceivedPayment> {
   if (alocacoes.length === 0) {
     throw new Error('Informe ao menos uma alocação')
@@ -627,6 +628,9 @@ export async function manualLinkReceivedPaymentAllocations(
           enrollmentId: firstEnrollmentId,
           enrollmentPaymentMonthId: firstMonthId,
           divergenciaValor: false,
+          ...(options?.justificativaConciliacao
+            ? { justificativaConciliacao: options.justificativaConciliacao }
+            : {}),
         },
       })
     }
@@ -635,6 +639,14 @@ export async function manualLinkReceivedPaymentAllocations(
       where: { id: receivedPaymentId },
     })
     if (!updated) throw new Error('Recebimento não encontrado após vínculo')
+
+    if (options?.justificativaConciliacao) {
+      return tx.receivedPayment.update({
+        where: { id: receivedPaymentId },
+        data: { justificativaConciliacao: options.justificativaConciliacao },
+      })
+    }
+
     return updated
   })
 

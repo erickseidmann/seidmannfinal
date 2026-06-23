@@ -16,6 +16,10 @@ import Button from '@/components/ui/Button'
 import Modal from '@/components/admin/Modal'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
+import {
+  MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH,
+  requiresRecebimentoJustificativa,
+} from '@/lib/payments/recebimento-justificativa'
 
 export interface RecebimentoAllocation {
   id?: string
@@ -38,6 +42,7 @@ export interface RecebimentoItem {
   referencia: string | null
   status: string
   divergenciaValor: boolean
+  justificativaConciliacao: string | null
   semCobrancaAberta: boolean
   mesAnteriorReferenciaPendente?: boolean
   enrollmentId: string | null
@@ -51,6 +56,7 @@ interface AlocacaoLinha {
   nome: string
   email: string
   valorReais: string
+  valorMensalidade: number | null
 }
 
 function formatReaisInput(value: number | null | undefined): string {
@@ -174,6 +180,7 @@ export default function RecebimentosConciliacao({
   const [candidatosDoc, setCandidatosDoc] = useState<CandidatoDocumento[]>([])
   const [candidatosLoading, setCandidatosLoading] = useState(false)
   const [alocacoes, setAlocacoes] = useState<AlocacaoLinha[]>([])
+  const [justificativaConciliacao, setJustificativaConciliacao] = useState('')
   const [buscaLoading, setBuscaLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
 
@@ -289,6 +296,7 @@ export default function RecebimentosConciliacao({
         nome: aluno.nome,
         email: aluno.email,
         valorReais: formatReaisInput(defaultReais),
+        valorMensalidade: aluno.valorMensalidade,
       },
     ])
     setBuscaAluno('')
@@ -312,17 +320,32 @@ export default function RecebimentosConciliacao({
     0
   )
 
+  const justificativaObrigatoria =
+    recebimentoAtual != null &&
+    alocacoes.length > 0 &&
+    requiresRecebimentoJustificativa({
+      divergenciaValor: recebimentoAtual.divergenciaValor,
+      valorRecebimentoCentavos: recebimentoAtual.valor,
+      alocacoes: alocacoes.map((a) => ({
+        valorCentavos: parseReaisToCentavos(a.valorReais),
+        valorMensalidadeCentavos:
+          a.valorMensalidade != null ? Math.round(a.valorMensalidade * 100) : null,
+      })),
+    })
+
   const openVincular = (id: string) => {
     setVincularId(id)
     setBuscaAluno('')
     setAlunosBusca([])
     setAlocacoes([])
+    setJustificativaConciliacao('')
   }
 
   const closeVincular = () => {
     setVincularId(null)
     setBuscaAluno('')
     setAlocacoes([])
+    setJustificativaConciliacao('')
   }
 
   const handleVincular = async () => {
@@ -343,13 +366,29 @@ export default function RecebimentosConciliacao({
       return
     }
 
+    if (
+      justificativaObrigatoria &&
+      justificativaConciliacao.trim().length < MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH
+    ) {
+      onToast(
+        `Informe uma justificativa com no mínimo ${MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH} caracteres`,
+        'error'
+      )
+      return
+    }
+
     setActionLoading(true)
     try {
+      const justificativaPayload =
+        justificativaConciliacao.trim().length > 0
+          ? { justificativaConciliacao: justificativaConciliacao.trim() }
+          : {}
+
       const body =
         payload.length === 1 &&
         payload[0].valorCentavos === recebimentoAtual?.valor
-          ? { enrollmentId: payload[0].enrollmentId }
-          : { alocacoes: payload }
+          ? { enrollmentId: payload[0].enrollmentId, ...justificativaPayload }
+          : { alocacoes: payload, ...justificativaPayload }
 
       const res = await fetch(
         `/api/admin/financeiro/recebimentos/${vincularId}/vincular`,
@@ -570,7 +609,13 @@ export default function RecebimentosConciliacao({
                       {r.status === 'PENDENTE' && r.divergenciaValor && (
                         <p className="text-xs font-semibold text-yellow-700 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          Valor diferente da mensalidade — vincule manualmente
+                          Valor diferente da mensalidade — vincule manualmente e informe a justificativa
+                        </p>
+                      )}
+                      {r.status === 'VINCULADO' && r.justificativaConciliacao && (
+                        <p className="text-xs text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-2 mt-1">
+                          <span className="font-semibold text-slate-800">Justificativa: </span>
+                          {r.justificativaConciliacao}
                         </p>
                       )}
                       {r.mesAnteriorReferenciaPendente && (
@@ -795,6 +840,35 @@ export default function RecebimentosConciliacao({
             </li>
           )}
         </ul>
+
+        {(alocacoes.length > 0 || justificativaConciliacao.trim().length > 0) && (
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+              Justificativa da conciliação
+              {justificativaObrigatoria ? (
+                <span className="text-amber-700 normal-case font-medium"> (obrigatória)</span>
+              ) : null}
+            </label>
+            <p className="text-xs text-gray-500 mb-2">
+              Explique a composição da entrada (ex.: mensalidade + material físico) ou o motivo da
+              divergência de valor em relação à mensalidade.
+            </p>
+            <textarea
+              value={justificativaConciliacao}
+              onChange={(e) => setJustificativaConciliacao(e.target.value)}
+              rows={3}
+              className="input w-full text-sm resize-y min-h-[80px]"
+              placeholder="Ex.: PIX referente ao material físico; mensalidade de jun/2026 já quitada via boleto."
+            />
+            {justificativaObrigatoria && (
+              <p className="text-xs text-gray-500 mt-1">
+                Mínimo {MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH} caracteres (
+                {justificativaConciliacao.trim().length}/{MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH})
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={closeVincular} disabled={actionLoading}>
             Cancelar
@@ -805,7 +879,9 @@ export default function RecebimentosConciliacao({
             disabled={
               alocacoes.length === 0 ||
               actionLoading ||
-              somaAlocadaCentavos > (recebimentoAtual?.valor ?? 0)
+              somaAlocadaCentavos > (recebimentoAtual?.valor ?? 0) ||
+              (justificativaObrigatoria &&
+                justificativaConciliacao.trim().length < MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH)
             }
           >
             {actionLoading ? (

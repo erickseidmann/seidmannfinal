@@ -183,6 +183,7 @@ export async function GET(request: NextRequest) {
             referencia: r.referencia,
             status: r.status,
             divergenciaValor: r.divergenciaValor,
+            justificativaConciliacao: r.justificativaConciliacao,
             semCobrancaAberta: r.semCobrancaAberta,
             mesAnteriorReferenciaPendente,
             enrollmentId: r.enrollmentId,

@@ -1228,6 +1228,7 @@ model ReceivedPayment {
   referencia                String?               @db.VarChar(255)
   status                    ReceivedPaymentStatus @default(PENDENTE)
   divergenciaValor          Boolean               @default(false) @map("divergencia_valor")
+  justificativaConciliacao  String?               @db.Text @map("justificativa_conciliacao")
   semCobrancaAberta         Boolean               @default(false) @map("sem_cobranca_aberta")
   enrollmentId              String?               @map("enrollment_id")
   enrollment                Enrollment?           @relation(fields: [enrollmentId], references: [id])
