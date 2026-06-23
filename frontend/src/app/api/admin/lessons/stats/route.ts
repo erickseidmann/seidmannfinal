@@ -12,6 +12,7 @@ import { ENROLLMENT_STATUSES_LESSON_TRACKING } from '@/lib/enrollment-scheduling
 import {
   LESSON_STATUSES_CANCELLED_FAMILY,
   lessonCancelledStatusAllowsReposicao,
+  lessonCancelledStatusRequiresExceptionForReposicao,
 } from '@/lib/lesson-status'
 
 function getMonday(d: Date): Date {
@@ -140,6 +141,7 @@ export async function GET(request: NextRequest) {
       rescheduledAt: string | null
       rescheduledTeacherName: string | null
       allowsReschedule: boolean
+      requiresException?: boolean
     }[] = cancelledLessonsInMonth.map((l) => {
       const candidates = reposicoesByEnrollment.filter((r) => r.enrollmentId === l.enrollmentId)
       const marker = `[cancelledLessonId:${l.id}]`
@@ -160,7 +162,10 @@ export async function GET(request: NextRequest) {
         rescheduledLessonId: matched?.id ?? null,
         rescheduledAt: matched?.startAt?.toISOString() ?? null,
         rescheduledTeacherName: matched?.teacher?.nome ?? null,
-        allowsReschedule: lessonCancelledStatusAllowsReposicao(l.status),
+        allowsReschedule:
+          lessonCancelledStatusAllowsReposicao(l.status) ||
+          lessonCancelledStatusRequiresExceptionForReposicao(l.status),
+        requiresException: lessonCancelledStatusRequiresExceptionForReposicao(l.status),
       }
     })
 

@@ -51,7 +51,24 @@ export function lessonCancelledStatusAllowsReposicao(status: string): boolean {
   return status === 'CANCELLED' || status === 'CANCELLED_BY_TEACHER'
 }
 
+/** Cancelamento sem reposição (tardio) — reposição só com exceção explícita. */
+export function lessonCancelledStatusRequiresExceptionForReposicao(status: string): boolean {
+  return status === 'CANCELLED_NO_REPLACEMENT'
+}
+
+/** Pode agendar reposição (inclui exceção para cancelamento tardio). */
+export function lessonAllowsAgendarReposicao(
+  status: string,
+  options?: { cancelamentoExcecao?: boolean }
+): boolean {
+  if (lessonCancelledStatusAllowsReposicao(status)) return true
+  return options?.cancelamentoExcecao === true && status === 'CANCELLED_NO_REPLACEMENT'
+}
+
 /** Origem válida para criar uma aula REPOSICAO (API / fluxo admin). */
-export function lessonStatusValidOriginForReposicao(status: string): boolean {
-  return status === 'CANCELLED' || status === 'CANCELLED_BY_TEACHER'
+export function lessonStatusValidOriginForReposicao(
+  status: string,
+  options?: { cancelamentoExcecao?: boolean }
+): boolean {
+  return lessonAllowsAgendarReposicao(status, options)
 }

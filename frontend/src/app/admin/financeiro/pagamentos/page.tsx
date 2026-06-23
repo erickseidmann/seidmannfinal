@@ -11,6 +11,7 @@ import Modal from '@/components/admin/Modal'
 import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import {
   AlertTriangle,
   Calendar,
@@ -71,6 +72,8 @@ interface ProfessorPagamento {
   proofFileUrl: string | null
   pagamentoProntoParaFazer: boolean
   metodoPagamento: string | null
+  dataInicio: string | null
+  dataTermino: string | null
 }
 
 interface GrupoPagamento {
@@ -163,7 +166,51 @@ function parseProfessorPagamento(raw: unknown): ProfessorPagamento | null {
     proofFileUrl: typeof row.proofFileUrl === 'string' ? row.proofFileUrl : null,
     pagamentoProntoParaFazer: row.pagamentoProntoParaFazer === true,
     metodoPagamento: typeof row.metodoPagamento === 'string' ? row.metodoPagamento : null,
+    dataInicio: typeof row.dataInicio === 'string' ? row.dataInicio : null,
+    dataTermino: typeof row.dataTermino === 'string' ? row.dataTermino : null,
   }
+}
+
+function formatPeriodoLabel(dataInicio: string | null, dataTermino: string | null): string {
+  if (!dataInicio || !dataTermino) return ''
+  const fmt = (iso: string) => {
+    const [y, m, d] = iso.split('-')
+    return `${d}/${m}/${y}`
+  }
+  return `${fmt(dataInicio)} a ${fmt(dataTermino)}`
+}
+
+/** Último dia inclusivo do período ainda não passou (BRT). */
+function isPeriodoAindaAberto(dataTermino: string | null): boolean {
+  if (!dataTermino) return false
+  const now = new Date()
+  const brt = new Date(now.getTime() - 3 * 60 * 60 * 1000)
+  const y = brt.getUTCFullYear()
+  const m = String(brt.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(brt.getUTCDate()).padStart(2, '0')
+  const todayKey = `${y}-${m}-${d}`
+  return todayKey <= dataTermino
+}
+
+async function confirmarMarcarPagoSePeriodoAberto(
+  professor: ProfessorPagamento,
+  confirm: (opts: {
+    title: string
+    message: string
+    confirmLabel: string
+    cancelLabel: string
+    variant?: 'danger' | 'default'
+  }) => Promise<boolean>
+): Promise<boolean> {
+  if (!isPeriodoAindaAberto(professor.dataTermino)) return true
+  const periodoLabel = formatPeriodoLabel(professor.dataInicio, professor.dataTermino)
+  return confirm({
+    title: 'Período ainda em andamento',
+    message: `O período ${periodoLabel} ainda não terminou. Ao marcar como pago, o professor não poderá mais registrar aulas desse intervalo. Deseja continuar?`,
+    confirmLabel: 'Sim, marcar pago',
+    cancelLabel: 'Cancelar',
+    variant: 'danger',
+  })
 }
 
 function canMarcarPagoIndividual(p: ProfessorPagamento): boolean {
@@ -277,6 +324,7 @@ async function postMarcarPago(teacherId: string, year: number, month: number): P
 }
 
 export default function FinanceiroPagamentosPage() {
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const anoAtual = new Date().getFullYear()
   const mesAtual = new Date().getMonth() + 1
 
@@ -423,6 +471,8 @@ export default function FinanceiroPagamentosPage() {
 
   const handleMarcarPagoIndividual = async (professor: ProfessorPagamento) => {
     if (!canMarcarPagoIndividual(professor)) return
+    const ok = await confirmarMarcarPagoSePeriodoAberto(professor, confirm)
+    if (!ok) return
     setMarkingTeacherId(professor.id)
     setToast(null)
     try {
@@ -443,6 +493,18 @@ export default function FinanceiroPagamentosPage() {
   const handleMarcarGrupoPago = async (grupo: GrupoPagamento) => {
     const alvos = professoresParaMarcarGrupo(grupo.professores)
     if (alvos.length === 0) return
+
+    const algumPeriodoAberto = alvos.some((p) => isPeriodoAindaAberto(p.dataTermino))
+    if (algumPeriodoAberto) {
+      const ok = await confirm({
+        title: 'Período ainda em andamento',
+        message: `Alguns professores do ${grupo.label} ainda estão em período aberto (aulas podem continuar até o fim do ciclo). Ao marcar como pago, eles não poderão mais registrar aulas desse intervalo. Deseja continuar?`,
+        confirmLabel: 'Sim, marcar todos',
+        cancelLabel: 'Cancelar',
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
 
     setMarkingGroupKey(grupo.key)
     setToast(null)
@@ -928,6 +990,7 @@ export default function FinanceiroPagamentosPage() {
       </Modal>
 
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <ConfirmDialog />
     </AdminLayout>
   )
 }

@@ -19,6 +19,7 @@ import {
   teacherPaymentBoundsForCompetenceMonth,
   teacherPaymentPeriodBoundsUtc,
 } from '@/lib/teacher-paid-period'
+import { findTeacherPaymentMonthForAdminView } from '@/lib/teacher-payment-month-db'
 import { ymdUtc } from '@/lib/datetime'
 import { isTeacherPayableInMonth } from '@/lib/teacher-inactive'
 
@@ -174,6 +175,20 @@ export async function GET(request: NextRequest) {
           proofFileByTeacherYearMonth.set(`${t.id}|${year}|${month}`, url)
         }
       }
+    }
+
+    const pmByTeacherDueDay = new Map<string, PmRow>()
+    if (useMonthMode && viewedYear != null && viewedMonth != null) {
+      await Promise.all(
+        teachers.map(async (t) => {
+          const due = t.paymentDueDay
+          if (due == null || due < 1 || due > 31) return
+          const row = await findTeacherPaymentMonthForAdminView(t.id, viewedYear, viewedMonth, due)
+          if (row) {
+            pmByTeacherDueDay.set(t.id, row as PmRow)
+          }
+        })
+      )
     }
 
     const lessonRecord = (prisma as { lessonRecord?: { findMany: (args: unknown) => Promise<unknown[]> } }).lessonRecord
@@ -333,7 +348,9 @@ export async function GET(request: NextRequest) {
       const period = teacherPeriods.find((p) => p.id === t.id)!
       const valorPorHora = t.valorPorHora != null ? Number(t.valorPorHora) : 0
       const pm = useMonthMode
-        ? (periodEndsInMonthMap.get(t.id) ?? ('paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
+        ? (pmByTeacherDueDay.get(t.id) ??
+          periodEndsInMonthMap.get(t.id) ??
+          ('paymentMonths' in t && Array.isArray(t.paymentMonths) && t.paymentMonths[0]
             ? (t.paymentMonths[0] as {
                 paymentStatus: string | null
                 valorPorPeriodo: unknown

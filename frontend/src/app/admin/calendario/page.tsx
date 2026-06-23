@@ -48,6 +48,8 @@ import {
   isLessonCancelledFamily,
   isLessonScheduledStatus,
   lessonCancelledStatusAllowsReposicao,
+  lessonAllowsAgendarReposicao,
+  lessonCancelledStatusRequiresExceptionForReposicao,
 } from '@/lib/lesson-status'
 
 type ViewType = 'month' | 'week' | 'day'
@@ -90,6 +92,7 @@ interface Stats {
     rescheduledAt?: string | null
     rescheduledTeacherName?: string | null
     allowsReschedule?: boolean
+    requiresException?: boolean
   }[]
   reposicaoList: { id: string; studentName: string; teacherName: string; startAt: string }[]
   wrongFrequencyList: {
@@ -318,7 +321,7 @@ function toDateKey(d: Date): string {
 export default function AdminCalendarioPage() {
   console.log('render')
   const { confirm, ConfirmDialog } = useConfirmDialog()
-  const { promptLateCancellation, LateCancellationDialog } = useLateCancellationDialog()
+  const { promptLateCancellation, promptRescheduleException, LateCancellationDialog } = useLateCancellationDialog()
   const router = useRouter()
   const searchParams = useSearchParams()
   const searchParamsKey = searchParams?.toString() ?? ''
@@ -1680,14 +1683,24 @@ export default function AdminCalendarioPage() {
       }
 
       const raw = json.data.lesson
-      if (!lessonCancelledStatusAllowsReposicao(raw.status)) {
+      const requiresException = lessonCancelledStatusRequiresExceptionForReposicao(raw.status)
+      if (!lessonCancelledStatusAllowsReposicao(raw.status) && !requiresException) {
         setToast({
           message:
-            'Esta aula está marcada como cancelada sem reposição. Não é possível agendar reposição a partir dela.',
+            'Esta aula não permite reagendamento.',
           type: 'error',
         })
         return
       }
+
+      if (requiresException) {
+        const horas = getLessonCancelamentoAntecedenciaHoras(raw.enrollmentId, enrollments)
+        const choice = await promptRescheduleException(horas)
+        if (choice !== 'exception') return
+      } else {
+        setCancelamentoExcecao(false)
+      }
+
       if (!raw.teacherId || !raw.teacher?.id) {
         setToast({ message: 'Aula sem professor definido. Ajuste o professor antes de reagendar.', type: 'error' })
         return
@@ -1720,14 +1733,25 @@ export default function AdminCalendarioPage() {
       }
 
       setListModal(null)
-      openEditLesson(lessonToEdit)
-      setAgendarReposicao(true)
+      openEditLesson(lessonToEdit, { agendarReposicao: true })
+      if (requiresException) {
+        setCancelamentoExcecao(true)
+        setReposicaoForm((f) => ({
+          ...f,
+          teacherId: f.teacherId || lessonToEdit.teacherId,
+          durationMinutes: lessonToEdit.durationMinutes,
+        }))
+        setToast({
+          message: 'Exceção registrada. Preencha a reposição e clique em Salvar.',
+          type: 'success',
+        })
+      }
     } catch {
       setToast({ message: 'Erro ao abrir aula cancelada para reagendar', type: 'error' })
     } finally {
       setReagendarCanceladaLoadingId(null)
     }
-  }, [router])
+  }, [router, enrollments, promptRescheduleException])
 
   // Abrir modal de reposição vindo do alerta de professor ausente (?reagendar=lessonId)
   useEffect(() => {
@@ -1749,7 +1773,7 @@ export default function AdminCalendarioPage() {
       return
     }
     // Validar reposição se estiver cancelando e marcou agendar reposição
-    if (lessonCancelledStatusAllowsReposicao(lessonForm.status) && agendarReposicao) {
+    if (lessonAllowsAgendarReposicao(lessonForm.status, { cancelamentoExcecao }) && agendarReposicao) {
       if (!reposicaoForm.startAt?.trim() || !reposicaoForm.teacherId) {
         setToast({ message: 'Preencha data/hora e professor para a reposição', type: 'error' })
         return
@@ -1933,7 +1957,7 @@ export default function AdminCalendarioPage() {
         
         // Se cancelou e marcou agendar reposição, criar a reposição
         if (
-          lessonCancelledStatusAllowsReposicao(lessonForm.status) &&
+          lessonAllowsAgendarReposicao(lessonForm.status, { cancelamentoExcecao }) &&
           agendarReposicao &&
           reposicaoForm.startAt &&
           reposicaoForm.teacherId
@@ -1958,13 +1982,24 @@ export default function AdminCalendarioPage() {
                   teacherId: lessonForm.teacherId,
                   lessonId: editingLesson?.id ?? null,
                 },
+                ...(cancelamentoExcecao ? { cancelamentoExcecao: true } : {}),
               }),
             })
             const reposicaoJson = await reposicaoRes.json()
             if (!reposicaoRes.ok || !reposicaoJson.ok) {
-              setToast({ message: 'Aula cancelada, mas erro ao criar reposição: ' + (reposicaoJson.message || 'Erro desconhecido'), type: 'error' })
+              setToast({
+                message:
+                  (cancelamentoExcecao ? 'Exceção registrada, mas erro ao criar reposição: ' : 'Aula cancelada, mas erro ao criar reposição: ') +
+                  (reposicaoJson.message || 'Erro desconhecido'),
+                type: 'error',
+              })
             } else {
-              setToast({ message: 'Aula cancelada e reposição agendada', type: 'success' })
+              setToast({
+                message: cancelamentoExcecao
+                  ? 'Exceção registrada e reposição agendada'
+                  : 'Aula cancelada e reposição agendada',
+                type: 'success',
+              })
             }
           }
         } else {
@@ -3704,8 +3739,13 @@ export default function AdminCalendarioPage() {
               )
             })()}
             {/* Opção de agendar reposição quando cancelar */}
-            {lessonCancelledStatusAllowsReposicao(lessonForm.status) && (
+            {lessonAllowsAgendarReposicao(lessonForm.status, { cancelamentoExcecao }) && (
               <div className="space-y-3 pt-2 border-t border-gray-200">
+                {cancelamentoExcecao && lessonCancelledStatusRequiresExceptionForReposicao(lessonForm.status) && (
+                  <p className="text-sm text-brand-orange font-medium">
+                    Reagendamento registrado como exceção à regra de cancelamento tardio.
+                  </p>
+                )}
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -4143,13 +4183,12 @@ export default function AdminCalendarioPage() {
                           disabled={reagendarCanceladaLoadingId === item.id}
                           className="shrink-0"
                         >
-                          {reagendarCanceladaLoadingId === item.id ? 'Abrindo...' : 'Reagendar'}
+                          {reagendarCanceladaLoadingId === item.id
+                            ? 'Abrindo...'
+                            : item.requiresException
+                              ? 'Reagendar (exceção)'
+                              : 'Reagendar'}
                         </Button>
-                      )}
-                      {item.allowsReschedule === false && !item.rescheduledAt && (
-                        <p className="text-xs text-gray-600 shrink-0 max-w-[11rem] text-right">
-                          Sem reposição permitida
-                        </p>
                       )}
                     </div>
                   </div>

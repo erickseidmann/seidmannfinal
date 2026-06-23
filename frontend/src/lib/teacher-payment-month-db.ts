@@ -6,7 +6,35 @@ import { prisma } from '@/lib/prisma'
 import {
   periodoTerminoRangeForCompetenceMonthBrt,
   resolveTeacherPaymentUpsertKeys,
+  teacherPaymentBoundsForCompetenceMonth,
+  teacherPaymentCompetenceKeyFromPeriodoTermino,
 } from '@/lib/teacher-paid-period'
+
+/** Registro de pagamento exibido na tela admin do mês visualizado e dia de vencimento. */
+export async function findTeacherPaymentMonthForAdminView(
+  teacherId: string,
+  viewedYear: number,
+  viewedMonth: number,
+  paymentDueDay: number
+) {
+  const bounds = teacherPaymentBoundsForCompetenceMonth(viewedYear, viewedMonth, paymentDueDay)
+  const exact = await prisma.teacherPaymentMonth.findFirst({
+    where: {
+      teacherId,
+      periodoInicio: bounds.inicio,
+      periodoTermino: bounds.termino,
+    },
+    orderBy: { periodoTermino: 'desc' },
+  })
+  if (exact) return exact
+
+  const competence = teacherPaymentCompetenceKeyFromPeriodoTermino(bounds.termino)
+  return findTeacherPaymentMonthByCompetenceBrt(
+    teacherId,
+    competence.year,
+    competence.month
+  )
+}
 
 /** Registro cujo `periodoTermino` corresponde ao mês de competência BRT. */
 export async function findTeacherPaymentMonthByCompetenceBrt(

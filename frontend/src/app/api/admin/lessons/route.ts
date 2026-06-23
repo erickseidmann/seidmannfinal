@@ -171,6 +171,7 @@ export async function POST(request: NextRequest) {
       repeatFrequencyEnabled = false,
       repeatFrequencyWeeks: repeatFrequencyWeeksParam = 0,
       canceledLessonInfo, // { startAt: string, teacherId: string } - informações da aula cancelada para envio de email
+      cancelamentoExcecao,
     } = body
 
     if (!enrollmentId || !teacherId || !startAtStr) {
@@ -349,13 +350,13 @@ export async function POST(request: NextRequest) {
           where: { id: canceledLessonIdFromBody, enrollmentId },
           select: { id: true, status: true },
         })
-        if (!cl || !lessonStatusValidOriginForReposicao(cl.status)) {
+        if (!cl || !lessonStatusValidOriginForReposicao(cl.status, { cancelamentoExcecao: cancelamentoExcecao === true })) {
           return NextResponse.json(
             {
               ok: false,
               message:
                 cl?.status === 'CANCELLED_NO_REPLACEMENT'
-                  ? 'Esta aula foi cancelada sem reposição; não é possível agendar reposição a partir dela.'
+                  ? 'Esta aula foi cancelada sem reposição. Para reagendar, registre uma exceção.'
                   : 'Não foi encontrada a aula cancelada de origem válida para esta reposição.',
             },
             { status: 400 }

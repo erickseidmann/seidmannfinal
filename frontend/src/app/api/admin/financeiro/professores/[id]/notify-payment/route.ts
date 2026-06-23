@@ -11,9 +11,10 @@ import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
 import { syncTeacherPaymentMarkedPaidAt } from '@/lib/finance/teacher-payment-marked-paid-at'
 import {
-  findTeacherPaymentMonthByCompetenceBrt,
+  findTeacherPaymentMonthForAdminView,
   upsertKeysForCompetenceMonth,
 } from '@/lib/teacher-payment-month-db'
+import { teacherPaymentBoundsForCompetenceMonth } from '@/lib/teacher-paid-period'
 import { isTeacherPayableInMonth } from '@/lib/teacher-inactive'
 
 const MESES_LABELS: Record<number, string> = {
@@ -55,7 +56,14 @@ export async function POST(
     const { id: teacherId } = await params
     const teacher = await prisma.teacher.findUnique({
       where: { id: teacherId },
-      include: { user: { select: { id: true, nome: true, email: true } } },
+      select: {
+        id: true,
+        status: true,
+        inactiveAt: true,
+        paymentDueDay: true,
+        valorPorHora: true,
+        user: { select: { id: true, nome: true, email: true } },
+      },
     })
     if (!teacher || !teacher.user) {
       return NextResponse.json(
@@ -138,11 +146,22 @@ export async function POST(
     })
 
     if (markPaid) {
-      const existingByEnd = await findTeacherPaymentMonthByCompetenceBrt(teacherId, year, month)
+      const dueDay =
+        teacher.paymentDueDay != null && teacher.paymentDueDay >= 1 && teacher.paymentDueDay <= 31
+          ? teacher.paymentDueDay
+          : 1
+      const bounds = teacherPaymentBoundsForCompetenceMonth(year, month, dueDay)
+      const existingByEnd = await findTeacherPaymentMonthForAdminView(
+        teacherId,
+        year,
+        month,
+        dueDay
+      )
       const { year: keyYear, month: keyMonth } = upsertKeysForCompetenceMonth(
         year,
         month,
-        existingByEnd
+        existingByEnd,
+        bounds.termino
       )
 
       const pmExisting = await prisma.teacherPaymentMonth.findUnique({
@@ -156,9 +175,13 @@ export async function POST(
           year: keyYear,
           month: keyMonth,
           paymentStatus: 'PAGO',
+          periodoInicio: bounds.inicio,
+          periodoTermino: bounds.termino,
         },
         update: {
           paymentStatus: 'PAGO',
+          periodoInicio: bounds.inicio,
+          periodoTermino: bounds.termino,
         },
       })
       await syncTeacherPaymentMarkedPaidAt(

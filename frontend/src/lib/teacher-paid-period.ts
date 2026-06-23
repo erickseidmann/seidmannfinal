@@ -77,7 +77,7 @@ export function periodoTerminoRangeForCompetenceMonthBrt(
   year: number,
   month: number
 ): { gt: Date; lte: Date } {
-  const minTerminoMs = Date.UTC(year, month - 1, 1, 3, 0, 0, 1)
+  const minTerminoMs = Date.UTC(year, month - 1, 1, 3, 0, 0, 0)
   const maxTerminoMs = Date.UTC(
     month === 12 ? year + 1 : year,
     month === 12 ? 0 : month,
@@ -94,19 +94,49 @@ export function periodoTerminoRangeForCompetenceMonthBrt(
 }
 
 /**
- * Período [início, término) para o mês de **competência** (year/month) e dia de pagamento.
- * Para dueDay === 1, a referência de pagamento é o mês civil seguinte à competência.
+ * Período [início, término) na tela do mês `competenceYear`/`competenceMonth` e dia de vencimento.
+ * Ex.: tela junho + dia 1 → 01/05..01/06 (maio). Tela junho + dia 10 → 10/05..10/06.
  */
 export function teacherPaymentBoundsForCompetenceMonth(
   competenceYear: number,
   competenceMonth: number,
   dueDay: number
 ): { inicio: Date; termino: Date } {
-  const ref =
-    dueDay === 1
-      ? nextCompetenceYearMonth(competenceYear, competenceMonth)
-      : { year: competenceYear, month: competenceMonth }
-  return teacherPaymentBoundsFromDueDay(ref.year, ref.month, dueDay)
+  return teacherPaymentBoundsFromDueDay(competenceYear, competenceMonth, dueDay)
+}
+
+/** Último dia civil inclusivo do período (para avisos na UI). */
+export function teacherPaymentPeriodLastInclusiveDay(
+  periodoInicio: Date,
+  periodoTermino: Date
+): string {
+  const lastMs = periodoTermino.getTime() - 1
+  const brt = new Date(lastMs - TEACHER_PAYMENT_BRT_OFFSET_MS)
+  const y = brt.getUTCFullYear()
+  const m = String(brt.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(brt.getUTCDate()).padStart(2, '0')
+  return `${d}/${m}/${y}`
+}
+
+/** true se hoje (BRT) ainda não passou do último dia inclusivo do período. */
+export function isTeacherPaymentPeriodStillOpen(
+  periodoInicio: Date,
+  periodoTermino: Date,
+  now = new Date()
+): boolean {
+  const b = teacherPaymentPeriodBoundsUtc(periodoInicio, periodoTermino)
+  if (!b) return false
+  const todayBrt = new Date(now.getTime() - TEACHER_PAYMENT_BRT_OFFSET_MS)
+  const todayStartMs = Date.UTC(
+    todayBrt.getUTCFullYear(),
+    todayBrt.getUTCMonth(),
+    todayBrt.getUTCDate(),
+    BRT_MIDNIGHT_UTC_HOUR,
+    0,
+    0,
+    0
+  )
+  return todayStartMs < b.endExclusiveMs
 }
 
 /** Chaves de upsert: prioriza `periodoTermino`; senão competência informada pelo caller. */
