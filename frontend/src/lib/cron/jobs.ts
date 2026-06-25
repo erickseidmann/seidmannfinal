@@ -18,6 +18,10 @@ import path from 'path'
 import type { SyncStatementPaymentsResult } from '@/lib/payments/sync-statement-payments'
 import { syncNormalizedPayments } from '@/lib/payments/sync-statement-payments'
 import { syncActiveBolsistasPaymentMonth } from '@/lib/bolsista-payment'
+import {
+  enrollmentMonthBlocksBilling,
+  enrollmentReceivesBillingMessages,
+} from '@/lib/billing-eligibility'
 
 const TOLERANCE_DAYS = 3
 const BATCH_SIZE = 50
@@ -72,7 +76,7 @@ export async function runMarkOverdue(): Promise<{
       where: { enrollmentId_year_month: { enrollmentId: enrollment.id, year, month } },
       select: { paymentStatus: true },
     })
-    if (existing?.paymentStatus === 'PAGO' || existing?.paymentStatus === 'ATRASADO') {
+    if (existing?.paymentStatus === 'PAGO' || existing?.paymentStatus === 'ATRASADO' || existing?.paymentStatus === 'REMOVIDO') {
       skipped++
       continue
     }
@@ -335,8 +339,13 @@ export async function runPaymentNotifications(): Promise<{
       where: { enrollmentId_year_month: { enrollmentId: enrollment.id, year, month } },
       select: { paymentStatus: true },
     })
-    if (paymentMonth?.paymentStatus === 'PAGO') {
+    if (enrollmentMonthBlocksBilling(paymentMonth?.paymentStatus)) {
       skippedPaid++
+      continue
+    }
+
+    const billingGate = enrollmentReceivesBillingMessages(enrollment)
+    if (!billingGate.ok) {
       continue
     }
 
@@ -475,7 +484,7 @@ export async function runGenerateInvoices(): Promise<{
       where: { enrollmentId_year_month: { enrollmentId: e.id, year, month } },
       select: { paymentStatus: true },
     })
-    if (paid?.paymentStatus === 'PAGO') continue
+    if (enrollmentMonthBlocksBilling(paid?.paymentStatus)) continue
 
     try {
       await generateMonthlyBilling({

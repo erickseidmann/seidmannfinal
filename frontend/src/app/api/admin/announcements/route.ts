@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { notificationRetentionCutoff } from '@/lib/notification-retention'
+import { announcementAlertMessage } from '@/lib/announcement-alert'
 
 /** Vercel / ambientes serverless: anúncios para muitos alunos podem demorar (vários inserts em lote). */
 export const maxDuration = 120
@@ -148,7 +149,7 @@ export async function POST(request: NextRequest) {
           await tx.teacherAlert.createMany({
             data: slice.map((t) => ({
               teacherId: t.id,
-              message: 'Tem um novo anúncio.',
+              message: announcementAlertMessage(ann.id),
               type: 'NEW_ANNOUNCEMENT',
               level: 'INFO',
               createdById: auth.session?.sub ?? null,
@@ -170,7 +171,7 @@ export async function POST(request: NextRequest) {
           await tx.studentAlert.createMany({
             data: slice.map((e) => ({
               enrollmentId: e.id,
-              message: 'Tem um novo anúncio.',
+              message: announcementAlertMessage(ann.id),
               level: 'INFO',
               createdById: auth.session?.sub ?? null,
             })),

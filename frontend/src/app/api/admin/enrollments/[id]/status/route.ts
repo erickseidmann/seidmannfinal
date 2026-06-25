@@ -19,6 +19,7 @@ import {
 } from '@/lib/datetime'
 import { mensagemAlunoInativoProfessor, sendEmail } from '@/lib/email'
 import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
+import { cancelAllOpenCoraInvoicesForEnrollment } from '@/lib/cora/cancel-open-invoices'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
@@ -237,6 +238,19 @@ export async function PATCH(
     }
 
     console.log(`[api/admin/enrollments/${id}/status] Status atualizado: ${enrollment.status} -> ${status}`)
+
+    if (status === 'INACTIVE' || status === 'PAUSED') {
+      try {
+        const cancelled = await cancelAllOpenCoraInvoicesForEnrollment(id)
+        if (cancelled > 0) {
+          console.log(
+            `[api/admin/enrollments/${id}/status] ${cancelled} boleto(s) Cora cancelado(s) ao mudar status para ${status}`
+          )
+        }
+      } catch (err) {
+        console.error(`[api/admin/enrollments/${id}/status] Erro ao cancelar boletos Cora:`, err)
+      }
+    }
 
     if (inactiveNotify && prisma.teacherAlert) {
       const { teacherIds, nomeAluno, nomeGrupo, dataPt } = inactiveNotify

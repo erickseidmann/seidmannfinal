@@ -17,6 +17,7 @@ import { validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { auditFieldsForUpdate, resolveAdminActor } from '@/lib/record-audit'
 import { ensureBolsistaPaymentMonthPaid } from '@/lib/bolsista-payment'
+import { cancelAllOpenCoraInvoicesForEnrollment } from '@/lib/cora/cancel-open-invoices'
 import {
   cancelLessonsIfMissingPaymentInfo,
   enrollmentPaymentRowHasCompleteInfo,
@@ -377,6 +378,22 @@ export async function PATCH(
         )
       }
 
+      if (
+        (newStatus === 'INACTIVE' || newStatus === 'PAUSED') &&
+        newStatus !== oldStatus
+      ) {
+        try {
+          const cancelled = await cancelAllOpenCoraInvoicesForEnrollment(id)
+          if (cancelled > 0) {
+            console.log(
+              `[api/admin/enrollments/${id}] ${cancelled} boleto(s) Cora cancelado(s) ao mudar status para ${newStatus}`
+            )
+          }
+        } catch (err) {
+          console.error(`[api/admin/enrollments/${id}] Erro ao cancelar boletos Cora:`, err)
+        }
+      }
+
       const enrollmentWithPayment = await prisma.enrollment.findUnique({
         where: { id },
         select: {
@@ -495,6 +512,12 @@ export async function DELETE(
         },
         { status: 400 }
       )
+    }
+
+    try {
+      await cancelAllOpenCoraInvoicesForEnrollment(id)
+    } catch (err) {
+      console.error(`[api/admin/enrollments/${id} DELETE] Erro ao cancelar boletos Cora:`, err)
     }
 
     await prisma.enrollment.delete({ where: { id } })

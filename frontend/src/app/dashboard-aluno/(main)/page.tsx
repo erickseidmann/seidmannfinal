@@ -22,6 +22,12 @@ import {
   ClipboardList,
 } from 'lucide-react'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
+import AnnouncementViewModal from '@/components/AnnouncementViewModal'
+import {
+  isNewAnnouncementAlert,
+  resolveAnnouncementForAlert,
+  type AnnouncementPreview,
+} from '@/lib/announcement-alert'
 import {
   formatDateOnlyInTZ,
   formatLessonDateShortInTZ,
@@ -38,6 +44,7 @@ interface AlertItem {
   level: string | null
   readAt?: string | null
   criadoEm: string
+  announcementId?: string | null
 }
 
 interface NextLesson {
@@ -86,6 +93,7 @@ interface LessonRequest {
 
 interface DashboardInfo {
   alerts: AlertItem[]
+  announcements?: AnnouncementPreview[]
   nextLesson: NextLesson | null
   lastLesson: LastLesson | null
   lessonRecords?: LessonRecord[]
@@ -109,6 +117,8 @@ export default function DashboardAlunoInicioPage() {
   const [lessonRequests, setLessonRequests] = useState<LessonRequest[]>([])
   const [loadingRequests, setLoadingRequests] = useState(true)
   const [loadingDashboard, setLoadingDashboard] = useState(true)
+  const [selectedAnnouncement, setSelectedAnnouncement] = useState<AnnouncementPreview | null>(null)
+  const [announcementModalOpen, setAnnouncementModalOpen] = useState(false)
   const [, setTick] = useState(0)
 
   useEffect(() => {
@@ -162,6 +172,34 @@ export default function DashboardAlunoInicioPage() {
         }
       })
       .finally(() => setDeletingAlertId(null))
+  }
+
+  const markAlertRead = async (id: string) => {
+    try {
+      const res = await fetch(`/api/student/alerts/${id}/read`, {
+        method: 'PATCH',
+        credentials: 'include',
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!json?.ok || !dashboardInfo) return
+      setDashboardInfo({
+        ...dashboardInfo,
+        alerts: dashboardInfo.alerts.map((a) =>
+          a.id === id ? { ...a, readAt: new Date().toISOString() } : a
+        ),
+      })
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const openAnnouncementFromAlert = (alert: AlertItem) => {
+    const announcements = dashboardInfo?.announcements ?? []
+    const announcement = resolveAnnouncementForAlert(alert, announcements)
+    if (!announcement) return
+    setSelectedAnnouncement(announcement)
+    setAnnouncementModalOpen(true)
+    if (!alert.readAt) void markAlertRead(alert.id)
   }
 
   const displayName = aluno?.nome || 'Aluno'
@@ -533,14 +571,33 @@ export default function DashboardAlunoInicioPage() {
                   </p>
                 )}
 
-                {alerts.slice(0, 5).map((a) => (
+                {alerts.slice(0, 5).map((a) => {
+                  const opensAnnouncement = isNewAnnouncementAlert(a.message)
+                  return (
                   <div
                     key={a.id}
+                    role={opensAnnouncement ? 'button' : undefined}
+                    tabIndex={opensAnnouncement ? 0 : undefined}
+                    onClick={
+                      opensAnnouncement
+                        ? () => openAnnouncementFromAlert(a)
+                        : undefined
+                    }
+                    onKeyDown={
+                      opensAnnouncement
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              openAnnouncementFromAlert(a)
+                            }
+                          }
+                        : undefined
+                    }
                     className={`rounded-xl border px-3 py-2.5 text-sm flex items-start justify-between gap-2 ${
                       a.readAt
                         ? 'bg-white/80 border-red-100 text-gray-700'
                         : 'bg-white border-red-200 shadow-sm'
-                    }`}
+                    } ${opensAnnouncement ? 'cursor-pointer hover:border-red-300 hover:shadow-md transition-shadow' : ''}`}
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-red-700/90">
@@ -548,10 +605,16 @@ export default function DashboardAlunoInicioPage() {
                       </p>
                       <p className="text-gray-800 mt-1 whitespace-pre-wrap">{a.message}</p>
                       <p className="text-xs text-gray-500 mt-1.5">{formatDateHour(a.criadoEm)}</p>
+                      {opensAnnouncement && (
+                        <p className="text-xs font-medium text-red-700 mt-1">Clique para abrir o anúncio</p>
+                      )}
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleExcluirNotificacao(a.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleExcluirNotificacao(a.id)
+                      }}
                       disabled={!!deletingAlertId}
                       className="shrink-0 p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                       title="Excluir"
@@ -563,7 +626,7 @@ export default function DashboardAlunoInicioPage() {
                       )}
                     </button>
                   </div>
-                ))}
+                )})}
 
                 {pendingRequests.length === 0 && alerts.length === 0 && (
                   <p className="text-sm text-gray-600 py-4">
@@ -658,6 +721,15 @@ export default function DashboardAlunoInicioPage() {
           </div>
         </section>
       </div>
+
+      <AnnouncementViewModal
+        isOpen={announcementModalOpen}
+        announcement={selectedAnnouncement}
+        onClose={() => {
+          setAnnouncementModalOpen(false)
+          setSelectedAnnouncement(null)
+        }}
+      />
     </div>
   )
 }

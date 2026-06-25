@@ -15,6 +15,10 @@ import { enrichNewStudentTeacherAlertRow } from '@/lib/teacher-new-student-alert
 import { PROFESSOR_SYSTEM_ALERT_TYPES } from '@/lib/teacher-alert-kinds'
 import { requireTeacher } from '@/lib/auth'
 import { isLessonScheduledStatus } from '@/lib/lesson-status'
+import {
+  displayAlertMessage,
+  parseAnnouncementIdFromAlertMessage,
+} from '@/lib/announcement-alert'
 
 function studentLabel(
   enr: { nome: string; tipoAula: string | null; nomeGrupo: string | null }
@@ -134,6 +138,7 @@ export async function GET(request: NextRequest) {
       level: string | null
       readAt: string | null
       criadoEm: string
+      announcementId: string | null
     }[] = []
     if (prisma.teacherAlert) {
       const feedCutoff = cutoffDateProfessorHomeFeed()
@@ -154,11 +159,12 @@ export async function GET(request: NextRequest) {
       )
       alerts = enriched.map((a) => ({
         id: a.id,
-        message: a.message,
-        type: a.type,
+        message: displayAlertMessage(a.message),
+        type: a.type ?? '',
         level: a.level,
         readAt: a.readAt?.toISOString() ?? null,
         criadoEm: a.criadoEm.toISOString(),
+        announcementId: parseAnnouncementIdFromAlertMessage(a.message),
       }))
     }
 

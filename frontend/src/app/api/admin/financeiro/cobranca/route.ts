@@ -19,6 +19,7 @@ import {
   BOLETO_NOT_ELIGIBLE_MESSAGE,
   enrollmentEligibleForBoleto,
 } from '@/lib/boleto-eligibility'
+import { enrollmentMonthBlocksBilling } from '@/lib/billing-eligibility'
 
 const createBillingSchema = z.object({
   enrollmentId: z.string().optional(),
@@ -95,6 +96,18 @@ export async function POST(request: NextRequest) {
       if (!enrollmentEligibleForBoleto(enrollment)) {
         return NextResponse.json(
           { ok: false, message: BOLETO_NOT_ELIGIBLE_MESSAGE },
+          { status: 400 }
+        )
+      }
+
+      const paymentMonth = await prisma.enrollmentPaymentMonth.findUnique({
+        where: { enrollmentId_year_month: { enrollmentId, year, month } },
+        select: { paymentStatus: true },
+      })
+      if (enrollmentMonthBlocksBilling(paymentMonth?.paymentStatus)) {
+        const label = paymentMonth?.paymentStatus === 'REMOVIDO' ? 'removido deste mês' : 'já pago'
+        return NextResponse.json(
+          { ok: false, message: `Aluno ${enrollment.nome} está ${label} em ${String(month).padStart(2, '0')}/${year}.` },
           { status: 400 }
         )
       }

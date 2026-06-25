@@ -8,6 +8,14 @@ import { prisma } from '@/lib/prisma'
 import { requireStudent } from '@/lib/auth'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { expandEnrollmentIdsForGroupLessons } from '@/lib/student-group-lesson-access'
+import {
+  parseAnnouncementIdFromAlertMessage,
+  displayAlertMessage,
+} from '@/lib/announcement-alert'
+import {
+  announcementWhereStudentVisible,
+  cutoffDateStudentHomeFeed,
+} from '@/lib/student-home-feed'
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,7 +35,14 @@ export async function GET(request: NextRequest) {
     const enrollmentIds = await expandEnrollmentIdsForGroupLessons(ownEnrollmentIds)
     const now = new Date()
 
-    const alerts: { id: string; message: string; level: string | null; readAt: string | null; criadoEm: string }[] = []
+    const alerts: {
+      id: string
+      message: string
+      level: string | null
+      readAt: string | null
+      criadoEm: string
+      announcementId: string | null
+    }[] = []
     if (enrollmentIds.length > 0) {
       const cutoff = new Date()
       cutoff.setDate(cutoff.getDate() - 15)
@@ -49,12 +64,37 @@ export async function GET(request: NextRequest) {
       alertRows.forEach((a) => {
         alerts.push({
           id: a.id,
-          message: a.message,
+          message: displayAlertMessage(a.message),
           level: a.level,
           readAt: a.readAt?.toISOString() ?? null,
           criadoEm: a.criadoEm.toISOString(),
+          announcementId: parseAnnouncementIdFromAlertMessage(a.message),
         })
       })
+    }
+
+    let announcements: {
+      id: string
+      title: string
+      message: string
+      criadoEm: string
+      sentAt: string | null
+    }[] = []
+    if (prisma.announcement) {
+      const feedCutoff = cutoffDateStudentHomeFeed()
+      const annRows = await prisma.announcement.findMany({
+        where: announcementWhereStudentVisible(feedCutoff),
+        orderBy: { criadoEm: 'desc' },
+        take: 15,
+        select: { id: true, title: true, message: true, criadoEm: true, sentAt: true },
+      })
+      announcements = annRows.map((a) => ({
+        id: a.id,
+        title: a.title,
+        message: a.message,
+        criadoEm: a.criadoEm.toISOString(),
+        sentAt: a.sentAt?.toISOString() ?? null,
+      }))
     }
 
     let nextLesson: { id: string; startAt: string; teacherName: string; durationMinutes: number } | null = null
@@ -163,7 +203,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      data: { alerts, nextLesson, lastLesson, lessonRecords },
+      data: { alerts, announcements, nextLesson, lastLesson, lessonRecords },
     })
   } catch (error) {
     console.error('[api/student/dashboard-info GET]', error)

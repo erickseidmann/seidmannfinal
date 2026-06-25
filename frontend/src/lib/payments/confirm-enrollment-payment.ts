@@ -6,7 +6,7 @@
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { cancelInvoice } from '@/lib/cora/client'
+import { cancelOpenCoraInvoiceForMonth } from '@/lib/cora/cancel-open-invoices'
 import { getInvoice } from '@/lib/cora'
 import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
@@ -170,29 +170,12 @@ export async function applyEnrollmentPaymentConfirmation(
 }
 
 /** Cancela boleto Cora em aberto para o mês (marcação manual PAGO no admin). */
-async function cancelOpenCoraInvoiceForMonth(
+async function cancelOpenCoraForMonthLocal(
   enrollmentId: string,
   year: number,
   month: number
 ): Promise<void> {
-  const coraInvoice = await prisma.coraInvoice.findUnique({
-    where: { enrollmentId_year_month: { enrollmentId, year, month } },
-  })
-  if (!coraInvoice || coraInvoice.status === 'PAID' || coraInvoice.status === 'CANCELLED') {
-    return
-  }
-  try {
-    await cancelInvoice(coraInvoice.coraInvoiceId)
-    await prisma.coraInvoice.update({
-      where: { id: coraInvoice.id },
-      data: { status: 'CANCELLED' },
-    })
-  } catch (err) {
-    console.error(
-      `[confirm-enrollment-payment] Erro ao cancelar boleto Cora ${coraInvoice.coraInvoiceId}:`,
-      err
-    )
-  }
+  await cancelOpenCoraInvoiceForMonth(enrollmentId, year, month)
 }
 
 export async function runConfirmEnrollmentPaymentSideEffects(
@@ -206,7 +189,7 @@ export async function runConfirmEnrollmentPaymentSideEffects(
   const { enrollmentId, year, month, paidAt, source, cancelCoraIfOpen } = params
 
   if (cancelCoraIfOpen) {
-    await cancelOpenCoraInvoiceForMonth(enrollmentId, year, month)
+    await cancelOpenCoraForMonthLocal(enrollmentId, year, month)
   }
 
   await liberarAcessoAlunoSafe({

@@ -8,7 +8,11 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sendEmail } from '@/lib/email'
 import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
-import { enrollmentReceivesBillingMessages } from '@/lib/bolsista-payment'
+import {
+  enrollmentReceivesBillingMessages,
+  billingYearMonthFromEnrollment,
+} from '@/lib/bolsista-payment'
+import { enrollmentMonthBlocksBilling } from '@/lib/billing-eligibility'
 
 /** Próxima data de vencimento dado o dia do mês (1-31). Se o dia já passou neste mês, retorna o mês que vem. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate?: Date): Date {
@@ -79,11 +83,48 @@ function billingBlockResponse(enrollment: {
 }) {
   const gate = enrollmentReceivesBillingMessages(enrollment)
   if (gate.ok) return null
-  const label = gate.reason === 'Aluno bolsista' ? 'bolsista' : 'inativo'
   return NextResponse.json(
-    { ok: false, message: `Aluno ${label} (${enrollment.nome}) não deve receber cobrança.` },
+    { ok: false, message: `${gate.reason} (${enrollment.nome}) — cobrança não enviada.` },
     { status: 400 }
   )
+}
+
+async function billingMonthBlockResponse(
+  enrollmentId: string,
+  enrollment: {
+    diaPagamento?: number | null
+    paymentInfo?: { dueDay?: number | null } | null
+    nome: string
+  }
+) {
+  const now = new Date()
+  const calendarYear = now.getFullYear()
+  const calendarMonth = now.getMonth() + 1
+  const { year: billingYear, month: billingMonth } = billingYearMonthFromEnrollment(enrollment)
+
+  const monthsToCheck = new Set([
+    `${calendarYear}-${calendarMonth}`,
+    `${billingYear}-${billingMonth}`,
+  ])
+
+  for (const key of monthsToCheck) {
+    const [y, m] = key.split('-').map(Number)
+    const pm = await prisma.enrollmentPaymentMonth.findUnique({
+      where: { enrollmentId_year_month: { enrollmentId, year: y, month: m } },
+      select: { paymentStatus: true },
+    })
+    if (enrollmentMonthBlocksBilling(pm?.paymentStatus)) {
+      const label = pm?.paymentStatus === 'REMOVIDO' ? 'removido deste mês' : 'já pago'
+      return NextResponse.json(
+        {
+          ok: false,
+          message: `Aluno ${enrollment.nome} está ${label} em ${String(m).padStart(2, '0')}/${y}. Cobrança não enviada.`,
+        },
+        { status: 400 }
+      )
+    }
+  }
+  return null
 }
 
 export async function GET(
@@ -111,6 +152,8 @@ export async function GET(
     }
     const billingBlocked = billingBlockResponse(enrollment)
     if (billingBlocked) return billingBlocked
+    const monthBlocked = await billingMonthBlockResponse(enrollmentId, enrollment)
+    if (monthBlocked) return monthBlocked
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()
     if (!email) {
@@ -157,6 +200,8 @@ export async function POST(
 
     const billingBlocked = billingBlockResponse(enrollment)
     if (billingBlocked) return billingBlocked
+    const monthBlocked = await billingMonthBlockResponse(enrollmentId, enrollment)
+    if (monthBlocked) return monthBlocked
 
     const finance = getEnrollmentFinanceData(enrollment)
     const email = finance.email?.trim()

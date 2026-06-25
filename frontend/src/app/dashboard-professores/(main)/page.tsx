@@ -33,6 +33,12 @@ import { toDateKeyInTZ } from '@/lib/datetime'
 import TeacherRecordDeadlineAlert, {
   type TeacherRecordDeadlineLesson,
 } from '@/components/professor/TeacherRecordDeadlineAlert'
+import AnnouncementViewModal from '@/components/AnnouncementViewModal'
+import {
+  isNewAnnouncementAlert,
+  resolveAnnouncementForAlert,
+  type AnnouncementPreview,
+} from '@/lib/announcement-alert'
 
 function getStartOfDay(d: Date): Date {
   const x = new Date(d)
@@ -80,6 +86,7 @@ type AlertRow = {
   type: string
   readAt: string | null
   criadoEm: string
+  announcementId?: string | null
 }
 
 type AnnouncementRow = {
@@ -130,6 +137,8 @@ export default function DashboardProfessoresInicioPage() {
   } | null>(null)
   const [widgetsLoading, setWidgetsLoading] = useState(true)
   const [widgetsError, setWidgetsError] = useState<string | null>(null)
+  const [selectedAnnouncement, setSelectedAnnouncement] = useState<AnnouncementPreview | null>(null)
+  const [announcementModalOpen, setAnnouncementModalOpen] = useState(false)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
@@ -240,6 +249,20 @@ export default function DashboardProfessoresInicioPage() {
     } catch {
       /* ignore */
     }
+  }
+
+  const openAnnouncementFromAlert = (alert: AlertRow) => {
+    const announcements = widgets?.announcements ?? []
+    const announcement = resolveAnnouncementForAlert(alert, announcements)
+    if (!announcement) return
+    setSelectedAnnouncement(announcement)
+    setAnnouncementModalOpen(true)
+    if (!alert.readAt) void markAlertRead(alert.id)
+  }
+
+  const openAnnouncement = (announcement: AnnouncementRow) => {
+    setSelectedAnnouncement(announcement)
+    setAnnouncementModalOpen(true)
   }
 
   useEffect(() => {
@@ -641,14 +664,31 @@ export default function DashboardProfessoresInicioPage() {
               <p className="text-sm text-gray-600 py-4">{t('professor.home.noNotifications')}</p>
             ) : (
               <ul className="space-y-2.5">
-                {widgets.alerts.map((a) => (
+                {widgets.alerts.map((a) => {
+                  const opensAnnouncement = isNewAnnouncementAlert(a.message, a.type)
+                  return (
                   <li
                     key={a.id}
+                    role={opensAnnouncement ? 'button' : undefined}
+                    tabIndex={opensAnnouncement ? 0 : undefined}
+                    onClick={
+                      opensAnnouncement ? () => openAnnouncementFromAlert(a) : undefined
+                    }
+                    onKeyDown={
+                      opensAnnouncement
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              openAnnouncementFromAlert(a)
+                            }
+                          }
+                        : undefined
+                    }
                     className={`rounded-xl border px-3 py-2.5 text-sm ${
                       a.readAt
                         ? 'bg-white/80 border-red-100 text-gray-700'
                         : 'bg-white border-red-200 shadow-sm'
-                    }`}
+                    } ${opensAnnouncement ? 'cursor-pointer hover:border-red-300 hover:shadow-md transition-shadow' : ''}`}
                   >
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-red-700/90">
                       {notifTypeLabel(a.type, t)}
@@ -663,10 +703,18 @@ export default function DashboardProfessoresInicioPage() {
                           minute: '2-digit',
                         }).format(new Date(a.criadoEm))}
                       </span>
-                      {!a.readAt && (
+                      {opensAnnouncement && (
+                        <span className="text-xs font-medium text-red-700">
+                          {t('professor.home.openAnnouncement')}
+                        </span>
+                      )}
+                      {!a.readAt && !opensAnnouncement && (
                         <button
                           type="button"
-                          onClick={() => void markAlertRead(a.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void markAlertRead(a.id)
+                          }}
                           className="text-xs font-medium text-red-700 hover:underline"
                         >
                           {t('professor.home.markRead')}
@@ -674,7 +722,7 @@ export default function DashboardProfessoresInicioPage() {
                       )}
                     </div>
                   </li>
-                ))}
+                )})}
               </ul>
             )}
           </div>
@@ -706,23 +754,37 @@ export default function DashboardProfessoresInicioPage() {
                 {widgets.announcements.map((a) => (
                   <li
                     key={a.id}
-                    className="rounded-xl bg-white/90 border border-amber-100 px-3 py-2.5 text-sm shadow-sm"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openAnnouncement(a)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        openAnnouncement(a)
+                      }
+                    }}
+                    className="rounded-xl bg-white/90 border border-amber-100 px-3 py-2.5 text-sm shadow-sm cursor-pointer hover:border-amber-300 hover:shadow-md transition-shadow"
                   >
                     <p className="font-semibold text-gray-900">{a.title}</p>
                     <p className="text-gray-700 mt-1 line-clamp-4 whitespace-pre-wrap">{a.message}</p>
-                    <p className="text-xs text-amber-900/60 mt-2">
-                      {a.sentAt
-                        ? `${t('professor.home.sentAt')}: ${new Intl.DateTimeFormat(dateLocale, {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric',
-                          }).format(new Date(a.sentAt))}`
-                        : `${t('professor.home.createdAt')}: ${new Intl.DateTimeFormat(dateLocale, {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric',
-                          }).format(new Date(a.criadoEm))}`}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <p className="text-xs text-amber-900/60">
+                        {a.sentAt
+                          ? `${t('professor.home.sentAt')}: ${new Intl.DateTimeFormat(dateLocale, {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            }).format(new Date(a.sentAt))}`
+                          : `${t('professor.home.createdAt')}: ${new Intl.DateTimeFormat(dateLocale, {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            }).format(new Date(a.criadoEm))}`}
+                      </p>
+                      <span className="text-xs font-medium text-amber-800">
+                        {t('professor.home.openAnnouncement')}
+                      </span>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -730,6 +792,16 @@ export default function DashboardProfessoresInicioPage() {
           </div>
         </section>
       </div>
+
+      <AnnouncementViewModal
+        isOpen={announcementModalOpen}
+        announcement={selectedAnnouncement}
+        dateLocale={dateLocale}
+        onClose={() => {
+          setAnnouncementModalOpen(false)
+          setSelectedAnnouncement(null)
+        }}
+      />
     </div>
   )
 }

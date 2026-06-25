@@ -282,10 +282,10 @@ export async function generateBulkBilling(params: {
 
   // Buscar todos os pagamentos já confirmados para este mês de uma vez
   const paidRecords = await prisma.enrollmentPaymentMonth.findMany({
-    where: { year, month, paymentStatus: 'PAGO' },
+    where: { year, month, paymentStatus: { in: ['PAGO', 'REMOVIDO'] } },
     select: { enrollmentId: true },
   })
-  const paidSet = new Set(paidRecords.map((r) => r.enrollmentId))
+  const blockedMonthSet = new Set(paidRecords.map((r) => r.enrollmentId))
 
   // Buscar boletos já existentes para este mês de uma vez
   const existingInvoices = await prisma.coraInvoice.findMany({
@@ -301,7 +301,7 @@ export async function generateBulkBilling(params: {
   let skippedIneligible = 0
 
   for (const enrollment of enrollments) {
-    if (paidSet.has(enrollment.id)) {
+    if (blockedMonthSet.has(enrollment.id)) {
       skippedPaid++
       continue
     }

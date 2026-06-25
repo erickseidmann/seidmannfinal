@@ -73,10 +73,14 @@ export async function POST(request: NextRequest) {
     })
 
     const paidRecords = await prisma.enrollmentPaymentMonth.findMany({
-      where: { year, month, paymentStatus: 'PAGO' },
+      where: {
+        year,
+        month,
+        paymentStatus: { in: ['PAGO', 'REMOVIDO'] },
+      },
       select: { enrollmentId: true },
     })
-    const paidSet = new Set(paidRecords.map((r) => r.enrollmentId))
+    const blockedMonthSet = new Set(paidRecords.map((r) => r.enrollmentId))
 
     const existingInvoices = await prisma.coraInvoice.findMany({
       where: { year, month },
@@ -91,7 +95,9 @@ export async function POST(request: NextRequest) {
     let skippedIneligible = 0
 
     for (const enrollment of enrollments) {
-      if (paidSet.has(enrollment.id)) {
+      if (!enrollmentReceivesBillingMessages(enrollment).ok) continue
+
+      if (blockedMonthSet.has(enrollment.id)) {
         skippedPaid++
         continue
       }
