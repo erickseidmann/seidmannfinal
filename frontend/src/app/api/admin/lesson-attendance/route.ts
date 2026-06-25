@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
         durationMinutes: true,
         status: true,
         enrollment: { select: { nome: true } },
-        teacher: { select: { nome: true } },
+        teacher: { select: { id: true, nome: true } },
         teacherAbsenceReports: {
           where: { reportType: 'ABSENT' },
           select: { id: true },
@@ -84,11 +84,13 @@ export async function GET(request: NextRequest) {
       status: l.status,
       studentName: l.enrollment?.nome ?? '—',
       teacherName: l.teacher?.nome ?? '—',
+      teacherId: l.teacher?.id ?? null,
       teacherAbsenceReportId: l.teacherAbsenceReports?.[0]?.id ?? null,
     }))
     const teacherAbsenceReportIdByLessonId = new Map(
       lessons.map((l) => [l.id, l.teacherAbsenceReportId] as const)
     )
+    const teacherIdByLessonId = new Map(lessons.map((l) => [l.id, l.teacherId] as const))
 
     const mappedRows = attendanceRows.map((r) => {
       const lessonMeta = lessons.find((l) => l.id === r.lessonId)
@@ -115,6 +117,7 @@ export async function GET(request: NextRequest) {
     // Anexa o ID do reporte (quando houver) para permitir ações "Liberar registro"
     const summariesWithTeacherAbsenceReportId = summaries.map((s) => ({
       ...s,
+      teacherId: teacherIdByLessonId.get(s.lessonId) ?? null,
       teacherAbsenceReportId: teacherAbsenceReportIdByLessonId.get(s.lessonId) ?? null,
     }))
 

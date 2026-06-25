@@ -49,6 +49,7 @@ interface LessonSummary {
   teacherMetScheduledTime: boolean
   callStatus: 'ACTIVE' | 'ENDED'
   teacherAbsent: boolean
+  teacherId: string | null
   teacherAbsenceReportId: string | null
   sessions: AttendanceSession[]
 }
@@ -113,7 +114,7 @@ export default function AdminAcompanharChamadasPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [releasingReportId, setReleasingReportId] = useState<string | null>(null)
+  const [releasingLessonId, setReleasingLessonId] = useState<string | null>(null)
   const [retentionDays, setRetentionDays] = useState(60)
   const [retentionNotices, setRetentionNotices] = useState<RetentionNotice[]>([])
   const [downloadingDateKey, setDownloadingDateKey] = useState<string | null>(null)
@@ -217,27 +218,27 @@ export default function AdminAcompanharChamadasPage() {
     fetchRetentionNotices()
   }, [fetchRecords, fetchRetentionNotices])
 
-  const handleReleaseRegistration = useCallback(
-    async (reportId: string) => {
+  const handleReleaseRegistrationByLesson = useCallback(
+    async (lessonId: string) => {
       const ok = await confirm({
         title: 'Liberar registro',
         message:
-          'Isso encerra o alerta de ausência incorreto e libera o professor para registrar a aula normalmente. Continuar?',
+          'Isso libera o professor para registrar a aula normalmente (ausência incorreta na chamada). Continuar?',
         confirmLabel: 'Liberar',
         cancelLabel: 'Cancelar',
         variant: 'default',
       })
       if (!ok) return
 
-      setReleasingReportId(reportId)
+      setReleasingLessonId(lessonId)
       setSuccessMessage(null)
       setError(null)
       try {
-        const res = await fetch(`/api/admin/teacher-absence-reports/${reportId}`, {
-          method: 'PATCH',
+        const res = await fetch('/api/admin/lesson-record-unlock-requests/release', {
+          method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'RELEASE_REGISTRATION' }),
+          body: JSON.stringify({ lessonId }),
         })
         const json = await res.json()
         if (!res.ok || !json.ok) {
@@ -250,7 +251,7 @@ export default function AdminAcompanharChamadasPage() {
       } catch {
         setError('Erro de rede ao liberar registro')
       } finally {
-        setReleasingReportId(null)
+        setReleasingLessonId(null)
       }
     },
     [confirm, fetchRecords]
@@ -405,7 +406,7 @@ export default function AdminAcompanharChamadasPage() {
               ) : (
                 filteredSummaries.map((s) => {
                   const isExpanded = expandedId === s.lessonId
-                  const hasOpenAbsenceAlert = s.teacherAbsent && !!s.teacherAbsenceReportId
+                  const hasOpenAbsenceAlert = s.teacherAbsent
                   const rowClass = s.teacherAbsent
                     ? 'bg-red-50 hover:bg-red-100/80'
                     : 'hover:bg-gray-50/80'
@@ -455,15 +456,13 @@ export default function AdminAcompanharChamadasPage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  disabled={releasingReportId != null}
+                                  disabled={releasingLessonId != null}
                                   onClick={() => {
-                                    const rid = s.teacherAbsenceReportId
-                                    if (!rid) return
-                                    void handleReleaseRegistration(rid)
+                                    void handleReleaseRegistrationByLesson(s.lessonId)
                                   }}
                                   className="border-red-200 text-red-700 hover:bg-red-50"
                                 >
-                                  {releasingReportId === s.teacherAbsenceReportId ? (
+                                  {releasingLessonId === s.lessonId ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
                                   ) : (
                                     'Liberar registro'
