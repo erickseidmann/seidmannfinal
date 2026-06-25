@@ -4,6 +4,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { DIAS_TOLERANCIA_NF_APOS_PRAZO } from '@/lib/finance/teacher-nf-window'
 import { teacherPaymentCompetenceKeyFromPeriodoTermino } from '@/lib/teacher-paid-period'
 
 export async function resolveTeacherPaymentMonthKeyContaining(
@@ -22,13 +23,15 @@ export async function resolveTeacherPaymentMonthKeyContaining(
     take: 96,
   })
 
-  const matches = rows.filter(
-    (r) =>
-      r.periodoInicio != null &&
-      r.periodoTermino != null &&
-      r.periodoInicio.getTime() <= t &&
-      t < r.periodoTermino.getTime()
-  )
+  const toleranceMs = DIAS_TOLERANCIA_NF_APOS_PRAZO * 24 * 60 * 60 * 1000
+
+  const matches = rows.filter((r) => {
+    if (r.periodoInicio == null || r.periodoTermino == null) return false
+    const start = r.periodoInicio.getTime()
+    const end = r.periodoTermino.getTime()
+    if (start <= t && t < end) return true
+    return end <= t && t < end + toleranceMs
+  })
   if (matches.length === 0) return null
 
   matches.sort((a, b) => b.periodoInicio!.getTime() - a.periodoInicio!.getTime())
