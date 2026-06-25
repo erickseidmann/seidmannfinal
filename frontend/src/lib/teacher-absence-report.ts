@@ -301,9 +301,6 @@ export async function releaseTeacherRegistrationFromAbsenceReport(params: {
   if (!existing) {
     return { ok: false as const, status: 404, message: 'Reporte não encontrado' }
   }
-  if (existing.status === 'RESOLVED') {
-    return { ok: false as const, status: 400, message: 'Este reporte já foi resolvido' }
-  }
   if (existing.lesson.record) {
     return {
       ok: false as const,

@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
         enrollment: { select: { nome: true } },
         teacher: { select: { nome: true } },
         teacherAbsenceReports: {
-          where: { reportType: 'ABSENT', status: 'OPEN' },
+          where: { reportType: 'ABSENT' },
           select: { id: true },
           take: 1,
         },
