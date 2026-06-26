@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { auditFieldsForCreate, resolveAdminActor } from '@/lib/record-audit'
+import { parseTempoAulaMinutosForCreate } from '@/lib/enrollment-tempo-aula'
 import bcrypt from 'bcryptjs'
 
 const SENHA_PADRAO_ALUNO = '123456'
@@ -65,7 +66,6 @@ const VALID_STATUS = [
   'COMPLETED',
 ]
 const VALID_CURSO = ['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL']
-const VALID_TEMPO = [30, 40, 60, 120]
 const VALID_TIPO_AULA = ['PARTICULAR', 'GRUPO']
 const VALID_ESCOLA_MATRICULA = ['SEIDMANN', 'YOUBECOME', 'HIGHWAY', 'OUTRO']
 
@@ -153,10 +153,10 @@ export async function POST(request: NextRequest) {
       }
 
       const ta = get(row, 'tempoaulaminutos')
-      if (ta !== '' && !VALID_TEMPO.includes(Number(ta))) {
+      if (ta !== '' && parseTempoAulaMinutosForCreate(ta) == null) {
         validationErrors.push({
           row: rowNum,
-          message: `Coluna "Tempo Aula Minutos" deve ser 30, 40, 60 ou 120 (valor: "${ta}").`,
+          message: `Coluna "Tempo Aula Minutos" deve ser 30, 60 ou 120 (valor: "${ta}").`,
         })
       }
 
@@ -224,8 +224,7 @@ export async function POST(request: NextRequest) {
       let tempoAulaMinutos: number | null = null
       const ta = get(row, 'tempoaulaminutos')
       if (ta && ta !== '') {
-        const n = Number(ta)
-        if (!Number.isNaN(n) && VALID_TEMPO.includes(n)) tempoAulaMinutos = n
+        tempoAulaMinutos = parseTempoAulaMinutosForCreate(ta)
       }
 
       let tipoAula: string | null = (get(row, 'tipoaula') || '').toUpperCase() || null

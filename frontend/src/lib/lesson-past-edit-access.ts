@@ -30,3 +30,19 @@ export async function canAdminEditLessonConsideringReleasedRequest(
   if (!isLessonOnPastCalendarDay(lessonStartAt)) return true
   return lessonHasReleasedPastEditRequest(lessonId)
 }
+
+/** Conclui solicitações RELEASED após o reagendamento da aula de origem. */
+export async function completeReleasedPastEditRequestsForLesson(
+  lessonId: string,
+  processedByUserId: string
+): Promise<number> {
+  const result = await prisma.lessonPastEditRequest.updateMany({
+    where: { lessonId, status: 'RELEASED' },
+    data: {
+      status: 'APPROVED',
+      processedByUserId,
+      processedAt: new Date(),
+    },
+  })
+  return result.count
+}

@@ -12,6 +12,7 @@ import { isValidCPF } from '@/lib/finance/validators'
 import { normalizeLanguage } from '@/lib/normalizeLanguage'
 import { createUniqueTrackingCode } from '@/lib/trackingCode'
 import { sendComprovanteMatricula } from '@/lib/email'
+import { parseTempoAulaMinutosForCreate } from '@/lib/enrollment-tempo-aula'
 import { createInvoice, type CoraInvoice } from '@/lib/cora/client'
 
 export async function POST(request: NextRequest) {
@@ -348,10 +349,8 @@ export async function POST(request: NextRequest) {
           createData.escolaMatriculaOutro = escolaMatriculaOutroBody.trim().slice(0, 255) || null
         }
         if (tempoAulaMinutos != null && tempoAulaMinutos !== '') {
-          const t = typeof tempoAulaMinutos === 'number' ? tempoAulaMinutos : parseInt(String(tempoAulaMinutos), 10)
-          if (!Number.isNaN(t) && [30, 40, 60, 120].includes(t)) {
-            createData.tempoAulaMinutos = t
-          }
+          const t = parseTempoAulaMinutosForCreate(tempoAulaMinutos)
+          if (t != null) createData.tempoAulaMinutos = t
         }
         if (frequenciaSemanal != null && frequenciaSemanal !== '') {
           const f = typeof frequenciaSemanal === 'number' ? frequenciaSemanal : parseInt(String(frequenciaSemanal), 10)

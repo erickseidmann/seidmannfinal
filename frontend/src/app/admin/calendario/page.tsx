@@ -1733,6 +1733,10 @@ export default function AdminCalendarioPage() {
       }
 
       setListModal(null)
+      const releasedReq = releasedPastEditRequests.find((r) => r.lessonId === lessonId)
+      if (releasedReq) {
+        setCompletingReleasedPastEditRequestId(releasedReq.id)
+      }
       openEditLesson(lessonToEdit, { agendarReposicao: true })
       if (requiresException) {
         setCancelamentoExcecao(true)
@@ -1751,7 +1755,7 @@ export default function AdminCalendarioPage() {
     } finally {
       setReagendarCanceladaLoadingId(null)
     }
-  }, [router, enrollments, promptRescheduleException])
+  }, [router, enrollments, promptRescheduleException, releasedPastEditRequests])
 
   // Abrir modal de reposição vindo do alerta de professor ausente (?reagendar=lessonId)
   useEffect(() => {
@@ -1909,8 +1913,15 @@ export default function AdminCalendarioPage() {
         }
 
         if (completingReleasedPastEditRequestId) {
-          await completeReleasedPastEditRequest(completingReleasedPastEditRequestId)
+          const completed = await completeReleasedPastEditRequest(completingReleasedPastEditRequestId)
+          if (!completed) return
           setCompletingReleasedPastEditRequestId(null)
+        } else if (releasedPastEditLessonIds.has(editingLesson.id)) {
+          const releasedReq = releasedPastEditRequests.find((r) => r.lessonId === editingLesson.id)
+          if (releasedReq) {
+            const completed = await completeReleasedPastEditRequest(releasedReq.id)
+            if (!completed) return
+          }
         }
         
         // Verificar se há solicitação pendente associada a esta aula e processá-la
@@ -2040,6 +2051,7 @@ export default function AdminCalendarioPage() {
       setReposicaoForm({ startAt: '', teacherId: '', durationMinutes: 30 })
       fetchLessons()
       fetchStats()
+      void fetchReleasedPastEditLessons()
     } catch (err) {
       setToast({ message: 'Erro ao salvar', type: 'error' })
     } finally {

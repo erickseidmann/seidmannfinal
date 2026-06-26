@@ -7,7 +7,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { LESSON_PAST_EDIT_DENIED_MESSAGE } from '@/lib/lesson-past-edit'
-import { canAdminEditLessonConsideringReleasedRequest } from '@/lib/lesson-past-edit-access'
+import {
+  canAdminEditLessonConsideringReleasedRequest,
+  completeReleasedPastEditRequestsForLesson,
+} from '@/lib/lesson-past-edit-access'
 import { enrollmentAllowsSchedulingLessons } from '@/lib/enrollment-scheduling'
 import { lessonIntervalsOverlap } from '@/lib/lesson-overlap'
 import {
@@ -757,6 +760,12 @@ Equipe Seidmann Institute`
     } catch (err) {
       console.error('[api/admin/lessons/[id] PATCH] Erro ao processar solicitações:', err)
       // Não bloquear a atualização da aula se houver erro ao processar solicitações
+    }
+
+    try {
+      await completeReleasedPastEditRequestsForLesson(id, auth.session!.sub)
+    } catch (err) {
+      console.error('[api/admin/lessons/[id] PATCH] Erro ao concluir remarcação liberada:', err)
     }
 
     return NextResponse.json({

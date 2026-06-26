@@ -76,6 +76,14 @@ export async function PATCH(
         )
       }
     } else if (action === 'COMPLETE') {
+      if (existing.status === 'APPROVED') {
+        return NextResponse.json({
+          ok: true,
+          data: {
+            request: { id: existing.id, status: existing.status, lessonId: existing.lessonId },
+          },
+        })
+      }
       if (existing.status !== 'RELEASED') {
         return NextResponse.json(
           { ok: false, message: 'Esta remarcação não está liberada para reagendamento' },

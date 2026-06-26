@@ -8,7 +8,7 @@ import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 const CURSOS_VALIDOS = new Set(['INGLES', 'ESPANHOL', 'INGLES_E_ESPANHOL'])
 const TIPOS_AULA = new Set(['PARTICULAR', 'GRUPO'])
 const ESCOLAS = new Set(['SEIDMANN', 'YOUBECOME', 'HIGHWAY', 'OUTRO'])
-const TEMPOS_AULA = new Set([30, 40, 60, 120])
+import { isTempoAulaValido } from '@/lib/enrollment-tempo-aula'
 
 export type EnrollmentForRequiredCheck = {
   nome: string
@@ -156,7 +156,7 @@ export function getMissingRequiredEnrollmentFields(row: EnrollmentForRequiredChe
   if (freq == null || freq < 1 || freq > 7) missing.push('Frequência semanal')
 
   const tempo = row.tempoAulaMinutos
-  if (tempo == null || !TEMPOS_AULA.has(Number(tempo))) missing.push('Tempo de aula')
+  if (tempo == null || !isTempoAulaValido(Number(tempo))) missing.push('Tempo de aula')
 
   const tipo = (row.tipoAula ?? '').trim()
   if (!TIPOS_AULA.has(tipo)) missing.push('Tipo de aula')

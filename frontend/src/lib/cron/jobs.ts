@@ -22,6 +22,11 @@ import {
   enrollmentMonthBlocksBilling,
   enrollmentReceivesBillingMessages,
 } from '@/lib/billing-eligibility'
+import {
+  isMonthCoveredByAnyPayment,
+  normalizePeriodoPagamento,
+  periodMonthsCount,
+} from '@/lib/enrollment-payment-period'
 
 const TOLERANCE_DAYS = 3
 const BATCH_SIZE = 50
@@ -55,9 +60,26 @@ export async function runMarkOverdue(): Promise<{
       id: true,
       nome: true,
       diaPagamento: true,
-      paymentInfo: { select: { dueDay: true } },
+      paymentInfo: { select: { dueDay: true, periodoPagamento: true } },
     },
   })
+
+  const nonMonthlyIds = enrollments
+    .filter((e) => periodMonthsCount(normalizePeriodoPagamento(e.paymentInfo?.periodoPagamento)) > 1)
+    .map((e) => e.id)
+
+  const paidMonthsByEnrollment = new Map<string, { year: number; month: number }[]>()
+  if (nonMonthlyIds.length > 0) {
+    const paidRows = await prisma.enrollmentPaymentMonth.findMany({
+      where: { enrollmentId: { in: nonMonthlyIds }, paymentStatus: 'PAGO' },
+      select: { enrollmentId: true, year: true, month: true },
+    })
+    for (const row of paidRows) {
+      const list = paidMonthsByEnrollment.get(row.enrollmentId) ?? []
+      list.push({ year: row.year, month: row.month })
+      paidMonthsByEnrollment.set(row.enrollmentId, list)
+    }
+  }
 
   let markedOverdue = 0
   let skipped = 0
@@ -72,6 +94,16 @@ export async function runMarkOverdue(): Promise<{
       skipped++
       continue
     }
+
+    const periodo = normalizePeriodoPagamento(enrollment.paymentInfo?.periodoPagamento)
+    if (periodMonthsCount(periodo) > 1) {
+      const paidMonths = paidMonthsByEnrollment.get(enrollment.id) ?? []
+      if (isMonthCoveredByAnyPayment(year, month, periodo, paidMonths)) {
+        skipped++
+        continue
+      }
+    }
+
     const existing = await prisma.enrollmentPaymentMonth.findUnique({
       where: { enrollmentId_year_month: { enrollmentId: enrollment.id, year, month } },
       select: { paymentStatus: true },
@@ -316,10 +348,29 @@ export async function runPaymentNotifications(): Promise<{
   const enrollments = await prisma.enrollment.findMany({
     where: { status: 'ACTIVE', bolsista: false },
     include: {
-      paymentInfo: { select: { dueDay: true, dueDate: true, paidAt: true, valorMensal: true } },
+      paymentInfo: {
+        select: { dueDay: true, dueDate: true, paidAt: true, valorMensal: true, periodoPagamento: true },
+      },
       user: { select: { email: true } },
     },
   })
+
+  const nonMonthlyIds = enrollments
+    .filter((e) => periodMonthsCount(normalizePeriodoPagamento(e.paymentInfo?.periodoPagamento)) > 1)
+    .map((e) => e.id)
+
+  const paidMonthsByEnrollment = new Map<string, { year: number; month: number }[]>()
+  if (nonMonthlyIds.length > 0) {
+    const paidRows = await prisma.enrollmentPaymentMonth.findMany({
+      where: { enrollmentId: { in: nonMonthlyIds }, paymentStatus: 'PAGO' },
+      select: { enrollmentId: true, year: true, month: true },
+    })
+    for (const row of paidRows) {
+      const list = paidMonthsByEnrollment.get(row.enrollmentId) ?? []
+      list.push({ year: row.year, month: row.month })
+      paidMonthsByEnrollment.set(row.enrollmentId, list)
+    }
+  }
 
   let sentReminders = 0
   let sentOverdue = 0
@@ -342,6 +393,15 @@ export async function runPaymentNotifications(): Promise<{
     if (enrollmentMonthBlocksBilling(paymentMonth?.paymentStatus)) {
       skippedPaid++
       continue
+    }
+
+    const periodo = normalizePeriodoPagamento(enrollment.paymentInfo?.periodoPagamento)
+    if (periodMonthsCount(periodo) > 1) {
+      const paidMonths = paidMonthsByEnrollment.get(enrollment.id) ?? []
+      if (isMonthCoveredByAnyPayment(year, month, periodo, paidMonths)) {
+        skippedPaid++
+        continue
+      }
     }
 
     const billingGate = enrollmentReceivesBillingMessages(enrollment)

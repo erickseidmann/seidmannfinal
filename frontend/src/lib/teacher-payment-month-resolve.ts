@@ -7,11 +7,61 @@ import { prisma } from '@/lib/prisma'
 import { DIAS_TOLERANCIA_NF_APOS_PRAZO } from '@/lib/finance/teacher-nf-window'
 import { teacherPaymentCompetenceKeyFromPeriodoTermino } from '@/lib/teacher-paid-period'
 
+export type TeacherPaymentMonthPeriodRow = {
+  year: number
+  month: number
+  periodoInicio: Date | null
+  periodoTermino: Date | null
+}
+
+/**
+ * Escolhe o registro cujo período contém `at` (dentro ou tolerância pós-término).
+ * Ciclo fechando (tolerância) tem prioridade sobre ciclo abrindo (dentro do período).
+ */
+export function pickTeacherPaymentMonthRowContaining(
+  rows: TeacherPaymentMonthPeriodRow[],
+  at: Date = new Date()
+): TeacherPaymentMonthPeriodRow | null {
+  const t = at.getTime()
+  const toleranceMs = DIAS_TOLERANCIA_NF_APOS_PRAZO * 24 * 60 * 60 * 1000
+
+  const withPeriods = rows.filter((r) => r.periodoInicio != null && r.periodoTermino != null)
+
+  const toleranceMatches = withPeriods.filter((r) => {
+    const end = r.periodoTermino!.getTime()
+    return end <= t && t < end + toleranceMs
+  })
+  if (toleranceMatches.length > 0) {
+    toleranceMatches.sort((a, b) => b.periodoInicio!.getTime() - a.periodoInicio!.getTime())
+    return toleranceMatches[0]
+  }
+
+  const insideMatches = withPeriods.filter((r) => {
+    const start = r.periodoInicio!.getTime()
+    const end = r.periodoTermino!.getTime()
+    return start <= t && t < end
+  })
+  if (insideMatches.length > 0) {
+    insideMatches.sort((a, b) => b.periodoInicio!.getTime() - a.periodoInicio!.getTime())
+    return insideMatches[0]
+  }
+
+  return null
+}
+
+function competenceKeyFromPick(
+  pick: TeacherPaymentMonthPeriodRow
+): { year: number; month: number } {
+  if (!pick.periodoTermino) {
+    return { year: pick.year, month: pick.month }
+  }
+  return teacherPaymentCompetenceKeyFromPeriodoTermino(pick.periodoTermino)
+}
+
 export async function resolveTeacherPaymentMonthKeyContaining(
   teacherId: string,
   at: Date = new Date()
 ): Promise<{ year: number; month: number } | null> {
-  const t = at.getTime()
   const rows = await prisma.teacherPaymentMonth.findMany({
     where: {
       teacherId,
@@ -23,23 +73,10 @@ export async function resolveTeacherPaymentMonthKeyContaining(
     take: 96,
   })
 
-  const toleranceMs = DIAS_TOLERANCIA_NF_APOS_PRAZO * 24 * 60 * 60 * 1000
+  const pick = pickTeacherPaymentMonthRowContaining(rows, at)
+  if (!pick) return null
 
-  const matches = rows.filter((r) => {
-    if (r.periodoInicio == null || r.periodoTermino == null) return false
-    const start = r.periodoInicio.getTime()
-    const end = r.periodoTermino.getTime()
-    if (start <= t && t < end) return true
-    return end <= t && t < end + toleranceMs
-  })
-  if (matches.length === 0) return null
-
-  matches.sort((a, b) => b.periodoInicio!.getTime() - a.periodoInicio!.getTime())
-  const pick = matches[0]
-  if (!pick.periodoTermino) {
-    return { year: pick.year, month: pick.month }
-  }
-  return teacherPaymentCompetenceKeyFromPeriodoTermino(pick.periodoTermino)
+  return competenceKeyFromPick(pick)
 }
 
 /**

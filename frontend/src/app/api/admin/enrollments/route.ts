@@ -12,6 +12,7 @@ import { isValidEmail, isValidWhatsApp } from '@/lib/validators'
 import type { InactiveReason } from '@prisma/client'
 import { formatInactiveReasonLabel, validateInactiveReasonPayload } from '@/lib/inactive-reason'
 import { ENROLLMENT_STATUSES_PRE_SCHEDULING } from '@/lib/enrollment-scheduling'
+import { parseTempoAulaMinutosForCreate } from '@/lib/enrollment-tempo-aula'
 import { LESSON_STATUSES_SCHEDULED } from '@/lib/lesson-status'
 import { auditFieldsForCreate, resolveAdminActor, resolveAuditNames } from '@/lib/record-audit'
 import {
@@ -692,9 +693,7 @@ export async function POST(request: NextRequest) {
             : null,
         tempoAulaMinutos:
           tempoAulaMinutos != null && tempoAulaMinutos !== ''
-            ? [30, 40, 60, 120].includes(Number(tempoAulaMinutos))
-              ? Number(tempoAulaMinutos)
-              : null
+            ? parseTempoAulaMinutosForCreate(tempoAulaMinutos)
             : null,
         tipoAula: tipoAula === 'PARTICULAR' || tipoAula === 'GRUPO' ? tipoAula : null,
         nomeGrupo: nomeGrupo?.trim() || null,

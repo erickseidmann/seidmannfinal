@@ -12,6 +12,7 @@ import { logFinanceAction, getEnrollmentFinanceData } from '@/lib/finance'
 import { emitirNfseParaAluno, obterNfAutorizadaExistente } from '@/lib/nfse/service'
 import { sendPaymentConfirmation, type NfInfoForConfirmation } from '@/lib/email/payment-notifications'
 import { liberarAcessoAlunoSafe } from '@/lib/access'
+import { listCoveredMonths, normalizePeriodoPagamento } from '@/lib/enrollment-payment-period'
 
 const NFSE_ENABLED = process.env.NFSE_ENABLED === 'true'
 
@@ -89,22 +90,34 @@ export async function applyEnrollmentPaymentConfirmation(
   })
   const alreadyPaid = existingMonth?.paymentStatus === 'PAGO'
 
-  const epm = await tx.enrollmentPaymentMonth.upsert({
-    where: { enrollmentId_year_month: { enrollmentId, year, month } },
-    create: {
-      enrollmentId,
-      year,
-      month,
-      paymentStatus: 'PAGO',
-      paidAt,
-      receiptUrl: receiptUrlVal,
-    },
-    update: {
-      paymentStatus: 'PAGO',
-      paidAt,
-      ...(receiptUrlVal ? { receiptUrl: receiptUrlVal } : {}),
-    },
+  const enrollmentPeriod = await tx.enrollment.findUnique({
+    where: { id: enrollmentId },
+    select: { paymentInfo: { select: { periodoPagamento: true } } },
   })
+  const periodo = normalizePeriodoPagamento(enrollmentPeriod?.paymentInfo?.periodoPagamento)
+  const monthsToMark = listCoveredMonths(year, month, periodo)
+
+  let epmId = ''
+  for (const { year: y, month: m } of monthsToMark) {
+    const isAnchorMonth = y === year && m === month
+    const epm = await tx.enrollmentPaymentMonth.upsert({
+      where: { enrollmentId_year_month: { enrollmentId, year: y, month: m } },
+      create: {
+        enrollmentId,
+        year: y,
+        month: m,
+        paymentStatus: 'PAGO',
+        paidAt,
+        receiptUrl: isAnchorMonth ? receiptUrlVal : null,
+      },
+      update: {
+        paymentStatus: 'PAGO',
+        paidAt,
+        ...(isAnchorMonth && receiptUrlVal ? { receiptUrl: receiptUrlVal } : {}),
+      },
+    })
+    if (isAnchorMonth) epmId = epm.id
+  }
 
   if (metodo?.trim()) {
     await tx.enrollment.update({
@@ -163,7 +176,7 @@ export async function applyEnrollmentPaymentConfirmation(
     (enrollment ? mensalidadeCentavos(enrollment) : 0)
 
   return {
-    enrollmentPaymentMonthId: epm.id,
+    enrollmentPaymentMonthId: epmId,
     alreadyPaid,
     amountReais: cents / 100,
   }

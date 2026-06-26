@@ -27,10 +27,14 @@ import {
   sendStudentCredentialsEmail,
   syncLoginOnEnrollmentEmailChange,
 } from '@/lib/enrollment-email-sync'
+import { parseTempoAulaMinutosForUpdate } from '@/lib/enrollment-tempo-aula'
 
 const VALID_STATUSES = ['LEAD', 'REGISTERED', 'CONTRACT_ACCEPTED', 'PAYMENT_PENDING', 'ACTIVE', 'INACTIVE', 'PAUSED', 'BLOCKED', 'COMPLETED']
 
-function buildUpdateData(body: Record<string, unknown>) {
+function buildUpdateData(
+  body: Record<string, unknown>,
+  existing?: { tempoAulaMinutos?: number | null }
+) {
   const {
     nome,
     email,
@@ -96,7 +100,12 @@ function buildUpdateData(body: Record<string, unknown>) {
   if (disponibilidade !== undefined) update.disponibilidade = disponibilidade ? String(disponibilidade).trim().slice(0, 2000) : null
   if (curso !== undefined) update.curso = curso || null
   if (frequenciaSemanal !== undefined && frequenciaSemanal !== '') update.frequenciaSemanal = Math.min(7, Math.max(1, Number(frequenciaSemanal)))
-  if (tempoAulaMinutos !== undefined && tempoAulaMinutos !== '') update.tempoAulaMinutos = [30, 40, 60, 120].includes(Number(tempoAulaMinutos)) ? Number(tempoAulaMinutos) : null
+  if (tempoAulaMinutos !== undefined && tempoAulaMinutos !== '') {
+    update.tempoAulaMinutos = parseTempoAulaMinutosForUpdate(
+      tempoAulaMinutos,
+      existing?.tempoAulaMinutos
+    )
+  }
   if (tipoAula !== undefined) update.tipoAula = tipoAula === 'PARTICULAR' || tipoAula === 'GRUPO' ? tipoAula : null
   if (nomeGrupo !== undefined) update.nomeGrupo = nomeGrupo ? String(nomeGrupo).trim() : null
   if (cep !== undefined) update.cep = cep ? String(cep).trim().replace(/\D/g, '').slice(0, 9) : null
@@ -223,7 +232,9 @@ export async function PATCH(
           { status: 400 }
         )
       }
-      const updateData = buildUpdateData(body) as any
+      const updateData = buildUpdateData(body, {
+        tempoAulaMinutos: enrollment.tempoAulaMinutos,
+      }) as any
       const newEmail = updateData.email != null ? String(updateData.email).trim().toLowerCase() : null
       const currentEmail = (enrollment.email || '').trim().toLowerCase()
 

@@ -27,6 +27,7 @@ import {
   type InactiveReasonValue,
   validateInactiveReasonPayload,
 } from '@/lib/inactive-reason'
+import { TEMPO_AULA_LABELS_ADMIN, TEMPOS_AULA_SELECAO } from '@/lib/enrollment-tempo-aula'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
   cefrDescriptionFromBookName,
@@ -104,17 +105,22 @@ interface Student {
   inactiveReasonOther?: string | null
 }
 
-const TEMPO_AULA_OPCOES = [
-  { value: 30, label: '00:30' },
-  { value: 40, label: '00:40' },
-  { value: 60, label: '01:00' },
-  { value: 120, label: '02:00' },
-]
-
 function formatTempoAulaMinutosLabel(min: number | null | undefined): string {
   if (min == null) return '—'
-  const opt = TEMPO_AULA_OPCOES.find((o) => o.value === min)
-  return opt ? `${opt.label} (${min} min)` : `${min} min`
+  const label = TEMPO_AULA_LABELS_ADMIN[min]
+  return label ? `${label} (${min} min)` : `${min} min`
+}
+
+function tempoAulaFormSelectOptions(currentValue: string): { value: number; label: string }[] {
+  const base = TEMPOS_AULA_SELECAO.map((v) => ({
+    value: v,
+    label: TEMPO_AULA_LABELS_ADMIN[v] ?? `${v} min`,
+  }))
+  const n = currentValue ? Number(currentValue) : NaN
+  if (n === 40) {
+    return [{ value: 40, label: `${TEMPO_AULA_LABELS_ADMIN[40]} (legado)` }, ...base]
+  }
+  return base
 }
 
 function formatCnpjForDisplay(cnpj: string | null | undefined): string {
@@ -3212,7 +3218,7 @@ export default function AdminAlunosPage() {
                   required
                 >
                   <option value="">Selecione</option>
-                  {TEMPO_AULA_OPCOES.map((o) => (
+                  {tempoAulaFormSelectOptions(formData.tempoAulaMinutos).map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

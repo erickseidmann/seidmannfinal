@@ -19,6 +19,8 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  ExternalLink,
+  FileCheck,
   Loader2,
   Receipt,
   Users,
@@ -70,6 +72,7 @@ interface ProfessorPagamento {
   totalHorasRegistradas: number
   statusPagamento: StatusPagamento
   proofFileUrl: string | null
+  proofSentAt: string | null
   pagamentoProntoParaFazer: boolean
   metodoPagamento: string | null
   dataInicio: string | null
@@ -126,6 +129,15 @@ function humanDescription(description: string | null): string {
   return cleaned || '—'
 }
 
+function isImageProofUrl(url: string): boolean {
+  const lower = url.toLowerCase().split('?')[0]
+  return /\.(jpe?g|png|gif|webp)$/.test(lower)
+}
+
+function isPdfProofUrl(url: string): boolean {
+  return url.toLowerCase().split('?')[0].endsWith('.pdf')
+}
+
 function parseSaidaFixaPagamento(raw: unknown): SaidaFixaPagamento | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Record<string, unknown>
@@ -164,6 +176,7 @@ function parseProfessorPagamento(raw: unknown): ProfessorPagamento | null {
         : Number(row.totalHorasRegistradas) || 0,
     statusPagamento: row.statusPagamento,
     proofFileUrl: typeof row.proofFileUrl === 'string' ? row.proofFileUrl : null,
+    proofSentAt: typeof row.proofSentAt === 'string' ? row.proofSentAt : null,
     pagamentoProntoParaFazer: row.pagamentoProntoParaFazer === true,
     metodoPagamento: typeof row.metodoPagamento === 'string' ? row.metodoPagamento : null,
     dataInicio: typeof row.dataInicio === 'string' ? row.dataInicio : null,
@@ -343,6 +356,11 @@ export default function FinanceiroPagamentosPage() {
   const [markPaidData, setMarkPaidData] = useState('')
   const [markPaidFile, setMarkPaidFile] = useState<File | null>(null)
   const [markPaidSaving, setMarkPaidSaving] = useState(false)
+  const [modalNfProfessor, setModalNfProfessor] = useState<{
+    nome: string
+    proofFileUrl: string
+    proofSentAt: string | null
+  } | null>(null)
 
   const fetchData = useCallback(async (ano: number, mes: number) => {
     setLoading(true)
@@ -825,7 +843,23 @@ export default function FinanceiroPagamentosPage() {
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <StatusBadge status={p.statusPagamento} />
-                                {showNfAviso && (
+                                {p.proofFileUrl ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setModalNfProfessor({
+                                        nome: p.nome,
+                                        proofFileUrl: p.proofFileUrl!,
+                                        proofSentAt: p.proofSentAt,
+                                      })
+                                    }
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-900 border border-sky-300 hover:bg-sky-200 transition-colors"
+                                    title="Clique para ver a nota fiscal anexada"
+                                  >
+                                    <FileCheck className="w-3 h-3" aria-hidden />
+                                    NF anexada
+                                  </button>
+                                ) : showNfAviso ? (
                                   <span
                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-900 border border-yellow-300"
                                     title="Nota fiscal ou recibo ainda não anexado"
@@ -833,7 +867,7 @@ export default function FinanceiroPagamentosPage() {
                                     <AlertTriangle className="w-3 h-3" aria-hidden />
                                     NF não enviada
                                   </span>
-                                )}
+                                ) : null}
                               </div>
                             </div>
 
@@ -929,6 +963,68 @@ export default function FinanceiroPagamentosPage() {
           </section>
         )}
       </div>
+
+      <Modal
+        isOpen={!!modalNfProfessor}
+        onClose={() => setModalNfProfessor(null)}
+        title={modalNfProfessor ? `Nota fiscal — ${modalNfProfessor.nome}` : 'Nota fiscal'}
+        size="xl"
+        footer={
+          <>
+            {modalNfProfessor ? (
+              <a
+                href={modalNfProfessor.proofFileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-sky-700 hover:text-sky-900 mr-auto"
+              >
+                <ExternalLink className="w-4 h-4" aria-hidden />
+                Abrir em nova aba
+              </a>
+            ) : null}
+            <Button variant="secondary" onClick={() => setModalNfProfessor(null)}>
+              Fechar
+            </Button>
+          </>
+        }
+      >
+        {modalNfProfessor ? (
+          <div className="space-y-3">
+            {modalNfProfessor.proofSentAt ? (
+              <p className="text-sm text-gray-600">
+                Anexada em{' '}
+                {new Date(modalNfProfessor.proofSentAt).toLocaleDateString('pt-BR', {
+                  day: '2-digit',
+                  month: 'long',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </p>
+            ) : null}
+            <div className="rounded-lg border border-gray-200 bg-gray-50 overflow-hidden min-h-[320px] max-h-[70vh] flex items-center justify-center">
+              {isPdfProofUrl(modalNfProfessor.proofFileUrl) ? (
+                <iframe
+                  src={modalNfProfessor.proofFileUrl}
+                  title={`Nota fiscal de ${modalNfProfessor.nome}`}
+                  className="w-full h-[70vh] min-h-[320px] bg-white"
+                />
+              ) : isImageProofUrl(modalNfProfessor.proofFileUrl) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={modalNfProfessor.proofFileUrl}
+                  alt={`Nota fiscal de ${modalNfProfessor.nome}`}
+                  className="max-w-full max-h-[70vh] object-contain"
+                />
+              ) : (
+                <p className="text-sm text-gray-600 p-6 text-center">
+                  Visualização indisponível para este tipo de arquivo. Use &quot;Abrir em nova aba&quot;.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         isOpen={!!modalMarkPaidFixa}

@@ -25,6 +25,7 @@ import {
   SCHEDULING_BLOCKED_MISSING_PAYMENT_MESSAGE,
   enrollmentPaymentRowHasCompleteInfo,
 } from '@/lib/enrollment-payment-info'
+import { completeReleasedPastEditRequestsForLesson } from '@/lib/lesson-past-edit-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -306,6 +307,7 @@ export async function POST(request: NextRequest) {
       : 'CONFIRMED'
     const duration = Number(durationMinutes) || 60
     const notesTrim = notes?.trim() || null
+    let reposicaoOriginLessonId: string | null = null
 
     // Regra de negócio: reposição só pode ser agendada a partir de uma aula cancelada.
     if (validStatus === 'REPOSICAO') {
@@ -383,6 +385,7 @@ export async function POST(request: NextRequest) {
           )
         }
       }
+      reposicaoOriginLessonId = canceledLesson.id
     }
 
     const repeatWeeks = Math.min(52, Math.max(1, Number(repeatWeeksParam) || 1))
@@ -798,6 +801,14 @@ export async function POST(request: NextRequest) {
         } catch (err) {
           console.error('[api/admin/lessons POST] Erro ao enviar e-mail de reposição:', err)
         }
+      }
+    }
+
+    if (reposicaoOriginLessonId && auth.session?.sub) {
+      try {
+        await completeReleasedPastEditRequestsForLesson(reposicaoOriginLessonId, auth.session.sub)
+      } catch (err) {
+        console.error('[api/admin/lessons POST] Erro ao concluir remarcação liberada:', err)
       }
     }
 

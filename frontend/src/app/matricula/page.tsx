@@ -71,7 +71,6 @@ function parseValorMensalidadeDigitado(s: string): number | null {
 const TEMPO_AULA_OPCOES = [
   { value: '', label: 'Selecione' },
   { value: '30', label: '30 min' },
-  { value: '40', label: '40 min' },
   { value: '60', label: '1 hora' },
   { value: '120', label: '2 horas' },
 ]

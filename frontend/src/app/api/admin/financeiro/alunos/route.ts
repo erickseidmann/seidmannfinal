@@ -9,6 +9,11 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { ymdInTZ } from '@/lib/datetime'
+import {
+  isMonthCoveredByAnyPayment,
+  normalizePeriodoPagamento,
+  periodMonthsCount,
+} from '@/lib/enrollment-payment-period'
 
 /** Retorna a próxima data de vencimento dado o dia do mês (1-31), após uma data. Só avança para o mês seguinte se afterDate já passou do dia. */
 function nextDueDateFromDay(dayOfMonth: number, afterDate: Date): Date {
@@ -217,6 +222,29 @@ export async function GET(request: NextRequest) {
 
     const enrollmentIds = filteredEnrollments.map((e) => e.id)
 
+    const nonMonthlyEnrollmentIds = filteredEnrollments
+      .filter((e) => {
+        const periodo = normalizePeriodoPagamento(e.paymentInfo?.periodoPagamento)
+        return periodMonthsCount(periodo) > 1
+      })
+      .map((e) => e.id)
+
+    const paidMonthsByEnrollment = new Map<string, { year: number; month: number }[]>()
+    if (nonMonthlyEnrollmentIds.length > 0) {
+      const paidRows = await prisma.enrollmentPaymentMonth.findMany({
+        where: {
+          enrollmentId: { in: nonMonthlyEnrollmentIds },
+          paymentStatus: 'PAGO',
+        },
+        select: { enrollmentId: true, year: true, month: true },
+      })
+      for (const row of paidRows) {
+        const list = paidMonthsByEnrollment.get(row.enrollmentId) ?? []
+        list.push({ year: row.year, month: row.month })
+        paidMonthsByEnrollment.set(row.enrollmentId, list)
+      }
+    }
+
     const receiptUrlMap =
       hasMonthFilter && year != null && month != null
         ? await fetchReceiptUrlMap(year, month, enrollmentIds)
@@ -397,8 +425,21 @@ export async function GET(request: NextRequest) {
       // Status no mês: cada mês é independente; vem de EnrollmentPaymentMonth quando há filtro, senão do PaymentInfo global
       const rawStatus: string | null = hasMonthFilter && pm ? pm.paymentStatus ?? null : pi?.paymentStatus ?? null
       const bolsista = Boolean((e as { bolsista?: boolean | null }).bolsista)
-      // Bolsista: exibir como quitado no financeiro (sem cobrança/NF)
-      const status: string | null = bolsista ? 'PAGO' : rawStatus
+      const periodoPagamento = pi?.periodoPagamento ?? null
+      let status: string | null = bolsista ? 'PAGO' : rawStatus
+      if (
+        !bolsista &&
+        status !== 'PAGO' &&
+        hasMonthFilter &&
+        year != null &&
+        month != null &&
+        periodMonthsCount(periodoPagamento) > 1
+      ) {
+        const paidMonths = paidMonthsByEnrollment.get(e.id) ?? []
+        if (isMonthCoveredByAnyPayment(year, month, periodoPagamento, paidMonths)) {
+          status = 'PAGO'
+        }
+      }
 
       // Verificar se existe NFSe autorizada para este enrollment no mês/ano de referência
       const nfseKey = `${e.id}:${refYear}:${refMonth}`

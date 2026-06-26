@@ -3,6 +3,18 @@ import {
   teacherPaymentBoundsForCompetenceMonth,
   teacherPaymentCompetenceKeyFromPeriodoTermino,
 } from '@/lib/teacher-paid-period'
+import { pickTeacherPaymentMonthRowContaining } from '@/lib/teacher-payment-month-resolve'
+
+const DUE_DAY_25 = 25
+
+function dueDay25Rows() {
+  const junho = teacherPaymentBoundsForCompetenceMonth(2026, 6, DUE_DAY_25)
+  const julho = teacherPaymentBoundsForCompetenceMonth(2026, 7, DUE_DAY_25)
+  return [
+    { year: 2026, month: 6, periodoInicio: junho.inicio, periodoTermino: junho.termino },
+    { year: 2026, month: 7, periodoInicio: julho.inicio, periodoTermino: julho.termino },
+  ]
+}
 
 describe('teacherPaymentCompetenceKeyFromPeriodoTermino', () => {
   it('maio/2026 civil: termino 2026-06-01T03:00:00Z → competência 5/2026', () => {
@@ -50,6 +62,30 @@ describe('teacherPaymentBoundsForCompetenceMonth', () => {
     const p = teacherPaymentBoundsForCompetenceMonth(2026, 6, 10)
     expect(p.inicio.toISOString()).toBe('2026-05-10T03:00:00.000Z')
     expect(p.termino.toISOString()).toBe('2026-06-10T03:00:00.000Z')
+  })
+})
+
+describe('pickTeacherPaymentMonthRowContaining', () => {
+  const rows = dueDay25Rows()
+
+  it('25/06 14h BRT: tolerância de junho vence julho recém-aberto', () => {
+    const pick = pickTeacherPaymentMonthRowContaining(rows, new Date('2026-06-25T17:00:00.000Z'))
+    expect(pick).toEqual(rows[0])
+  })
+
+  it('26/06: ainda na tolerância de junho', () => {
+    const pick = pickTeacherPaymentMonthRowContaining(rows, new Date('2026-06-26T17:00:00.000Z'))
+    expect(pick).toEqual(rows[0])
+  })
+
+  it('28/06: fora da tolerância de junho → julho (dentro)', () => {
+    const pick = pickTeacherPaymentMonthRowContaining(rows, new Date('2026-06-28T17:00:00.000Z'))
+    expect(pick).toEqual(rows[1])
+  })
+
+  it('24/06: junho ainda dentro do período', () => {
+    const pick = pickTeacherPaymentMonthRowContaining(rows, new Date('2026-06-24T17:00:00.000Z'))
+    expect(pick).toEqual(rows[0])
   })
 })
 

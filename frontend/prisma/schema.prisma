@@ -381,7 +381,7 @@ model Enrollment {
   cpfResponsavel   String?        @db.VarChar(14) @map("cpf_responsavel")   // se menor
   curso            String?        @db.VarChar(50)  // INGLES, ESPANHOL, INGLES_E_ESPANHOL
   frequenciaSemanal Int?          @map("frequencia_semanal") // 1-7
-  tempoAulaMinutos  Int?          @map("tempo_aula_minutos") // 30, 40, 60, 120
+  tempoAulaMinutos  Int?          @map("tempo_aula_minutos") // 30, 60, 120 (40 legado)
   tipoAula         String?        @db.VarChar(20) @map("tipo_aula") // PARTICULAR, GRUPO
   nomeGrupo        String?        @db.VarChar(255) @map("nome_grupo") // quando tipoAula = GRUPO
   cep               String?       @db.VarChar(9)
