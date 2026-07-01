@@ -194,6 +194,117 @@ export async function findEnrollmentCandidatesByDocumento(
   }))
 }
 
+function enrollmentNameForDocumento(
+  enrollment: {
+    nome: string
+    cpf: string | null
+    cpfResponsavel: string | null
+    faturamentoCnpj: string | null
+    faturamentoRazaoSocial: string | null
+  },
+  documento: string
+): string | null {
+  if (enrollment.faturamentoCnpj && onlyDigits(enrollment.faturamentoCnpj) === documento) {
+    return enrollment.faturamentoRazaoSocial?.trim() || enrollment.nome
+  }
+  if (enrollment.cpf && onlyDigits(enrollment.cpf) === documento) return enrollment.nome
+  if (enrollment.cpfResponsavel && onlyDigits(enrollment.cpfResponsavel) === documento) {
+    return enrollment.nome
+  }
+  return null
+}
+
+async function resolvePayerNameByDocumentoInTx(
+  tx: Tx,
+  documento: string | undefined
+): Promise<string | null> {
+  if (!documento) return null
+
+  const link = await tx.payerLink.findFirst({
+    where: { documento, nomePagador: { not: null } },
+    orderBy: { updatedAt: 'desc' },
+    select: { nomePagador: true },
+  })
+  if (link?.nomePagador?.trim()) return link.nomePagador.trim()
+
+  const enrollments = await tx.enrollment.findMany({
+    where: {
+      OR: [
+        { cpf: { contains: documento } },
+        { cpfResponsavel: { contains: documento } },
+        { faturamentoCnpj: { contains: documento } },
+      ],
+    },
+    select: {
+      nome: true,
+      cpf: true,
+      cpfResponsavel: true,
+      faturamentoCnpj: true,
+      faturamentoRazaoSocial: true,
+    },
+    orderBy: { nome: 'asc' },
+    take: 30,
+  })
+
+  for (const enrollment of enrollments) {
+    const nome = enrollmentNameForDocumento(enrollment, documento)
+    if (nome) return nome
+  }
+  return null
+}
+
+/** Resolve nomes de exibição para recebimentos sem nomePagador (ex.: extrato Santander). */
+export async function resolvePayerNamesByDocumentos(
+  documentos: string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set(documentos.map((d) => onlyDigits(d)).filter(Boolean))]
+  const map = new Map<string, string>()
+  if (unique.length === 0) return map
+
+  const links = await prisma.payerLink.findMany({
+    where: { documento: { in: unique }, nomePagador: { not: null } },
+    select: { documento: true, nomePagador: true, updatedAt: true },
+    orderBy: { updatedAt: 'desc' },
+  })
+  for (const link of links) {
+    if (!map.has(link.documento) && link.nomePagador?.trim()) {
+      map.set(link.documento, link.nomePagador.trim())
+    }
+  }
+
+  const missing = unique.filter((doc) => !map.has(doc))
+  if (missing.length === 0) return map
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      OR: missing.flatMap((documento) => [
+        { cpf: { contains: documento } },
+        { cpfResponsavel: { contains: documento } },
+        { faturamentoCnpj: { contains: documento } },
+      ]),
+    },
+    select: {
+      nome: true,
+      cpf: true,
+      cpfResponsavel: true,
+      faturamentoCnpj: true,
+      faturamentoRazaoSocial: true,
+    },
+  })
+
+  for (const documento of missing) {
+    for (const enrollment of enrollments) {
+      const nome = enrollmentNameForDocumento(enrollment, documento)
+      if (nome) {
+        map.set(documento, nome)
+        break
+      }
+    }
+  }
+
+  return map
+}
+
 async function upsertPayerLinkInTx(
   tx: Tx,
   documento: string | undefined,
@@ -416,6 +527,11 @@ export async function reconcilePayment(
     })
     if (existing) return { payment: existing, sideEffects: null as SideEffectPayload | null }
 
+    let nomePagador = np.nomePagador?.trim() || null
+    if (!nomePagador && documento) {
+      nomePagador = await resolvePayerNameByDocumentoInTx(tx, documento)
+    }
+
     const created = await tx.receivedPayment.create({
       data: {
         provider: np.provider,
@@ -424,7 +540,7 @@ export async function reconcilePayment(
         dataPagamento: np.dataPagamento,
         metodo: np.metodo,
         documentoPagador: documento,
-        nomePagador: np.nomePagador,
+        nomePagador,
         txid: np.txid,
         endToEndId: np.endToEndId,
         referencia: np.referencia,

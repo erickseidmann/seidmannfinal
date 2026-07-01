@@ -100,6 +100,42 @@ function resolveDocumento(historicComplement?: string): {
   return { documentoKey: 'SEMDOC' }
 }
 
+/** Extrai nome do pagador quando o complemento histórico traz texto além do documento. */
+export function parseSantanderPayerNameFromComplement(
+  historicComplement?: string
+): string | undefined {
+  const raw = historicComplement?.trim()
+  if (!raw) return undefined
+
+  const lower = raw.toLowerCase()
+  if (lower === 'cpf' || lower === 'cnpj' || lower === 'pix') return undefined
+
+  const digits = onlyDigits(raw)
+  const docTipo = inferDocumentoTipo(digits)
+
+  if (docTipo && digits) {
+    const withoutDoc = raw.replace(digits, '').trim()
+    const namePart = withoutDoc
+      .replace(/[^\p{L}\s.'-]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (namePart.length >= 3 && !/^(cpf|cnpj|pix|ted|doc|tev)$/i.test(namePart)) {
+      return namePart
+    }
+    return undefined
+  }
+
+  if (!/^\d+$/.test(raw)) {
+    const cleaned = raw
+      .replace(/[^\p{L}\s.'-]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (cleaned.length >= 3) return cleaned
+  }
+
+  return undefined
+}
+
 /**
  * Ordenação estável + seq por grupo (data+valor+documento) antes de mapear para NormalizedPayment.
  */
@@ -163,6 +199,7 @@ export function buildProviderPaymentId(p: SantanderPreparedEntry): string {
 
 export function mapPreparedToNormalized(p: SantanderPreparedEntry): NormalizedPayment {
   const metodo = (p.entry.transactionName ?? 'CREDITO').slice(0, 50)
+  const nomeFromComplement = parseSantanderPayerNameFromComplement(p.entry.historicComplement)
   return {
     provider: 'SANTANDER',
     providerPaymentId: buildProviderPaymentId(p),
@@ -170,7 +207,7 @@ export function mapPreparedToNormalized(p: SantanderPreparedEntry): NormalizedPa
     dataPagamento: p.dataPagamento,
     metodo,
     documentoPagador: p.documentoPagador,
-    nomePagador: undefined,
+    nomePagador: nomeFromComplement,
     rawPayload: p.entry,
   }
 }

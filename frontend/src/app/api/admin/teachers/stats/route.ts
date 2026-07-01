@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
     }
 
     const activeOnly = { status: { not: 'INACTIVE' as const } }
-    const [nota1Count, nota2Count, nota45Count, inactiveCount, teacherRequestsCount, novosProfessoresCount] =
+    const semLinkSalaWhere = { OR: [{ linkSala: null }, { linkSala: '' }] }
+    const [nota1Count, nota2Count, nota45Count, inactiveCount, teacherRequestsCount, novosProfessoresCount, semLinkSalaCount] =
       await Promise.all([
       prisma.teacher.count({ where: { nota: 1, ...activeOnly } }),
       prisma.teacher.count({ where: { nota: 2, ...activeOnly } }),
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
         }
       })(),
       prisma.teacher.count({ where: { status: 'PENDING' } }),
+      prisma.teacher.count({ where: { ...activeOnly, ...semLinkSalaWhere } }),
     ])
 
     return NextResponse.json({
@@ -43,6 +45,7 @@ export async function GET(request: NextRequest) {
         inativos: inactiveCount,
         teacherRequests: teacherRequestsCount,
         novosProfessores: novosProfessoresCount,
+        semLinkSala: semLinkSalaCount,
       },
     })
   } catch (error) {

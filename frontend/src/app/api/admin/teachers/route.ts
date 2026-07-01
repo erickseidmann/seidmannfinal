@@ -19,6 +19,7 @@ import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window
 import { managementTeacherAlertWhere } from '@/lib/teacher-alert-kinds'
 import { auditFieldsForCreate, resolveAdminActor, resolveAuditNames } from '@/lib/record-audit'
 import { sanitizeTeacherNiveisEnsina, normalizeTeacherNiveisEnsina } from '@/lib/teacher-teaching-levels'
+import { assignTeacherLinkSalaFromInactivePool } from '@/lib/teacher-link-sala-pool'
 
 const SENHA_PADRAO_PROFESSOR = '123456'
 
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
     const searchParam = request.nextUrl.searchParams.get('search')?.trim() || ''
     const notaParam = request.nextUrl.searchParams.get('nota') // '1' | '2' | '45'
     const statusParam = request.nextUrl.searchParams.get('status') // 'ACTIVE' | 'INACTIVE' | etc.
+    const semLinkSalaParam = request.nextUrl.searchParams.get('semLinkSala')
     const limitParam = request.nextUrl.searchParams.get('limit')
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100)) : undefined
     
@@ -74,8 +76,13 @@ export async function GET(request: NextRequest) {
         ? { status: statusParam as 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'BLOCKED' }
         : { status: { not: 'INACTIVE' as const } }
 
+    const semLinkSalaFilter =
+      semLinkSalaParam === 'true' || semLinkSalaParam === '1'
+        ? { OR: [{ linkSala: null }, { linkSala: '' }] }
+        : {}
+
     const teachers = await prisma.teacher.findMany({
-      where: { ...searchFilter, ...notaFilter, ...statusFilter } as import('@prisma/client').Prisma.TeacherWhereInput,
+      where: { ...searchFilter, ...notaFilter, ...statusFilter, ...semLinkSalaFilter } as import('@prisma/client').Prisma.TeacherWhereInput,
       ...(limit ? { take: limit } : {}),
       include: {
         user: {
@@ -275,7 +282,10 @@ export async function POST(request: NextRequest) {
 
     const adminActor = await resolveAdminActor(auth.session?.sub, auth.session?.email)
 
-    const teacher = await prisma.teacher.create({
+    const teacherStatus = status || 'ACTIVE'
+    const manualLinkSala = typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null
+
+    let teacher = await prisma.teacher.create({
       data: {
         ...auditFieldsForCreate(adminActor),
         nome: nome.trim(),
@@ -288,14 +298,19 @@ export async function POST(request: NextRequest) {
         metodoPagamento: metodoPagamento || null,
         infosPagamento: infosPagamento?.trim() || null,
         nota: nota != null && nota !== '' ? Math.min(5, Math.max(1, Number(nota))) : null,
-        status: status || 'ACTIVE',
+        status: teacherStatus,
         idiomasFala: arrFala.length > 0 ? arrFala : undefined,
         idiomasEnsina: arrEnsina.length > 0 ? arrEnsina : undefined,
         niveisEnsina: arrNiveis.length > 0 ? arrNiveis : undefined,
-        linkSala: typeof linkSala === 'string' && linkSala.trim() ? linkSala.trim() : null,
+        linkSala: manualLinkSala,
         paymentDueDay: dueDayToUse,
       },
     })
+
+    if (!manualLinkSala && teacherStatus !== 'INACTIVE') {
+      await assignTeacherLinkSalaFromInactivePool(teacher.id)
+      teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacher.id } })
+    }
 
     // Criar login (User) para o professor: senha padrão 123456 (obriga troca no 1º acesso) ou senha informada
     const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } })

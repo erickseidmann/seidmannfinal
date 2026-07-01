@@ -4,6 +4,7 @@ import {
   buildProviderPaymentId,
   addDaysToDateKey,
   parseSantanderTransactionDate,
+  parseSantanderPayerNameFromComplement,
   getSantanderSyncDateWindow,
 } from '../santander-statement'
 import type { SantanderStatementEntry } from '../santander-statement'
@@ -62,5 +63,16 @@ describe('santander-statement', () => {
     const { initialDate, finalDate } = getSantanderSyncDateWindow()
     expect(initialDate).toBe(addDaysToDateKey(today, -3))
     expect(finalDate).toBe(addDaysToDateKey(today, 1))
+  })
+
+  it('parseSantanderPayerNameFromComplement ignora só documento ou CPF', () => {
+    expect(parseSantanderPayerNameFromComplement('39241063807')).toBeUndefined()
+    expect(parseSantanderPayerNameFromComplement('CPF')).toBeUndefined()
+  })
+
+  it('parseSantanderPayerNameFromComplement extrai nome quando houver texto', () => {
+    expect(parseSantanderPayerNameFromComplement('Maria Silva 39241063807')).toBe(
+      'Maria Silva'
+    )
   })
 })

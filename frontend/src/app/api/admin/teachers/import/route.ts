@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { DEFAULT_TEACHER_PAYMENT_DUE_DAY } from '@/lib/finance/teacher-nf-window'
 import { auditFieldsForCreate, resolveAdminActor } from '@/lib/record-audit'
+import { assignTeacherLinkSalaFromInactivePool } from '@/lib/teacher-link-sala-pool'
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = []
@@ -168,6 +169,9 @@ export async function POST(request: NextRequest) {
             paymentDueDay: DEFAULT_TEACHER_PAYMENT_DUE_DAY,
           },
         })
+        if (status === 'ACTIVE') {
+          await assignTeacherLinkSalaFromInactivePool(teacher.id)
+        }
         created.push({
           id: teacher.id,
           nome: teacher.nome,

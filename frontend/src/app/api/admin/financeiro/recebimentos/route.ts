@@ -13,6 +13,8 @@ import {
   monthLookupKey,
   type AllocationPaidMonth,
 } from '@/lib/payments/recebimento-mes-anterior-pendente'
+import { resolvePayerNamesByDocumentos } from '@/lib/payments/reconcile'
+import { onlyDigits } from '@/lib/payments/normalize'
 
 function mapAllocationRows(
   r: {
@@ -150,6 +152,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const payerNamesByDocumento = await resolvePayerNamesByDocumentos(
+      items
+        .filter((r) => !r.nomePagador?.trim() && r.documentoPagador)
+        .map((r) => r.documentoPagador as string)
+    )
+
     return NextResponse.json({
       ok: true,
       data: {
@@ -169,6 +177,11 @@ export async function GET(request: NextRequest) {
               )
             )
 
+          const documentoKey = r.documentoPagador ? onlyDigits(r.documentoPagador) : ''
+          const nomePagador =
+            r.nomePagador?.trim() ||
+            (documentoKey ? payerNamesByDocumento.get(documentoKey) ?? null : null)
+
           return {
             id: r.id,
             provider: r.provider,
@@ -177,7 +190,7 @@ export async function GET(request: NextRequest) {
             dataPagamento: r.dataPagamento.toISOString(),
             metodo: r.metodo,
             documentoPagador: r.documentoPagador,
-            nomePagador: r.nomePagador,
+            nomePagador,
             txid: r.txid,
             endToEndId: r.endToEndId,
             referencia: r.referencia,

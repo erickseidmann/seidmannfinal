@@ -216,41 +216,52 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const teacher = await prisma.teacher.create({
-      data: {
-        nome,
-        nomePreferido: nomePreferido || null,
-        email,
-        whatsapp: whatsappDigits || null,
-        cpf: cpfDigits ? cpfDigits.slice(0, 14) : null,
-        cnpj: cnpjDigits ? cnpjDigits.slice(0, 14) : null,
-        valorPorHora: valorPorHoraNum,
-        metodoPagamento,
-        infosPagamento: infosPagamento || null,
-        idiomasFala: idiomasFala.length > 0 ? (idiomasFala as unknown as object) : undefined,
-        idiomasEnsina: idiomasEnsina.length > 0 ? (idiomasEnsina as unknown as object) : undefined,
-        status: 'PENDING',
-        paymentDueDay: DEFAULT_TEACHER_PAYMENT_DUE_DAY,
-      },
-      select: { id: true, nome: true, email: true, criadoEm: true },
+    const teacher = await prisma.$transaction(async (tx) => {
+      const created = await tx.teacher.create({
+        data: {
+          nome,
+          nomePreferido: nomePreferido || null,
+          email,
+          whatsapp: whatsappDigits || null,
+          cpf: cpfDigits ? cpfDigits.slice(0, 14) : null,
+          cnpj: cnpjDigits ? cnpjDigits.slice(0, 14) : null,
+          valorPorHora: valorPorHoraNum,
+          metodoPagamento,
+          infosPagamento: infosPagamento || null,
+          idiomasFala: idiomasFala.length > 0 ? (idiomasFala as unknown as object) : undefined,
+          idiomasEnsina: idiomasEnsina.length > 0 ? (idiomasEnsina as unknown as object) : undefined,
+          status: 'PENDING',
+          paymentDueDay: DEFAULT_TEACHER_PAYMENT_DUE_DAY,
+        },
+        select: { id: true, nome: true, email: true, criadoEm: true },
+      })
+
+      if (slots.length > 0) {
+        await tx.teacherAvailabilitySlot.createMany({
+          data: slots.map((s) => ({
+            teacherId: created.id,
+            dayOfWeek: s.dayOfWeek,
+            startMinutes: s.startMinutes,
+            endMinutes: s.endMinutes,
+          })),
+        })
+      }
+
+      return created
     })
 
     if (slots.length > 0) {
-      await prisma.teacherAvailabilitySlot.createMany({
-        data: slots.map((s) => ({
-          teacherId: teacher.id,
-          dayOfWeek: s.dayOfWeek,
-          startMinutes: s.startMinutes,
-          endMinutes: s.endMinutes,
-        })),
-      })
-      await prisma.teacherAvailabilityLog.create({
-        data: {
-          teacherId: teacher.id,
-          slotsSnapshot: slots as unknown as object,
-          changedByUserId: null,
-        },
-      })
+      try {
+        await prisma.teacherAvailabilityLog.create({
+          data: {
+            teacherId: teacher.id,
+            slotsSnapshot: slots as unknown as object,
+            changedByUserId: null,
+          },
+        })
+      } catch (logErr) {
+        console.warn('[api/cadastro-professor] Falha ao gravar log de disponibilidade:', logErr)
+      }
     }
 
     // Registra audit trail: ciência da data de pagamento + aceite de contrato + observações.
@@ -333,6 +344,20 @@ export async function POST(request: NextRequest) {
     )
   } catch (error) {
     console.error('[api/cadastro-professor]', error)
+    const prismaCode =
+      error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: string }).code)
+        : ''
+    if (prismaCode === 'P2002') {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            'Este e-mail já está cadastrado. Se você já enviou o formulário, aguarde o contato da escola ou use outro e-mail.',
+        },
+        { status: 409 }
+      )
+    }
     return NextResponse.json(
       { ok: false, message: 'Erro ao processar cadastro. Tente novamente em instantes.' },
       { status: 500 }

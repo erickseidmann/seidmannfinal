@@ -283,7 +283,7 @@ export default function CadastroProfessorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           nome: form.nome.trim(),
-          nomePreferido: form.nomePreferido.trim() || null,
+          nomePreferido: form.nomePreferido.trim(),
           email: form.email.trim().toLowerCase(),
           whatsapp: form.whatsapp.replace(/\D/g, ''),
           cpf: form.documentoTipo === 'CPF' ? form.cpf.replace(/\D/g, '') : '',
@@ -299,9 +299,18 @@ export default function CadastroProfessorPage() {
           availabilitySlots,
         }),
       })
-      const json = await res.json().catch(() => null)
+      const contentType = res.headers.get('content-type') ?? ''
+      const json = contentType.includes('application/json')
+        ? await res.json().catch(() => null)
+        : null
       if (!res.ok || !json?.ok) {
-        setErrors({ general: json?.message || 'Não foi possível enviar o cadastro. Tente novamente.' })
+        setErrors({
+          general:
+            json?.message ||
+            (res.status === 409
+              ? 'Este e-mail já está cadastrado. Aguarde o contato da escola ou use outro e-mail.'
+              : 'Não foi possível enviar o cadastro. Tente novamente.'),
+        })
         window.scrollTo({ top: 0, behavior: 'smooth' })
         return
       }

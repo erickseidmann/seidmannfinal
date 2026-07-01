@@ -5,6 +5,7 @@ import {
   syncLinkedUserStatus,
   type TeacherStatusFields,
 } from '@/lib/teacher-inactive'
+import { assignTeacherLinkSalaFromInactivePool } from '@/lib/teacher-link-sala-pool'
 
 export async function applyTeacherStatusChange(
   teacherId: string,
@@ -27,6 +28,10 @@ export async function applyTeacherStatusChange(
   const userId = opts?.userId ?? updated.userId ?? existing.userId
   if (patch.status === 'INACTIVE' || patch.status === 'ACTIVE') {
     await syncLinkedUserStatus(userId, patch.status)
+  }
+
+  if (patch.status === 'ACTIVE') {
+    await assignTeacherLinkSalaFromInactivePool(teacherId)
   }
 
   return { status: updated.status, inactiveAt: updated.inactiveAt }

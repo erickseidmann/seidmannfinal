@@ -18,7 +18,7 @@ import Toast from '@/components/admin/Toast'
 import Button from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import RecordAuditLabel from '@/components/admin/RecordAuditLabel'
-import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus, UserX, ChevronDown, ChevronRight, UserPlus } from 'lucide-react'
+import { Plus, Edit, Power, Bell, Star, Trash2, AlertCircle, Key, Clock, Users, Download, Loader2, Search, X, ArrowRight, Copy, Mail, Check, Minus, UserX, ChevronDown, ChevronRight, UserPlus, Unlink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import StatCard from '@/components/admin/StatCard'
 import { validateMeetingLink } from '@/lib/meeting-link'
@@ -213,6 +213,7 @@ export default function AdminProfessoresPage() {
   const [showBuscarFiltros, setShowBuscarFiltros] = useState(false)
   const [filterStatus, setFilterStatus] = useState<string>('ACTIVE')
   const [filterNota, setFilterNota] = useState<string>('')
+  const [filterSemLinkSala, setFilterSemLinkSala] = useState(false)
   const [stats, setStats] = useState<{
     nota1: number
     nota2: number
@@ -220,6 +221,7 @@ export default function AdminProfessoresPage() {
     inativos: number
     teacherRequests: number
     novosProfessores: number
+    semLinkSala: number
   } | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [listModal, setListModal] = useState<{ type: 'nota1' | 'nota2' | 'nota45'; title: string } | null>(null)
@@ -321,7 +323,7 @@ export default function AdminProfessoresPage() {
       .finally(() => setListTeachersLoading(false))
   }, [listModal?.type])
 
-  const fetchTeachers = async (opts?: { search?: string; nota?: string; status?: string; useCurrentFilters?: boolean }) => {
+  const fetchTeachers = async (opts?: { search?: string; nota?: string; status?: string; semLinkSala?: boolean; useCurrentFilters?: boolean }) => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -329,10 +331,13 @@ export default function AdminProfessoresPage() {
         opts?.useCurrentFilters === false ? opts?.search : (opts?.search ?? searchQuery)
       const nota = opts?.useCurrentFilters === false ? opts?.nota : (opts?.nota ?? filterNota)
       const status = opts?.useCurrentFilters === false ? opts?.status : (opts?.status ?? filterStatus)
+      const semLinkSala =
+        opts?.useCurrentFilters === false ? opts?.semLinkSala : (opts?.semLinkSala ?? filterSemLinkSala)
 
       if (search?.trim()) params.set('search', search.trim())
       if (nota) params.set('nota', nota)
       if (status) params.set('status', status)
+      if (semLinkSala) params.set('semLinkSala', 'true')
       params.set('limit', String(itemsPerPage))
       const url = '/api/admin/teachers' + (params.toString() ? '?' + params.toString() : '')
       const response = await fetch(url, { credentials: 'include' })
@@ -362,7 +367,7 @@ export default function AdminProfessoresPage() {
   useEffect(() => {
     fetchTeachers({ useCurrentFilters: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsPerPage, filterStatus, filterNota, searchQuery])
+  }, [itemsPerPage, filterStatus, filterNota, filterSemLinkSala, searchQuery])
 
   const fetchStats = async () => {
     setStatsLoading(true)
@@ -1325,7 +1330,7 @@ export default function AdminProfessoresPage() {
         </div>
 
         {/* Cubos de métricas (estilo financeiro) */}
-        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           <div
             role="button"
             tabIndex={0}
@@ -1413,6 +1418,25 @@ export default function AdminProfessoresPage() {
               value={statsLoading ? '...' : (stats?.teacherRequests ?? 0)}
               icon={<Users className="w-5 h-5" />}
               color="blue"
+            />
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setFilterSemLinkSala((v) => !v)}
+            onKeyDown={(e) => e.key === 'Enter' && setFilterSemLinkSala((v) => !v)}
+            className={cn(
+              'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-orange rounded-xl transition-transform hover:scale-[1.02] active:scale-[0.99] min-h-0',
+              filterSemLinkSala && 'ring-2 ring-teal-500 ring-offset-2'
+            )}
+          >
+            <StatCard
+              variant="finance"
+              title="Sem link da sala"
+              value={statsLoading ? '...' : (stats?.semLinkSala ?? 0)}
+              icon={<Unlink className="w-5 h-5" />}
+              color="teal"
+              subtitle="Google Meet"
             />
           </div>
         </div>
@@ -1577,6 +1601,24 @@ export default function AdminProfessoresPage() {
             Novo Professor
           </Button>
         </div>
+
+        {filterSemLinkSala && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 border border-teal-200 px-3 py-1 text-sm text-teal-800">
+              <Unlink className="w-3.5 h-3.5" />
+              Exibindo professores sem link da sala
+              <button
+                type="button"
+                onClick={() => setFilterSemLinkSala(false)}
+                className="ml-1 rounded-full p-0.5 hover:bg-teal-100"
+                title="Remover filtro"
+                aria-label="Remover filtro"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
