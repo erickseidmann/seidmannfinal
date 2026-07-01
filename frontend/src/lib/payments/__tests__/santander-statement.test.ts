@@ -1,4 +1,4 @@
-import { toDateKeyInTZ } from '@/lib/datetime'
+import { toDateKeyInTZ, ymdInTZ } from '@/lib/datetime'
 import {
   assignStableSeq,
   buildProviderPaymentId,
@@ -11,8 +11,9 @@ import type { SantanderStatementEntry } from '../santander-statement'
 
 describe('santander-statement', () => {
   it('parseSantanderTransactionDate DD/MM/YYYY', () => {
-    const p = parseSantanderTransactionDate('05/06/2026')
-    expect(p?.dateKey).toBe('2026-06-05')
+    const p = parseSantanderTransactionDate('01/07/2026')
+    expect(p?.dateKey).toBe('2026-07-01')
+    expect(ymdInTZ(p!.dataPagamento)).toBe('2026-07-01')
   })
 
   it('addDaysToDateKey', () => {

@@ -1,3 +1,5 @@
+import { ymdInTZ } from '@/lib/datetime'
+
 export type MonthRef = { year: number; month: number }
 
 export type AllocationPaidMonth = {
@@ -6,12 +8,13 @@ export type AllocationPaidMonth = {
   paidMonth: number | null
 }
 
-/** Mês de referência = mês civil da data em que o pagamento entrou. */
+/**
+ * Mês de referência = mês civil da data em que o pagamento entrou (fuso Brasil).
+ */
 export function paymentReferenceMonth(dataPagamento: Date): MonthRef {
-  return {
-    year: dataPagamento.getFullYear(),
-    month: dataPagamento.getMonth() + 1,
-  }
+  const key = ymdInTZ(dataPagamento)
+  const [year, month] = key.split('-').map(Number)
+  return { year, month }
 }
 
 export function compareMonth(a: MonthRef, b: MonthRef): number {

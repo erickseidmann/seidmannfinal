@@ -15,6 +15,7 @@ import {
 } from '@/lib/payments/recebimento-mes-anterior-pendente'
 import { resolvePayerNamesByDocumentos } from '@/lib/payments/reconcile'
 import { onlyDigits } from '@/lib/payments/normalize'
+import { civilDateFromReceivedPayment } from '@/lib/payments/received-payment-date'
 
 function mapAllocationRows(
   r: {
@@ -115,10 +116,15 @@ export async function GET(request: NextRequest) {
 
     const pendingLookups = collectPreviousMonthPendingLookups(
       items.map((r) => {
+        const civilDate = civilDateFromReceivedPayment(
+          r.provider,
+          r.providerPaymentId,
+          r.dataPagamento
+        )
         const { allocations, fallback } = mapAllocationRows(r)
         return {
           status: r.status,
-          dataPagamento: r.dataPagamento,
+          dataPagamento: civilDate,
           allocations,
           fallback,
         }
@@ -162,15 +168,20 @@ export async function GET(request: NextRequest) {
       ok: true,
       data: {
         items: items.map((r) => {
+          const civilDate = civilDateFromReceivedPayment(
+            r.provider,
+            r.providerPaymentId,
+            r.dataPagamento
+          )
           const { allocations, fallback } = mapAllocationRows(r)
           const mesAnteriorReferenciaPendente =
             r.status === 'VINCULADO' &&
             hasPreviousMonthPaymentPendingCurrent(
-              r.dataPagamento,
+              civilDate,
               allocations,
               fallback,
               buildRefMonthStatusMapForPayment(
-                r.dataPagamento,
+                civilDate,
                 allocations,
                 fallback,
                 refMonthByKey
@@ -187,7 +198,7 @@ export async function GET(request: NextRequest) {
             provider: r.provider,
             providerPaymentId: r.providerPaymentId,
             valor: r.valor,
-            dataPagamento: r.dataPagamento.toISOString(),
+            dataPagamento: civilDate.toISOString(),
             metodo: r.metodo,
             documentoPagador: r.documentoPagador,
             nomePagador,

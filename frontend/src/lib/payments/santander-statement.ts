@@ -9,9 +9,10 @@
  */
 
 import { santanderAuthenticatedGet } from '@/lib/santander/client'
-import { getDateInTZ, toDateKeyInTZ } from '@/lib/datetime'
+import { toDateKeyInTZ } from '@/lib/datetime'
 import type { NormalizedPayment } from './types'
 import { inferDocumentoTipo, onlyDigits } from './normalize'
+import { startOfCalendarDayBrazilDateKey } from '@/lib/datetime'
 
 const DEFAULT_BANK_ID = '90400888000142'
 
@@ -73,7 +74,10 @@ export function parseSantanderTransactionDate(
   const m = raw.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (!m) return null
   const dateKey = `${m[3]}-${m[2]}-${m[1]}`
-  return { dateKey, dataPagamento: getDateInTZ(dateKey) }
+  const dataPagamento =
+    startOfCalendarDayBrazilDateKey(dateKey) ??
+    new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]), 12, 0, 0))
+  return { dateKey, dataPagamento }
 }
 
 function isCredito(type: string): boolean {

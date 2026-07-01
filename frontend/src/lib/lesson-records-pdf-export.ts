@@ -121,3 +121,39 @@ export async function downloadLessonRecordsPdf(
 
   doc.save(`registros-aulas-${options.startDate}_${options.endDate}.pdf`)
 }
+
+const TABLE_HEADERS = ['Data / Hora', 'Aluno', 'Professor', 'Status', 'Presença', 'Tipo'] as const
+
+function escapeTsvCell(value: string): string {
+  return value.replace(/\t/g, ' ').replace(/\r?\n/g, ' ')
+}
+
+function buildLessonRecordTableRow(r: LessonRecordExportRow): string[] {
+  return [
+    formatDateTime(r.lesson.startAt),
+    getLessonRecordAlunoLabel(r),
+    r.lesson.teacher.nome,
+    STATUS_LABELS[r.status] ?? r.status,
+    getLessonRecordPresenceLabel(r),
+    LESSON_TYPE_LABELS[r.lessonType] ?? r.lessonType,
+  ]
+}
+
+export function buildLessonRecordsTableText(records: LessonRecordExportRow[]): string {
+  const lines = [
+    TABLE_HEADERS.join('\t'),
+    ...records.map((r) => buildLessonRecordTableRow(r).map(escapeTsvCell).join('\t')),
+  ]
+  return lines.join('\n')
+}
+
+export async function copyLessonRecordsTable(records: LessonRecordExportRow[]): Promise<void> {
+  if (records.length === 0) return
+  await navigator.clipboard.writeText(buildLessonRecordsTableText(records))
+}
+
+export async function openLessonRecordsInGoogleSheets(records: LessonRecordExportRow[]): Promise<void> {
+  if (records.length === 0) return
+  await copyLessonRecordsTable(records)
+  window.open('https://docs.google.com/spreadsheets/create', '_blank', 'noopener,noreferrer')
+}

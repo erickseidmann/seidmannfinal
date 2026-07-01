@@ -13,7 +13,7 @@ import Modal from '@/components/admin/Modal'
 import Button from '@/components/ui/Button'
 import Toast from '@/components/admin/Toast'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
-import { Plus, Pencil, Trash2, Loader2, CalendarX, Unlock, Check, X, FileDown, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, CalendarX, Unlock, Check, X, FileDown, Search, Copy, FileSpreadsheet } from 'lucide-react'
 import { LESSON_RECORD_UNLOCK_STATUS_LABELS } from '@/lib/lesson-record-unlock'
 import { canRegisterLesson, LESSON_RECORD_BLOCKED_MESSAGE, LESSON_STATUS_LABELS } from '@/lib/lesson-status'
 import { isCancelledNoReplacementLessonRecord } from '@/lib/lesson-cancel-no-replacement-release'
@@ -25,9 +25,11 @@ import {
 } from '@/lib/lesson-record-book-progression'
 import SeidmannLoading from '@/components/ui/SeidmannLoading'
 import {
+  copyLessonRecordsTable,
   downloadLessonRecordsPdf,
   getLessonRecordAlunoLabel,
   getLessonRecordPresenceLabel,
+  openLessonRecordsInGoogleSheets,
 } from '@/lib/lesson-records-pdf-export'
 
 interface StudentPresenceItem {
@@ -466,6 +468,29 @@ export default function AdminRegistrosAulasPage() {
       setToast({ message: 'Erro ao gerar PDF', type: 'error' })
     } finally {
       setDownloadingPdf(false)
+    }
+  }
+
+  const handleCopyTable = async () => {
+    if (records.length === 0) return
+    try {
+      await copyLessonRecordsTable(records)
+      setToast({ message: 'Tabela copiada para a área de transferência', type: 'success' })
+    } catch {
+      setToast({ message: 'Não foi possível copiar a tabela', type: 'error' })
+    }
+  }
+
+  const handleOpenGoogleSheets = async () => {
+    if (records.length === 0) return
+    try {
+      await openLessonRecordsInGoogleSheets(records)
+      setToast({
+        message: 'Planilha aberta! Cole os dados com Ctrl+V (ou Cmd+V no Mac).',
+        type: 'success',
+      })
+    } catch {
+      setToast({ message: 'Não foi possível abrir no Google Planilhas', type: 'error' })
     }
   }
 
@@ -954,14 +979,24 @@ export default function AdminRegistrosAulasPage() {
               Buscar
             </Button>
             {hasSearched && records.length > 0 && (
-              <Button variant="outline" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
-                {downloadingPdf ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <FileDown className="w-4 h-4 mr-2" />
-                )}
-                Baixar PDF
-              </Button>
+              <>
+                <Button variant="outline" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
+                  {downloadingPdf ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <FileDown className="w-4 h-4 mr-2" />
+                  )}
+                  Baixar PDF
+                </Button>
+                <Button variant="outline" onClick={() => void handleCopyTable()}>
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copiar tabela
+                </Button>
+                <Button variant="outline" onClick={() => void handleOpenGoogleSheets()}>
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Google Planilhas
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -982,14 +1017,24 @@ export default function AdminRegistrosAulasPage() {
               <p className="text-sm text-gray-600">
                 {records.length} registro(s) — {filterScopeLabel}
               </p>
-              <Button variant="outline" size="sm" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
-                {downloadingPdf ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <FileDown className="w-4 h-4 mr-2" />
-                )}
-                Baixar PDF
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => void handleDownloadPdf()} disabled={downloadingPdf}>
+                  {downloadingPdf ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <FileDown className="w-4 h-4 mr-2" />
+                  )}
+                  Baixar PDF
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handleCopyTable()}>
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copiar tabela
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handleOpenGoogleSheets()}>
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Google Planilhas
+                </Button>
+              </div>
             </div>
             <TableScrollArea>
               <table className="w-max min-w-full divide-y divide-gray-200">

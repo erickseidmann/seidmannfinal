@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -20,6 +20,12 @@ import {
   MIN_JUSTIFICATIVA_CONCILIACAO_LENGTH,
   requiresRecebimentoJustificativa,
 } from '@/lib/payments/recebimento-justificativa'
+import { formatDateTimeInTZ } from '@/lib/datetime'
+import {
+  civilDateKeyFromReceivedPayment,
+  formatMonthHeadingPtBR,
+  monthKeyFromDateKey,
+} from '@/lib/payments/received-payment-date'
 
 export interface RecebimentoAllocation {
   id?: string
@@ -103,13 +109,36 @@ function formatMoneyCents(cents: number): string {
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString('pt-BR', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-    })
+    return formatDateTimeInTZ(iso)
   } catch {
     return iso
   }
+}
+
+function groupRecebimentosByMonth(items: RecebimentoItem[]): Array<{
+  monthKey: string
+  label: string
+  items: RecebimentoItem[]
+}> {
+  const groups = new Map<string, RecebimentoItem[]>()
+  for (const item of items) {
+    const dateKey = civilDateKeyFromReceivedPayment(
+      item.provider,
+      item.providerPaymentId,
+      new Date(item.dataPagamento)
+    )
+    const monthKey = monthKeyFromDateKey(dateKey)
+    const list = groups.get(monthKey) ?? []
+    list.push(item)
+    groups.set(monthKey, list)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([monthKey, monthItems]) => ({
+      monthKey,
+      label: formatMonthHeadingPtBR(monthKey),
+      items: monthItems,
+    }))
 }
 
 function providerBadgeClass(provider: string): string {
@@ -183,6 +212,8 @@ export default function RecebimentosConciliacao({
   const [justificativaConciliacao, setJustificativaConciliacao] = useState('')
   const [buscaLoading, setBuscaLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
+
+  const itemsByMonth = useMemo(() => groupRecebimentosByMonth(items), [items])
 
   const fetchRecebimentos = useCallback(async () => {
     setLoading(true)
@@ -538,8 +569,19 @@ export default function RecebimentosConciliacao({
               </p>
             ) : (
               <>
-              <ul className="mt-4 space-y-3">
-                {items.map((r) => {
+              <div className="mt-4 space-y-6">
+                {itemsByMonth.map((group) => (
+                  <section key={group.monthKey}>
+                    <div className="sticky top-0 z-10 -mx-1 px-1 py-2 bg-white/95 backdrop-blur border-b border-gray-200 mb-3">
+                      <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                        {group.label}
+                      </h3>
+                      <p className="text-xs text-gray-500">
+                        {group.items.length} recebimento(s) neste mês
+                      </p>
+                    </div>
+                    <ul className="space-y-3">
+                      {group.items.map((r) => {
                   const statusBadge = conciliacaoStatusBadge(r)
                   return (
                   <li
@@ -621,7 +663,8 @@ export default function RecebimentosConciliacao({
                       {r.mesAnteriorReferenciaPendente && (
                         <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          Valor referente ao mês anterior — ainda aguardando pagamento deste mês
+                          Este pagamento quitou a mensalidade de um mês anterior; a cobrança do mês
+                          da data do recebimento ainda está em aberto
                         </p>
                       )}
                       {r.semCobrancaAberta && r.status === 'VINCULADO' && (
@@ -655,7 +698,10 @@ export default function RecebimentosConciliacao({
                   </li>
                   )
                 })}
-              </ul>
+                    </ul>
+                  </section>
+                ))}
+              </div>
               {total > PAGE_SIZE && (
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
                   <p className="text-sm text-gray-500">
